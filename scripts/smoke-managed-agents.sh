@@ -127,6 +127,35 @@ fi
 wait_for_agent "$agent_name"
 first_pane="$(managed_pane_id "$agent_name")"
 
+status_json="$(broccoli status --json)"
+STATUS_JSON="$status_json" python3 <<'PY'
+import json, os
+status = json.loads(os.environ["STATUS_JSON"])
+if status.get("agents", {}).get("configured_count") != 1:
+    raise SystemExit("status configured_count mismatch")
+if status.get("agents", {}).get("managed_running_count") != 1:
+    raise SystemExit("status managed_running_count mismatch")
+if not status.get("tracker", {}).get("up") or not status.get("tmux", {}).get("up"):
+    raise SystemExit("status did not report tracker/tmux up")
+PY
+
+list_json="$(broccoli agent list --json)"
+LIST_JSON="$list_json" python3 - "$agent_name" <<'PY'
+import json, os, sys
+name = sys.argv[1]
+payload = json.loads(os.environ["LIST_JSON"])
+agent = payload.get("agents", {}).get(name)
+if not agent:
+    raise SystemExit("agent missing from list payload")
+if not agent.get("running"):
+    raise SystemExit("agent list did not report running=true")
+windows = agent.get("managed_windows") or []
+if len(windows) != 1 or not windows[0].get("window_id") or not windows[0].get("pane_id"):
+    raise SystemExit("agent list missing managed window metadata")
+if not agent.get("tracker") or not agent["tracker"].get("agent_id"):
+    raise SystemExit("agent list missing tracker registration info")
+PY
+
 broccoli start
 window_count="$(managed_count "$agent_name")"
 if [[ "$window_count" != "1" ]]; then

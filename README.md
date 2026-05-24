@@ -25,7 +25,7 @@ Default private paths:
 
 ```sh
 nix run .#broccoli-comms
-nix run .#broccoli-comms -- status
+nix run .#broccoli-comms -- status --json
 nix run .#broccoli-comms -- attach
 nix run .#broccoli-comms -- stop
 ```
@@ -89,6 +89,13 @@ broccoli-comms attach
 ```
 
 `start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
+
+Runtime/frontend JSON contracts are documented in `docs/RUNTIME_API.md`:
+
+```sh
+broccoli-comms status --json
+broccoli-comms agent list --json
+```
 
 ## Smoke test
 

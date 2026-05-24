@@ -21,6 +21,7 @@ import tempfile
 import time
 
 APP = "broccoli-comms"
+VERSION = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
 SESSION = "broccoli-comms"
 MANAGED_AGENT_OPTION = "@broccoli_managed_agent"
 AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -249,16 +250,16 @@ def tmux_up() -> bool:
 def managed_windows(name: str | None = None) -> list[dict[str, str]]:
     if not tmux_up():
         return []
-    fmt = f"#{{window_id}}\t#{{window_name}}\t#{{{MANAGED_AGENT_OPTION}}}\t#{{pane_id}}"
+    fmt = f"#{{window_id}}\t#{{window_name}}\t#{{{MANAGED_AGENT_OPTION}}}\t#{{pane_id}}\t#{{pane_current_path}}"
     result = tmux("list-windows", "-t", SESSION, "-F", fmt, check=False)
     if result.returncode != 0:
         return []
     windows = []
     for line in result.stdout.splitlines():
-        parts = line.split("\t", 3)
-        if len(parts) != 4:
+        parts = line.split("\t", 4)
+        if len(parts) != 5:
             continue
-        window_id, window_name, managed_agent, pane_id = parts
+        window_id, window_name, managed_agent, pane_id, pane_current_path = parts
         if not managed_agent:
             continue
         if name is not None and managed_agent != name:
@@ -268,6 +269,7 @@ def managed_windows(name: str | None = None) -> list[dict[str, str]]:
             "window_name": window_name,
             "managed_agent": managed_agent,
             "pane_id": pane_id,
+            "cwd": pane_current_path or None,
         })
     return windows
 
@@ -357,32 +359,100 @@ def attach(_args: argparse.Namespace) -> None:
     os.execvpe("tmux", ["tmux", "-S", str(paths()["tmux_socket"]), "attach", "-t", SESSION], base_env())
 
 
-def status(_args: argparse.Namespace) -> None:
-    print(json.dumps({
-        "tracker_socket": str(paths()["tracker_socket"]),
-        "tracker_up": can_connect(paths()["tracker_socket"]),
-        "tmux_socket": str(paths()["tmux_socket"]),
-        "tmux_up": tmux("has-session", "-t", SESSION, check=False).returncode == 0,
-        "config": str(paths()["config_json"]),
-    }, indent=2))
+def tracker_agents() -> dict:
+    if not can_connect(paths()["tracker_socket"]):
+        return {}
+    try:
+        agents = tracker_rpc("list", {})
+        return agents if isinstance(agents, dict) else {}
+    except Exception:
+        return {}
 
 
-def agent_list(args: argparse.Namespace) -> None:
+def agent_list_payload() -> dict:
     cfg = load_config()
     agents = cfg.get("agents") or {}
     runtime_up = tmux_up()
-    payload = {
+    tracker_up = can_connect(paths()["tracker_socket"])
+    windows_by_name: dict[str, list[dict[str, str]]] = {}
+    for window in managed_windows():
+        windows_by_name.setdefault(window["managed_agent"], []).append(window)
+    tracker_by_name = tracker_agents()
+    return {
+        "app": APP,
+        "version": VERSION,
         "config": str(paths()["config_json"]),
-        "runtime": {"tmux_up": runtime_up},
+        "runtime": {
+            "tracker_up": tracker_up,
+            "tmux_up": runtime_up,
+            "tmux_session": SESSION,
+        },
         "agents": {
             name: {
+                "name": name,
+                "configured": {
+                    "cwd": spec.get("cwd"),
+                    "command": spec.get("command"),
+                },
+                # Backward-compatible direct fields for simple JSON consumers.
                 "cwd": spec.get("cwd"),
                 "command": spec.get("command"),
-                "window_exists": window_exists(name) if runtime_up else False,
+                "running": bool(windows_by_name.get(name)),
+                "window_exists": bool(windows_by_name.get(name)),
+                "managed_windows": windows_by_name.get(name, []),
+                "tracker": tracker_by_name.get(name),
             }
             for name, spec in sorted(agents.items())
         },
     }
+
+
+def status_payload() -> dict:
+    p = paths()
+    cfg = load_config()
+    configured_agents = cfg.get("agents") or {}
+    tracker_up = can_connect(p["tracker_socket"])
+    session_up = tmux_up()
+    managed = managed_windows() if session_up else []
+    return {
+        "app": APP,
+        "version": VERSION,
+        "paths": {
+            "runtime_dir": str(p["runtime"]),
+            "cache_dir": str(p["cache"]),
+            "config_dir": str(p["config"]),
+        },
+        "tracker": {
+            "socket": str(p["tracker_socket"]),
+            "up": tracker_up,
+        },
+        "tmux": {
+            "socket": str(p["tmux_socket"]),
+            "up": session_up,
+            "session": SESSION,
+        },
+        "config": {
+            "path": str(p["config_json"]),
+        },
+        "agents": {
+            "configured_count": len(configured_agents),
+            "managed_running_count": len(managed),
+            "managed_windows": managed,
+        },
+        # Backward-compatible aliases used by existing smoke checks.
+        "tracker_socket": str(p["tracker_socket"]),
+        "tracker_up": tracker_up,
+        "tmux_socket": str(p["tmux_socket"]),
+        "tmux_up": session_up,
+    }
+
+
+def status(args: argparse.Namespace) -> None:
+    print(json.dumps(status_payload(), indent=2, sort_keys=bool(getattr(args, "json", False))))
+
+
+def agent_list(args: argparse.Namespace) -> None:
+    payload = agent_list_payload()
     print(json.dumps(payload if args.json else payload["agents"], indent=2, sort_keys=True))
 
 
@@ -485,7 +555,9 @@ def main() -> None:
     sub.add_parser("ui").set_defaults(func=ui)
     sub.add_parser("open").set_defaults(func=ui)
     sub.add_parser("attach").set_defaults(func=attach)
-    sub.add_parser("status").set_defaults(func=status)
+    status_parser = sub.add_parser("status")
+    status_parser.add_argument("--json", action="store_true", help="Emit stable JSON runtime status")
+    status_parser.set_defaults(func=status)
     sub.add_parser("stop").set_defaults(func=stop)
     sub.add_parser("doctor").set_defaults(func=doctor)
 

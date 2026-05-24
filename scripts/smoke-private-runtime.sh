@@ -86,16 +86,23 @@ can_connect_unix "$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock"
 [[ -S "$BROCCOLI_COMMS_RUNTIME_DIR/tmux.sock" ]]
 tmux_private has-session -t "$session_name"
 
-status_json="$(broccoli status)"
+status_json="$(broccoli status --json)"
 STATUS_JSON="$status_json" python3 <<'PY'
 import json, os, sys
 status = json.loads(os.environ["STATUS_JSON"])
 expected_runtime = os.environ["BROCCOLI_COMMS_RUNTIME_DIR"]
 checks = {
-    "tracker_up": status.get("tracker_up") is True,
-    "tmux_up": status.get("tmux_up") is True,
-    "tracker_socket": status.get("tracker_socket") == f"{expected_runtime}/agent-tracker.sock",
-    "tmux_socket": status.get("tmux_socket") == f"{expected_runtime}/tmux.sock",
+    "app": status.get("app") == "broccoli-comms",
+    "paths.runtime_dir": status.get("paths", {}).get("runtime_dir") == expected_runtime,
+    "paths.cache_dir": status.get("paths", {}).get("cache_dir") == os.environ["BROCCOLI_COMMS_CACHE_DIR"],
+    "paths.config_dir": status.get("paths", {}).get("config_dir") == os.environ["BROCCOLI_COMMS_CONFIG_DIR"],
+    "tracker.up": status.get("tracker", {}).get("up") is True,
+    "tmux.up": status.get("tmux", {}).get("up") is True,
+    "tracker.socket": status.get("tracker", {}).get("socket") == f"{expected_runtime}/agent-tracker.sock",
+    "tmux.socket": status.get("tmux", {}).get("socket") == f"{expected_runtime}/tmux.sock",
+    "tmux.session": status.get("tmux", {}).get("session") == "broccoli-comms",
+    "agents.configured_count": status.get("agents", {}).get("configured_count") == 0,
+    "agents.managed_running_count": status.get("agents", {}).get("managed_running_count") == 0,
 }
 failed = [name for name, ok in checks.items() if not ok]
 if failed:
