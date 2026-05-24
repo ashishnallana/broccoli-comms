@@ -2,7 +2,9 @@ import unittest
 from unittest import mock
 import time
 
+import tmux_reliability
 import tmux_util
+from ctl_commands import common as ctl_common
 
 
 class TestTmuxUtil(unittest.TestCase):
@@ -22,6 +24,30 @@ class TestTmuxUtil(unittest.TestCase):
             self.assertEqual(
                 tmux_util.tmux_command(["-S", "/tmp/explicit.sock", "list-panes", "-a"]),
                 ["tmux", "-S", "/tmp/explicit.sock", "list-panes", "-a"],
+            )
+
+    def test_tmux_env_strips_inherited_tmux_in_app_mode(self):
+        with mock.patch.dict("os.environ", {"AGENT_TRACKER_TMUX_SOCKET": "/tmp/private.sock", "TMUX": "/tmp/default.sock,1,0", "TMUX_PANE": "%9"}, clear=True):
+            env = tmux_util.tmux_env()
+            self.assertNotIn("TMUX", env)
+            self.assertNotIn("TMUX_PANE", env)
+
+    @mock.patch("tmux_reliability.subprocess.run")
+    def test_tmux_reliability_uses_private_socket_and_strips_inherited_env(self, run):
+        run.return_value = mock.Mock(stdout="ok\n")
+        with mock.patch.dict("os.environ", {"AGENT_TRACKER_TMUX_SOCKET": "/tmp/private.sock", "TMUX": "/tmp/default.sock,1,0", "TMUX_PANE": "%9"}, clear=True):
+            self.assertEqual(tmux_reliability.run_tmux(["list-panes"]), "ok")
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd, ["tmux", "-S", "/tmp/private.sock", "list-panes"])
+        run_env = run.call_args.kwargs["env"]
+        self.assertNotIn("TMUX", run_env)
+        self.assertNotIn("TMUX_PANE", run_env)
+
+    def test_ctl_common_tmux_command_uses_private_socket(self):
+        with mock.patch.dict("os.environ", {"BROCCOLI_COMMS_TMUX_SOCKET": "/tmp/app.sock"}, clear=True):
+            self.assertEqual(
+                ctl_common.tmux_command(["display-message", "-p", "#{pane_id}"]),
+                ["tmux", "-S", "/tmp/app.sock", "display-message", "-p", "#{pane_id}"],
             )
 
     @mock.patch("tmux_util.enqueue_tmux_cmd")
@@ -94,6 +120,8 @@ class TestTmuxUtil(unittest.TestCase):
             "AGENT_ID": "parent-id",
             "AGENT_NAME": "parent-name",
             "AGENT_UUID": "parent-uuid",
+            "TMUX": "/tmp/default.sock,1,0",
+            "TMUX_PANE": "%9",
             "PATH": "/bin",
         }
         run.return_value = mock.Mock(returncode=0, stdout="%1\n")
@@ -109,6 +137,8 @@ class TestTmuxUtil(unittest.TestCase):
         self.assertNotIn("AGENT_ID", child_env)
         self.assertNotIn("AGENT_NAME", child_env)
         self.assertNotIn("AGENT_UUID", child_env)
+        self.assertNotIn("TMUX", child_env)
+        self.assertNotIn("TMUX_PANE", child_env)
         self.assertEqual(child_env["SUGGESTED_AGENT_NAME"], "child-agent")
 
     @mock.patch("tmux_util.subprocess.run")

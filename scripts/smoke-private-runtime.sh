@@ -37,6 +37,11 @@ tmux_private() {
   env -u TMUX -u TMUX_PANE tmux -S "$BROCCOLI_COMMS_RUNTIME_DIR/tmux.sock" "$@"
 }
 
+if grep -R --exclude-dir='__pycache__' --exclude='*.pyc' "tmux-status-refresh" "$repo_root/agent-tracker" "$repo_root/app" "$repo_root/wrapper" >/dev/null 2>&1; then
+  echo "unsafe tmux-status-refresh runtime call found" >&2
+  exit 1
+fi
+
 can_connect_unix() {
   python3 - "$1" <<'PY'
 import socket, sys

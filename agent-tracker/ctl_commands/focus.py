@@ -1,7 +1,7 @@
 import subprocess
 import sys
 
-from .common import call_rpc
+from .common import call_rpc, tmux_command, tmux_env
 
 
 def register(subparsers):
@@ -22,7 +22,10 @@ def handle(args):
     agent_names = list(agents.keys())
     if args.next or args.prev:
         try:
-            current_pane = subprocess.check_output(["tmux", "display-message", "-p", "#{pane_id}"]).decode().strip()
+            current_pane = subprocess.check_output(
+                tmux_command(["display-message", "-p", "#{pane_id}"]),
+                env=tmux_env(),
+            ).decode().strip()
         except subprocess.CalledProcessError:
             current_pane = ""
         current_agent = next((name for name, info in agents.items() if info.get("tmux_pane") == current_pane), None)
@@ -39,9 +42,8 @@ def handle(args):
         print(f"Agent {target_agent} not found.", file=sys.stderr)
         sys.exit(1)
     info = agents[target_agent]
-    tmux_cmd = ["tmux"]
-    if info.get("tmux_socket"):
-        tmux_cmd.extend(["-S", info["tmux_socket"]])
-    subprocess.run(tmux_cmd + ["switch-client", "-t", info.get("session")])
-    subprocess.run(tmux_cmd + ["select-window", "-t", info.get("tmux_pane")])
-    subprocess.run(tmux_cmd + ["select-pane", "-t", info.get("tmux_pane")])
+    tmux_socket = info.get("tmux_socket")
+    run_env = tmux_env(strip_inherited=bool(tmux_socket))
+    subprocess.run(tmux_command(["switch-client", "-t", info.get("session")], tmux_socket), env=run_env)
+    subprocess.run(tmux_command(["select-window", "-t", info.get("tmux_pane")], tmux_socket), env=run_env)
+    subprocess.run(tmux_command(["select-pane", "-t", info.get("tmux_pane")], tmux_socket), env=run_env)

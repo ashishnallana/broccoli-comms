@@ -5,7 +5,7 @@ import shlex
 import subprocess
 import sys
 
-from .common import call_rpc
+from .common import call_rpc, default_tmux_socket, tmux_command, tmux_env
 
 
 def register(subparsers):
@@ -17,9 +17,14 @@ def register(subparsers):
     parser.set_defaults(handler=handle)
 
 
-def query_tmux_option(pane, option):
+def query_tmux_option(pane, option, socket_path=None):
     try:
-        res = subprocess.run(["tmux", "show-options", "-p", "-t", pane, option], capture_output=True, text=True)
+        res = subprocess.run(
+            tmux_command(["show-options", "-p", "-t", pane, option], socket_path),
+            capture_output=True,
+            text=True,
+            env=tmux_env(strip_inherited=bool(socket_path or default_tmux_socket())),
+        )
         if res.returncode == 0 and res.stdout:
             parts = res.stdout.strip().split(maxsplit=1)
             if len(parts) == 2:
@@ -29,9 +34,14 @@ def query_tmux_option(pane, option):
     return None
 
 
-def query_tmux_path(pane):
+def query_tmux_path(pane, socket_path=None):
     try:
-        res = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#{pane_current_path}"], capture_output=True, text=True)
+        res = subprocess.run(
+            tmux_command(["display-message", "-p", "-t", pane, "#{pane_current_path}"], socket_path),
+            capture_output=True,
+            text=True,
+            env=tmux_env(strip_inherited=bool(socket_path or default_tmux_socket())),
+        )
         if res.returncode == 0:
             return res.stdout.strip()
     except Exception:

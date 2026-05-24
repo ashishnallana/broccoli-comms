@@ -67,6 +67,7 @@ def ensure_tracker_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> bool:
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
+                env=tmux_env(),
             )
 
     deadline = time.time() + timeout
@@ -115,11 +116,47 @@ def call_rpc(method, params={}):
         sys.exit(1)
 
 
+def default_tmux_socket() -> str | None:
+    """Returns the app-private tmux socket configured for this CLI, if any."""
+    return os.environ.get("AGENT_TRACKER_TMUX_SOCKET") or os.environ.get("BROCCOLI_COMMS_TMUX_SOCKET") or None
+
+
+def tmux_command(args: list[str], socket_path: str | None = None) -> list[str]:
+    """Builds a tmux command, defaulting to the configured private socket."""
+    args = list(args or [])
+    if args and args[0] in ("-S", "-L"):
+        return ["tmux"] + args
+    socket_path = socket_path if socket_path is not None else default_tmux_socket()
+    cmd = ["tmux"]
+    if socket_path:
+        cmd.extend(["-S", socket_path])
+    return cmd + args
+
+
+def tmux_env(strip_inherited: bool | None = None) -> dict[str, str]:
+    """Returns an environment for tmux commands.
+
+    When an explicit/private socket is configured, inherited TMUX/TMUX_PANE must
+    not influence which server is contacted. Without a private socket, CLI tools
+    still support the legacy/default tmux context.
+    """
+    if strip_inherited is None:
+        strip_inherited = bool(default_tmux_socket())
+    env = os.environ.copy()
+    if strip_inherited:
+        env.pop("TMUX", None)
+        env.pop("TMUX_PANE", None)
+    return env
+
+
 def get_current_tmux_pane(fallback: str | None = None) -> str:
     if fallback is not None:
         return fallback
     try:
-        return subprocess.check_output(["tmux", "display-message", "-p", "#{pane_id}"]).decode("utf-8").strip()
+        return subprocess.check_output(
+            tmux_command(["display-message", "-p", "#{pane_id}"]),
+            env=tmux_env(),
+        ).decode("utf-8").strip()
     except subprocess.CalledProcessError:
         return ""
 

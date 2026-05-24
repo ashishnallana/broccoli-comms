@@ -38,12 +38,22 @@ if [[ -z "$pane_id" ]]; then
 fi
 
 export AGENT_TRACKER_SOCKET="${AGENT_TRACKER_SOCKET:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/broccoli-comms/agent-tracker.sock}"
+tmux_socket="${AGENT_TRACKER_TMUX_SOCKET:-${BROCCOLI_COMMS_TMUX_SOCKET:-}}"
+if [[ -z "$tmux_socket" ]]; then
+  tmux_socket="${TMUX%%,*}"
+fi
+tmux_cmd=(tmux)
+if [[ -n "$tmux_socket" ]]; then
+  tmux_cmd=(tmux -S "$tmux_socket")
+fi
+export AGENT_TRACKER_TMUX_SOCKET="${AGENT_TRACKER_TMUX_SOCKET:-$tmux_socket}"
+export BROCCOLI_COMMS_TMUX_SOCKET="${BROCCOLI_COMMS_TMUX_SOCKET:-$tmux_socket}"
+
 if command -v agent-tracker-ctl >/dev/null 2>&1; then
   agent-tracker-ctl ensure-running >/dev/null 2>&1 || true
 fi
 
-session_name=$(tmux display-message -p -t "$pane_id" '#S' 2>/dev/null || echo broccoli-comms)
-tmux_socket="${TMUX%%,*}"
+session_name=$("${tmux_cmd[@]}" display-message -p -t "$pane_id" '#S' 2>/dev/null || echo broccoli-comms)
 wrapper_pid="$$"
 suggested_name="${SUGGESTED_AGENT_NAME:-}"
 agent_type=$(basename "$cmd")
@@ -54,7 +64,7 @@ print(uuid.uuid4())
 PY
 )}"
 export AGENT_ID="$agent_id"
-current_cwd=$(tmux display-message -p -t "$pane_id" '#{pane_current_path}' 2>/dev/null || pwd)
+current_cwd=$("${tmux_cmd[@]}" display-message -p -t "$pane_id" '#{pane_current_path}' 2>/dev/null || pwd)
 
 rpc_register() {
   python3 - "$session_name" "$pane_id" "$wrapper_pid" "$tmux_socket" "$suggested_name" "$agent_type" "$agent_cmd" "$agent_id" "$no_notify_with_send_keys" "$no_registry" "$current_cwd" <<'PY'
@@ -99,17 +109,17 @@ fi
 
 if [[ -n "$agent_name" ]]; then
   export AGENT_NAME="$agent_name"
-  tmux set-option -p -t "$pane_id" @agent_name "$agent_name" 2>/dev/null || true
-  tmux set-option -p -t "$pane_id" @agent_id "$agent_id" 2>/dev/null || true
-  tmux set-option -p -t "$pane_id" @agent_uuid "$agent_id" 2>/dev/null || true
-  tmux set-option -p -t "$pane_id" @agent_type "$agent_type" 2>/dev/null || true
-  tmux set-option -p -t "$pane_id" @agent_cmd "$agent_cmd" 2>/dev/null || true
-  tmux select-pane -t "$pane_id" -T "$agent_name" 2>/dev/null || true
+  "${tmux_cmd[@]}" set-option -p -t "$pane_id" @agent_name "$agent_name" 2>/dev/null || true
+  "${tmux_cmd[@]}" set-option -p -t "$pane_id" @agent_id "$agent_id" 2>/dev/null || true
+  "${tmux_cmd[@]}" set-option -p -t "$pane_id" @agent_uuid "$agent_id" 2>/dev/null || true
+  "${tmux_cmd[@]}" set-option -p -t "$pane_id" @agent_type "$agent_type" 2>/dev/null || true
+  "${tmux_cmd[@]}" set-option -p -t "$pane_id" @agent_cmd "$agent_cmd" 2>/dev/null || true
+  "${tmux_cmd[@]}" select-pane -t "$pane_id" -T "$agent_name" 2>/dev/null || true
 fi
 
 heartbeat() {
   while true; do
-    current_cwd=$(tmux display-message -p -t "$pane_id" '#{pane_current_path}' 2>/dev/null || pwd)
+    current_cwd=$("${tmux_cmd[@]}" display-message -p -t "$pane_id" '#{pane_current_path}' 2>/dev/null || pwd)
     python3 - "$agent_id" "$wrapper_pid" "$current_cwd" <<'PY' >/dev/null 2>>/tmp/broccoli-comms-agent-wrapper.log || true
 import json, os, socket, sys
 agent_id, wrapper_pid, cwd = sys.argv[1:]
@@ -131,9 +141,9 @@ cleanup() {
   if command -v agent-tracker-ctl >/dev/null 2>&1; then
     agent-tracker-ctl unregister --pane "$pane_id" >/dev/null 2>&1 || true
   fi
-  tmux set-option -p -u -t "$pane_id" @agent_name 2>/dev/null || true
-  tmux set-option -p -u -t "$pane_id" @agent_id 2>/dev/null || true
-  tmux select-pane -t "$pane_id" -T "" 2>/dev/null || true
+  "${tmux_cmd[@]}" set-option -p -u -t "$pane_id" @agent_name 2>/dev/null || true
+  "${tmux_cmd[@]}" set-option -p -u -t "$pane_id" @agent_id 2>/dev/null || true
+  "${tmux_cmd[@]}" select-pane -t "$pane_id" -T "" 2>/dev/null || true
 }
 trap cleanup EXIT
 

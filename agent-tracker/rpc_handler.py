@@ -323,8 +323,6 @@ def handle_rename(params: dict, caller_pid: int = None) -> bool:
             try:
                 tmux_util.set_agent_name_sync(tmux_pane, new_name, tmux_socket)
                 tmux_util.set_pane_title_sync(tmux_pane, new_name, tmux_socket)
-                # Force status bar refresh
-                subprocess.run(["tmux-status-refresh"], check=False)
             except Exception as e:
                 logging.error(f"Failed to update tmux pane for {new_name}: {e}")
         return True
@@ -833,7 +831,7 @@ def handle_capture_pane(params: dict, caller_pid: int = None) -> dict:
 
     # Query session info if not already retrieved
     if not session:
-        pane_info = tmux_util.get_pane_info(tmux_pane)
+        pane_info = tmux_util.get_pane_info(tmux_pane, tmux_socket)
         if pane_info:
             session = pane_info.get("session")
 

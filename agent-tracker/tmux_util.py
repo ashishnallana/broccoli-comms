@@ -21,7 +21,7 @@ def tmux_worker():
         try:
             cmd = task['cmd']
             # Use a reasonable timeout for tmux commands
-            subprocess.run(cmd, check=True, capture_output=True, timeout=5)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=5, env=tmux_env(strip_inherited=(cmd[0] == "tmux" and ("-S" in cmd or bool(default_tmux_socket())))))
         except Exception as e:
             logging.error(f"Tmux worker error: {e}")
         finally:
@@ -49,6 +49,17 @@ def tmux_base(socket_path=None):
     return cmd
 
 
+def tmux_env(strip_inherited: bool | None = None) -> dict[str, str]:
+    """Returns an environment that cannot leak inherited tmux context in app mode."""
+    if strip_inherited is None:
+        strip_inherited = bool(default_tmux_socket())
+    env = os.environ.copy()
+    if strip_inherited:
+        env.pop("TMUX", None)
+        env.pop("TMUX_PANE", None)
+    return env
+
+
 def tmux_command(args=None, socket_path=None):
     """Builds a full tmux command without double-prefixing explicit tmux options."""
     args = list(args or [])
@@ -60,7 +71,14 @@ def tmux_command(args=None, socket_path=None):
 def run_tmux_cmd(cmd, timeout=5):
     """Helper to run tmux commands synchronously."""
     try:
-        result = subprocess.run(tmux_command(cmd), check=True, capture_output=True, timeout=timeout)
+        args = list(cmd or [])
+        result = subprocess.run(
+            tmux_command(args),
+            check=True,
+            capture_output=True,
+            timeout=timeout,
+            env=tmux_env(strip_inherited=bool(default_tmux_socket()) or (bool(args) and args[0] in ("-S", "-L"))),
+        )
         return result.stdout.decode("utf-8").strip()
     except subprocess.CalledProcessError as e:
         logging.error(f"Tmux command failed: {e} - {e.stderr.decode('utf-8')}")
@@ -132,10 +150,10 @@ def list_panes():
         logging.error(f"Failed to list panes: {e}")
         return None
 
-def get_pane_info(pane_id):
+def get_pane_info(pane_id, socket_path=None):
     """Gets tty, session, and shell pid for a pane."""
     try:
-        out = run_tmux_cmd(["display-message", "-p", "-t", pane_id, "#{pane_tty} #S #{pane_pid}"])
+        out = run_tmux_cmd(tmux_command(["display-message", "-p", "-t", pane_id, "#{pane_tty} #S #{pane_pid}"], socket_path)[1:])
         parts = out.split()
         if len(parts) >= 3:
             return {"tty": parts[0], "session": parts[1], "pid": int(parts[2])}

@@ -1,6 +1,7 @@
 """tmux_reliability.py: Reusable library for safe, verified tmux input delivery."""
 
 import logging
+import os
 import random
 import string
 import subprocess
@@ -8,14 +9,46 @@ import time
 
 logger = logging.getLogger(__name__)
 
-def run_tmux(args: list[str], socket_path: str = None, timeout: float = 5.0) -> str | None:
-    """Executes a tmux command and returns stdout string. Returns None on failure."""
+def default_tmux_socket() -> str | None:
+    """Returns the app-private tmux socket configured for this tracker, if any."""
+    return os.environ.get("AGENT_TRACKER_TMUX_SOCKET") or os.environ.get("BROCCOLI_COMMS_TMUX_SOCKET") or None
+
+
+def tmux_command(args: list[str], socket_path: str = None) -> list[str]:
+    """Builds a tmux command, defaulting to the configured private socket."""
+    args = list(args or [])
+    if args and args[0] in ("-S", "-L"):
+        return ["tmux"] + args
+    socket_path = socket_path if socket_path is not None else default_tmux_socket()
     cmd = ["tmux"]
     if socket_path:
         cmd.extend(["-S", socket_path])
-    cmd.extend(args)
+    return cmd + args
+
+
+def tmux_env(strip_inherited: bool | None = None) -> dict[str, str]:
+    """Returns an environment that cannot accidentally use inherited tmux context."""
+    if strip_inherited is None:
+        strip_inherited = bool(default_tmux_socket())
+    env = os.environ.copy()
+    if strip_inherited:
+        env.pop("TMUX", None)
+        env.pop("TMUX_PANE", None)
+    return env
+
+
+def run_tmux(args: list[str], socket_path: str = None, timeout: float = 5.0) -> str | None:
+    """Executes a tmux command and returns stdout string. Returns None on failure."""
+    cmd = tmux_command(args, socket_path)
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=timeout,
+            env=tmux_env(strip_inherited=bool(socket_path or default_tmux_socket())),
+        )
         return res.stdout.strip()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.debug("Tmux command failed: %s. Error: %s", cmd, e)

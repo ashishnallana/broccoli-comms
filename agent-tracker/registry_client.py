@@ -428,10 +428,11 @@ def _handle_remote_save(agent_to_save, agent_name=None, command=None, descriptio
         if pane_id:
             try:
                 from ctl_commands.save import query_tmux_path, query_tmux_option
+                tmux_socket = agent_info.get("tmux_socket")
                 if not working_dir:
-                    working_dir = query_tmux_path(pane_id)
+                    working_dir = query_tmux_path(pane_id, tmux_socket)
                 if not save_command:
-                    save_command = query_tmux_option(pane_id, "@agent_cmd")
+                    save_command = query_tmux_option(pane_id, "@agent_cmd", tmux_socket)
             except Exception as e:
                 LOG.warning("failed to query tmux for remote save: %s", e)
                 
