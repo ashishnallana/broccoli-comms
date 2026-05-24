@@ -32,7 +32,7 @@ With Nix, `tmux` should be supplied by the package closure. For manual/non-Nix i
 
 ## Current status snapshot
 
-As of 2026-05-24, the standalone extraction has moved past the initial scaffold and has a working private runtime plus managed-agent CLI.
+As of 2026-05-24, the standalone extraction has a working private runtime, managed-agent CLI, and committed JSON runtime/API boundary for future frontends.
 
 Committed history:
 
@@ -40,26 +40,20 @@ Committed history:
 - `6b09c3a` - Add private runtime smoke test
 - `61f2d0c` - Harden private tmux socket usage
 - `f81f62c` - Add managed agent CLI
+- `8218973` - Add runtime JSON API boundary
 
-Current uncommitted work:
+Current work:
 
-- Chunk 4 runtime/frontend JSON boundary is implemented.
-- Reviewer completed review and approved after this migration-plan status cleanup.
-- Files currently changed for Chunk 4:
-  - `app/broccoli-comms.py`
-  - `docs/RUNTIME_API.md`
-  - `scripts/smoke-private-runtime.sh`
-  - `scripts/smoke-managed-agents.sh`
-  - `README.md`
-  - `docs/MIGRATION_PLAN.md`
+- Chunk 4 is committed.
+- Next planned work is Chunk 5: enforce `agent-wrapper` wrapping for spawned agents and improve tmux/bootstrap documentation/checks.
 
 Current agent coordination:
 
 - Previous coder/reviewer panes were killed.
 - New `broccoli-comms-coder` and `broccoli-comms-reviewer` agents have been spun and given the current context.
-- Reviewer has been asked to review Chunk 4.
+- Coder is ready for Chunk 5 assignment; reviewer is ready for follow-up reviews.
 
-Latest validation run for the uncommitted Chunk 4 work passed:
+Latest validation run for Chunk 4 passed before commit:
 
 ```sh
 nix --extra-experimental-features 'nix-command flakes' flake check .
@@ -174,7 +168,7 @@ Follow-up:
 
 ### Chunk 4: runtime JSON/API boundary
 
-Status: implemented in working tree; reviewer approved after migration-plan cleanup; ready for lead commit.
+Status: complete and committed.
 
 Tasks implemented:
 
@@ -186,10 +180,10 @@ Tasks implemented:
 - [x] Extend smoke scripts to validate JSON fields.
 - [x] Validate with Nix checks, builds, smoke tests, unit tests, compile checks, shell syntax, and `git diff --check`.
 
-Pending before commit:
+Completed commit gates:
 
 - [x] Reviewer approval for Chunk 4.
-- [ ] Lead commit after approval.
+- [x] Lead commit after approval.
 
 Known limitations to track:
 
@@ -199,7 +193,7 @@ Known limitations to track:
 
 ### Chunk 5: enforce wrapped spawned agents
 
-Status: planned next chunk.
+Status: next planned chunk.
 
 Goal: make `agent-tracker-ctl spin` and Broccoli Comms spin paths ensure spawned commands run under `agent-wrapper`.
 
