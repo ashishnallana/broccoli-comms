@@ -10,6 +10,7 @@ ctl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ctl)
 
 import tmux_util
+from ctl_commands import spin as spin_cmd
 
 
 class TestSpinCommand(unittest.TestCase):
@@ -18,10 +19,10 @@ class TestSpinCommand(unittest.TestCase):
         self.assertEqual(ctl.spin_session_name("/tmp/a:b"), "a_b")
         self.assertEqual(ctl.spin_session_name("/tmp/spin-bug.test"), "spin-bug_test")
 
-    def test_spin_subcommand_sends_directory_session_and_command(self):
+    def test_spin_subcommand_sends_directory_session_and_wrapped_command(self):
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(ctl, "ensure_tracker_running", return_value=True), \
-             mock.patch.dict(os.environ, {"PATH": "/mock/path"}), \
+             mock.patch.dict(os.environ, {"PATH": "/mock/path", "BROCCOLI_COMMS_AGENT_WRAPPER": "/mock/agent-wrapper"}, clear=True), \
              mock.patch("ctl_commands.spin.call_rpc", return_value="proj") as call_rpc, \
              mock.patch.object(ctl.sys, "argv", ["agent-tracker-ctl", "spin", tmp, "gemini", "--model", "flash"]):
             ctl.main()
@@ -31,18 +32,42 @@ class TestSpinCommand(unittest.TestCase):
         self.assertEqual(params["directory"], tmp)
         self.assertEqual(params["session"], os.path.basename(tmp))
         self.assertEqual(params["name"], os.path.basename(tmp))
-        self.assertEqual(params["command"], "bash -c 'export PATH=/mock/path; gemini --model flash; zsh'")
+        self.assertEqual(params["command"], "bash -c 'export PATH=/mock/path; /mock/agent-wrapper gemini --model flash; zsh'")
 
-    def test_spin_subcommand_with_no_fallback_sends_raw_command(self):
+    def test_spin_subcommand_with_no_fallback_still_wraps_raw_command(self):
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(ctl, "ensure_tracker_running", return_value=True), \
+             mock.patch.dict(os.environ, {"BROCCOLI_COMMS_AGENT_WRAPPER": "/mock/agent-wrapper"}, clear=True), \
              mock.patch("ctl_commands.spin.call_rpc", return_value="proj") as call_rpc, \
              mock.patch.object(ctl.sys, "argv", ["agent-tracker-ctl", "spin", "--no-fallback", tmp, "gemini", "--model", "flash"]):
             ctl.main()
         call_rpc.assert_called_once()
         method, params = call_rpc.call_args.args
         self.assertEqual(method, "spin_agent")
-        self.assertEqual(params["command"], "gemini --model flash")
+        self.assertEqual(params["command"], "/mock/agent-wrapper gemini --model flash")
+
+    def test_spin_subcommand_does_not_double_wrap_agent_wrapper(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(ctl, "ensure_tracker_running", return_value=True), \
+             mock.patch.dict(os.environ, {"PATH": "/mock/path", "BROCCOLI_COMMS_AGENT_WRAPPER": "/mock/agent-wrapper"}, clear=True), \
+             mock.patch("ctl_commands.spin.call_rpc", return_value="proj") as call_rpc, \
+             mock.patch.object(ctl.sys, "argv", ["agent-tracker-ctl", "spin", "--no-fallback", tmp, "agent-wrapper", "gemini"]):
+            ctl.main()
+        call_rpc.assert_called_once()
+        method, params = call_rpc.call_args.args
+        self.assertEqual(method, "spin_agent")
+        self.assertEqual(params["command"], "agent-wrapper gemini")
+
+    def test_build_wrapped_agent_argv_respects_resolved_wrapper_path(self):
+        with mock.patch.dict(os.environ, {"BROCCOLI_COMMS_AGENT_WRAPPER": "/nix/store/mock-agent-wrapper/bin/agent-wrapper"}, clear=True):
+            self.assertEqual(
+                spin_cmd.build_wrapped_agent_argv("/nix/store/mock-agent-wrapper/bin/agent-wrapper", ["pi"]),
+                ["/nix/store/mock-agent-wrapper/bin/agent-wrapper", "pi"],
+            )
+            self.assertEqual(
+                spin_cmd.build_wrapped_agent_argv("pi", ["--model", "flash"]),
+                ["/nix/store/mock-agent-wrapper/bin/agent-wrapper", "pi", "--model", "flash"],
+            )
 
     def test_tmux_spin_creates_new_session_for_missing_session(self):
         calls = []

@@ -45,7 +45,7 @@ Committed history:
 Current work:
 
 - Chunk 4 is committed.
-- Next planned work is Chunk 5: enforce `agent-wrapper` wrapping for spawned agents and improve tmux/bootstrap documentation/checks.
+- Chunk 5 implementation is in progress: `agent-tracker-ctl spin` auto-wraps raw commands with `agent-wrapper`, Nix/source wrapper resolution has been updated, and bootstrap tmux dependency docs/checks are being tightened.
 
 Current agent coordination:
 
@@ -193,18 +193,22 @@ Known limitations to track:
 
 ### Chunk 5: enforce wrapped spawned agents
 
-Status: next planned chunk.
+Status: in progress in the working tree; pending full validation, review, and lead commit.
 
 Goal: make `agent-tracker-ctl spin` and Broccoli Comms spin paths ensure spawned commands run under `agent-wrapper`.
 
 Planned tasks:
 
-- [ ] Ensure `agent-tracker-ctl spin` wraps raw commands with the standalone/bundled `agent-wrapper` so spun agents register, heartbeat, and get inbox/status behavior.
-- [ ] Avoid double-wrapping if command is already `agent-wrapper`.
-- [ ] Ensure wrapper path resolution works in Nix and non-Nix installs.
-- [ ] Preserve private tracker/tmux socket env when spinning from Broccoli Comms runtime.
-- [ ] Add unit/smoke coverage for raw command wrapping and already-wrapped commands.
-- [ ] Document spin behavior in README/runtime docs.
+- [x] Ensure `agent-tracker-ctl spin` wraps raw commands with the standalone/bundled `agent-wrapper` so spun agents register, heartbeat, and get inbox/status behavior.
+- [x] Avoid double-wrapping if command is already `agent-wrapper` or the resolved packaged wrapper path.
+- [x] Ensure wrapper path resolution works in Nix and source-tree/dev checkouts.
+- [x] Preserve private tracker/tmux socket env when spinning from Broccoli Comms runtime.
+- [x] Add unit coverage for raw command wrapping and already-wrapped commands.
+- [x] Document spin behavior in README/runtime docs.
+- [x] Clarify bootstrap dependency expectations: Nix packages include `tmux`; manual/non-Nix installs currently require system `tmux` and `python3`.
+- [x] Run full validation gate.
+- [ ] Reviewer approval for Chunk 5.
+- [ ] Lead commit after approval.
 
 ### Chunk 6: app-aware TUI integration
 

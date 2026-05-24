@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import re
 import signal
 import socket
@@ -541,11 +542,26 @@ def stop(_args: argparse.Namespace) -> None:
 
 
 def doctor(_args: argparse.Namespace) -> None:
+    failures = []
     for exe in ["tmux", sys.executable]:
-        print(f"{exe}: ok")
-    print(f"tracker script: {tracker_script()}")
-    print(f"wrapper: {wrapper_path()}")
+        resolved = exe if os.path.isabs(exe) and os.access(exe, os.X_OK) else shutil.which(exe)
+        if resolved:
+            print(f"{exe}: ok ({resolved})")
+        else:
+            print(f"{exe}: missing")
+            failures.append(exe)
+
+    for label, value in [("tracker script", tracker_script()), ("wrapper", wrapper_path())]:
+        if os.path.exists(value):
+            print(f"{label}: ok ({value})")
+        else:
+            print(f"{label}: missing ({value})")
+            failures.append(label)
     print(f"tui: {tui_path()}")
+
+    if failures:
+        print("doctor failed: install missing dependencies/files. Nix packages include tmux; manual/non-Nix installs require system tmux and python3 on PATH.", file=sys.stderr)
+        raise SystemExit(1)
 
 
 def main() -> None:

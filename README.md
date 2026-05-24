@@ -23,6 +23,8 @@ Default private paths:
 
 ## Nix usage
 
+The Nix packages include the runtime dependencies they launch, including `tmux`.
+
 ```sh
 nix run .#broccoli-comms
 nix run .#broccoli-comms -- status --json
@@ -42,7 +44,7 @@ Exposed packages:
 
 ## Standalone non-Nix usage
 
-Requires `python3`, `go`, and `tmux` on `PATH`.
+Requires `python3`, `go`, and system `tmux` on `PATH`.
 
 ```sh
 make build
@@ -89,6 +91,8 @@ broccoli-comms attach
 ```
 
 `start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
+
+`agent-tracker-ctl spin <dir> <command> [args...]` also auto-wraps raw commands through `agent-wrapper` before creating the tmux window/session, so spun agents register, heartbeat, inherit the intended tracker/tmux socket environment, and appear in status/communicator views. Commands already starting with `agent-wrapper` are not wrapped again.
 
 Runtime/frontend JSON contracts are documented in `docs/RUNTIME_API.md`:
 

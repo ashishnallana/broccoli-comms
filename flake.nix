@@ -31,7 +31,7 @@
             '';
           };
 
-          agentTrackerCtl = pkgs.writeShellApplication {
+          agentTrackerCtlBase = pkgs.writeShellApplication {
             name = "agent-tracker-ctl";
             runtimeInputs = with pkgs; [ python3 tmux coreutils gnugrep procps bash ];
             text = ''
@@ -42,8 +42,18 @@
 
           agentWrapper = pkgs.writeShellApplication {
             name = "agent-wrapper";
-            runtimeInputs = with pkgs; [ bash tmux coreutils gnugrep python3 procps agentTrackerCtl ];
+            runtimeInputs = with pkgs; [ bash tmux coreutils gnugrep python3 procps agentTrackerCtlBase ];
             text = builtins.readFile ./wrapper/agent-wrapper.sh;
+          };
+
+          agentTrackerCtl = pkgs.writeShellApplication {
+            name = "agent-tracker-ctl";
+            runtimeInputs = with pkgs; [ python3 tmux coreutils gnugrep procps bash agentWrapper ];
+            text = ''
+              export BROCCOLI_COMMS_AGENT_WRAPPER=${agentWrapper}/bin/agent-wrapper
+              export PYTHONPATH=${agentTrackerFiles}:''${PYTHONPATH:-}
+              exec ${pkgs.python3}/bin/python3 ${agentTrackerFiles}/agent-tracker-ctl.py "$@"
+            '';
           };
 
           agentCommunicator = pkgs.buildGoModule {

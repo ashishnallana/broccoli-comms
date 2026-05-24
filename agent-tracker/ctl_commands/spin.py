@@ -1,6 +1,8 @@
 import argparse
 import os
+from pathlib import Path
 import shlex
+import shutil
 import sys
 
 from .common import call_rpc, spin_session_name
@@ -15,6 +17,60 @@ def register(subparsers):
     parser.set_defaults(handler=handle)
 
 
+def resolve_agent_wrapper_path() -> str:
+    """Find the standalone agent-wrapper in package, PATH, or source checkout."""
+    configured = os.environ.get("BROCCOLI_COMMS_AGENT_WRAPPER")
+    if configured:
+        return configured
+
+    on_path = shutil.which("agent-wrapper")
+    if on_path:
+        return on_path
+
+    source_tree_wrapper = Path(__file__).resolve().parents[2] / "wrapper" / "agent-wrapper.sh"
+    if source_tree_wrapper.exists():
+        return str(source_tree_wrapper)
+
+    return "agent-wrapper"
+
+
+def _same_executable(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    if left == right or os.path.realpath(left) == os.path.realpath(right):
+        return True
+    try:
+        return os.path.exists(left) and os.path.exists(right) and os.path.samefile(left, right)
+    except OSError:
+        return False
+
+
+def is_agent_wrapper_command(argv: list[str], wrapper_path: str | None = None) -> bool:
+    if not argv:
+        return False
+    command = argv[0]
+    if os.path.basename(command) == "agent-wrapper":
+        return True
+    wrapper_path = wrapper_path or resolve_agent_wrapper_path()
+    return _same_executable(command, wrapper_path) or _same_executable(command, shutil.which("agent-wrapper"))
+
+
+def build_wrapped_agent_argv(agent_command: str, agent_args: list[str]) -> list[str]:
+    argv = [agent_command] + list(agent_args or [])
+    wrapper_path = resolve_agent_wrapper_path()
+    if is_agent_wrapper_command(argv, wrapper_path):
+        return argv
+    return [wrapper_path] + argv
+
+
+def build_spin_command(agent_command: str, agent_args: list[str], no_fallback: bool) -> str:
+    inner_command = shlex.join(build_wrapped_agent_argv(agent_command, agent_args))
+    if no_fallback:
+        return inner_command
+    caller_path = os.environ.get("PATH", "")
+    return f"bash -c {shlex.quote(f'export PATH={shlex.quote(caller_path)}; {inner_command}; zsh')}"
+
+
 def handle(args):
     directory = os.path.abspath(os.path.expanduser(args.directory))
     if not os.path.isdir(directory):
@@ -22,12 +78,7 @@ def handle(args):
         sys.exit(1)
     session = spin_session_name(directory)
     
-    inner_command = shlex.join([args.agent_command] + args.agent_args)
-    if args.no_fallback:
-        command = inner_command
-    else:
-        caller_path = os.environ.get("PATH", "")
-        command = f"bash -c {shlex.quote(f'export PATH={shlex.quote(caller_path)}; {inner_command}; zsh')}"
+    command = build_spin_command(args.agent_command, args.agent_args, args.no_fallback)
 
     # Do not forward the caller agent's identity to the spun agent.  The
     # tracker/RPC side assigns a fresh placeholder name and passes it as
