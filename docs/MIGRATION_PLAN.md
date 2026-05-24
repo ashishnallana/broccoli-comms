@@ -45,17 +45,20 @@ Committed history:
 - `83482c1` - Wrap spun agents with agent-wrapper
 - `8a5ed7f` - Update migration plan after spin wrapper chunk
 - `38ebd93` - Make communicator TUI app-runtime aware
+- `763f895` - Update migration plan after TUI app-runtime chunk
+- `8c38859` - Add doctor bootstrap diagnostics
 
 Current work:
 
 - Chunk 6 first slice is committed: app-aware TUI runtime status/private socket handling and managed-agent focus/attach CLI affordances.
-- Chunk 7 is approved and ready to commit: `doctor --json`, bootstrap/install docs, and smoke coverage for new-machine readiness checks.
+- Chunk 7 is committed: `doctor --json`, bootstrap/install docs, and smoke coverage for new-machine readiness checks.
+- Next work is final code review/pending-action cleanup before broader future chunks.
 
 Current agent coordination:
 
 - Previous coder/reviewer panes were killed.
 - New `broccoli-comms-coder` and `broccoli-comms-reviewer` agents have been spun and given the current context.
-- Coder and reviewer completed Chunk 6; both can be reused for Chunk 7 and final review.
+- Coder and reviewer completed Chunk 7; both can be reused for final review.
 
 Latest full validation gate passed before Chunk 6 commit:
 
@@ -247,7 +250,7 @@ Future work (not implemented in Chunk 6 first slice):
 
 ### Chunk 7: doctor, bootstrap, and packaging polish
 
-Status: in progress in the working tree; pending full validation, review, and lead commit.
+Status: complete and committed.
 
 Planned tasks:
 
@@ -263,8 +266,8 @@ Planned tasks:
 - [x] Keep exposed flake package names documented in README.
 - [x] Add doctor JSON validation to private-runtime smoke coverage.
 - [x] Run full validation gate.
-- [ ] Reviewer approval for Chunk 7.
-- [ ] Lead commit after approval.
+- [x] Reviewer approval for Chunk 7.
+- [x] Lead commit after approval.
 
 Deferred/final-review items:
 
