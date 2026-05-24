@@ -1,0 +1,971 @@
+import base64
+import binascii
+import json
+import logging
+import socket
+import state
+import tmux_util
+import registry_client
+import datetime
+import time
+import os
+import uuid
+import subprocess
+import struct
+import re
+import fcntl
+from contextlib import contextmanager
+
+BUFFER_SIZE = 4096
+LOCAL_HOSTNAME = os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
+DEFAULT_CAPTURE_PANE_LINES = 25
+
+
+def _default_capture_pane_lines() -> int:
+    raw = os.environ.get("AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES", str(DEFAULT_CAPTURE_PANE_LINES))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_CAPTURE_PANE_LINES
+    return value if value > 0 else DEFAULT_CAPTURE_PANE_LINES
+
+
+@contextmanager
+def _locked_inbox(inbox_file: str):
+    os.makedirs(os.path.dirname(inbox_file), exist_ok=True)
+    lock_path = inbox_file + ".lock"
+    with open(lock_path, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _atomic_write_inbox(inbox_file: str, messages: list[dict]) -> None:
+    tmp = inbox_file + ".tmp"
+    with open(tmp, "w") as f:
+        for msg in messages:
+            f.write(json.dumps(msg) + "\n")
+    os.replace(tmp, inbox_file)
+
+
+class DeliveryTargetNotFound(ValueError):
+    pass
+
+
+class DeliveryValidationError(ValueError):
+    pass
+
+
+def _utc_now_isoformat() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def _generate_unique_agent_name(name: str, session: str = None, is_register: bool = False) -> str:
+    agents = state.get_all_agents()
+    if name:
+        agent_name = name
+        base_name = name
+        num = 1
+        m = re.match(r'^(.*)-(\d+)$', name)
+        if m:
+            base_name = m.group(1)
+            num = int(m.group(2))
+            has_conflict = state.get_agent_id_by_name(agent_name)
+            if has_conflict:
+                is_spawning = (state.get_agent(agent_name) or {}).get("status") == "spawning"
+                if is_spawning and is_register:
+                    return agent_name
+            num += 1
+            agent_name = f"{base_name}-{num}"
+
+        while state.get_agent_id_by_name(agent_name):
+            is_spawning = (state.get_agent(agent_name) or {}).get("status") == "spawning"
+            if is_spawning and is_register:
+                break
+            agent_name = f"{base_name}-{num}"
+            num += 1
+        return agent_name
+    else:
+        num = 1
+        while f"{session}-agent-{num}" in agents:
+            num += 1
+        return f"{session}-agent-{num}"
+
+
+def _best_effort_update_tmux_metadata(tmux_pane, agent_name, agent_id, agent_type, agent_cmd, tmux_socket, no_notify_with_send_keys=False, no_registry=False):
+    """Persist restart-recovery metadata in tmux without making registration depend on tmux."""
+    try:
+        tmux_util.set_agent_id(tmux_pane, agent_id, tmux_socket)
+        tmux_util.set_agent_uuid(tmux_pane, agent_id, tmux_socket)
+        tmux_util.set_agent_name(tmux_pane, agent_name, tmux_socket)
+        tmux_util.set_agent_type(tmux_pane, agent_type or "unknown", tmux_socket)
+        tmux_util.set_agent_cmd(tmux_pane, agent_cmd or "unknown", tmux_socket)
+        tmux_util.set_agent_no_notify_with_send_keys(tmux_pane, no_notify_with_send_keys, tmux_socket)
+        tmux_util.set_agent_no_registry(tmux_pane, no_registry, tmux_socket)
+        tmux_util.set_pane_title(tmux_pane, agent_name, tmux_socket)
+    except Exception as e:
+        logging.warning("failed to update tmux metadata for agent %s pane %s: %s", agent_name, tmux_pane, e)
+
+
+def handle_register(params: dict) -> str:
+    """Handles agent registration, accepting a stable agent_id when provided."""
+    session = params.get("session")
+    tmux_pane = params.get("tmux_pane")
+    wrapper_pid = params.get("wrapper_pid")
+    tmux_socket = params.get("tmux_socket")
+    name = params.get("name")
+    agent_type = params.get("agent_type", "unknown")
+    agent_cmd = params.get("agent_cmd", "unknown")
+    agent_id = params.get("agent_id") or str(uuid.uuid4())
+    no_notify_with_send_keys = bool(params.get("no_notify_with_send_keys", False))
+    no_registry = bool(params.get("no_registry", False))
+    cwd = params.get("cwd")
+    
+    if not (session and tmux_pane and wrapper_pid and tmux_socket):
+        raise ValueError("Invalid params")
+        
+    agents = state.get_all_agents()
+    existing_name_for_id = state.get_agent_name_by_id(agent_id)
+
+    # Remove any existing agent for the same pane to prevent duplicates.
+    for existing_name, info in list(agents.items()):
+        if info.get("tmux_pane") == tmux_pane and existing_name != existing_name_for_id:
+            logging.info(f"Removing existing agent {existing_name} for pane {tmux_pane} before re-registering")
+            state.delete_agent(existing_name)
+            agents = state.get_all_agents()
+
+    if existing_name_for_id:
+        agent_name = existing_name_for_id
+    else:
+        agent_name = _generate_unique_agent_name(name, session, is_register=True)
+        
+    existing_info = state.get_agent(existing_name_for_id) if existing_name_for_id else None
+    state.set_agent(agent_name, {
+        **(existing_info or {}),
+        "session": session,
+        "tmux_pane": tmux_pane,
+        "wrapper_pid": wrapper_pid,
+        "tmux_socket": tmux_socket,
+        "pid": (existing_info or {}).get("pid"),
+        "status": (existing_info or {}).get("status", "idle"),
+        "waiting_approval": (existing_info or {}).get("waiting_approval", False),
+        "agent_id": agent_id,
+        "uuid": agent_id,
+        "agent_type": agent_type or (existing_info or {}).get("agent_type", "unknown"),
+        "agent_cmd": agent_cmd or (existing_info or {}).get("agent_cmd", "unknown"),
+        "no_notify_with_send_keys": no_notify_with_send_keys,
+        "no_registry": no_registry,
+        "cwd": cwd or (existing_info or {}).get("cwd"),
+        "last_heartbeat": time.time(),
+        "recovered_at": None,
+        "pending_notifications": (existing_info or {}).get("pending_notifications", [])
+    })
+    
+    _best_effort_update_tmux_metadata(tmux_pane, agent_name, agent_id, agent_type, agent_cmd, tmux_socket, no_notify_with_send_keys, no_registry)
+    
+    return agent_name
+
+def _fetch_registry_agents_for_list() -> dict:
+    """Best-effort fetch of remote agents from configured registries."""
+    remote_agents = {}
+    for client in registry_client.load_registry_clients():
+        status, body = client.fetch_agents()
+        if status != 200:
+            continue
+        registry_name = client.name or "default"
+        for agent in (body or {}).get("agents") or []:
+            hostname = agent.get("hostname")
+            name = agent.get("name")
+            if not hostname or not name:
+                continue
+            base_key = f"{hostname}/{name}"
+            key = base_key
+            if base_key in remote_agents and remote_agents[base_key].get("agent_id") != agent.get("agent_id"):
+                existing = remote_agents.pop(base_key)
+                existing_registry = existing.get("registry_name") or "default"
+                existing_key = f"{existing_registry}:{base_key}"
+                remote_agents[existing_key] = {**existing, "name": existing_key, "target_address": existing_key}
+                key = f"{registry_name}:{base_key}"
+            elif base_key not in remote_agents and any(k.endswith(f":{base_key}") for k in remote_agents):
+                key = f"{registry_name}:{base_key}"
+            remote_agents[key] = {**agent, "name": key, "scope": "remote", "target_address": key, "registry_name": registry_name}
+    return remote_agents
+
+
+def _merge_registry_agents_for_list(local_agents: dict, remote_agents: dict) -> dict:
+    merged = {name: {**info, "name": info.get("name") or name, "scope": info.get("scope", "local"), "target_address": info.get("target_address") or name} for name, info in (local_agents or {}).items()}
+    local_agent_ids = {info.get("agent_id") for info in (local_agents or {}).values() if info.get("agent_id")}
+    for name, info in (remote_agents or {}).items():
+        if info.get("agent_id") in local_agent_ids:
+            continue
+        merged[name] = info
+    return merged
+
+
+def handle_list(params: dict, caller_pid: int = None) -> dict:
+    """Returns agents in state, marking the caller if identified.
+
+    Remote registry agents are opt-in so status-bar callers keep rendering only
+    local active agents.
+    """
+    agents = state.get_all_agents()
+    if params.get("include_remote"):
+        agents = _merge_registry_agents_for_list(agents, _fetch_registry_agents_for_list())
+    else:
+        agents = {
+            name: {
+                **info,
+                "name": info.get("name") or name,
+                "scope": info.get("scope", "local"),
+                "target_address": info.get("target_address") or name,
+            }
+            for name, info in (agents or {}).items()
+        }
+    caller_name = _identify_agent(params, caller_pid)
+    
+    if caller_name and caller_name in agents:
+        agents[caller_name]["is_this_me"] = True
+        
+    return agents
+
+
+
+def _publish_message_notified(info: dict, agent_name: str, pending_item):
+    sender_name = pending_item.get("sender") if isinstance(pending_item, dict) else pending_item
+    message_id = pending_item.get("message_id") if isinstance(pending_item, dict) else None
+    sender_agent_id = pending_item.get("sender_agent_id") if isinstance(pending_item, dict) else None
+    sender_tracker_id = pending_item.get("sender_tracker_id") if isinstance(pending_item, dict) else None
+    state.publish_event("message_notified", {
+        "target_agent_id": info.get("agent_id"),
+        "target_agent_name": agent_name,
+        "sender": sender_name or "unknown",
+        "message_id": message_id,
+    })
+    if sender_tracker_id and sender_tracker_id != registry_client.TRACKER_ID:
+        registry_client.publish_tracker_event(sender_tracker_id, "message_notified", {
+            "message_id": message_id,
+            "sender_agent_id": sender_agent_id,
+            "receiver_agent_id": info.get("agent_id"),
+            "receiver_agent_name": agent_name,
+        })
+
+
+
+
+def handle_update_agent(params: dict, caller_pid: int = None) -> bool:
+    """Updates agent state fields."""
+    agent_name = _identify_agent(params, caller_pid)
+    if not agent_name:
+        raise ValueError("Agent not identified")
+        
+    kwargs = {k: v for k, v in params.items() if k not in ["agent_id", "agent_name", "tmux_pane"]}
+    if state.update_agent(agent_name, **kwargs):
+        if "status" in kwargs:
+            registry_client.push_agent_update(state.get_agent(agent_name)["agent_id"], kwargs["status"])
+        return True
+    raise ValueError(f"Agent '{agent_name}' not found")
+
+
+def handle_heartbeat(params: dict, caller_pid: int = None) -> bool:
+    """Records a liveness heartbeat for an identified agent."""
+    agent_name = _identify_agent(params, caller_pid)
+    if not agent_name:
+        raise ValueError("Agent not identified")
+
+    kwargs = {k: v for k, v in params.items() if k not in ["agent_id", "agent_name"]}
+    kwargs["last_heartbeat"] = time.time()
+    kwargs["recovered_at"] = None
+    if state.update_agent(agent_name, **kwargs):
+        return True
+    raise ValueError(f"Agent '{agent_name}' not found")
+
+def handle_rename(params: dict, caller_pid: int = None) -> bool:
+    """Renames an agent with safety checks. 
+    Users can rename themselves by providing new_name.
+    Renaming others requires old_name, new_name, and force=True.
+    """
+    old_name = params.get("old_name")
+    new_name = params.get("new_name")
+    force = params.get("force", False)
+    
+    caller_name = _identify_agent(params, caller_pid)
+    
+    if not caller_name and not force:
+        raise ValueError("Could not identify caller. Use --force and provide old_name to rename.")
+
+    # If old_name is not provided, assume self-rename
+    if not old_name:
+        old_name = caller_name
+        
+    if not old_name or not new_name:
+        raise ValueError("Invalid params: new_name is required.")
+
+    if old_name != caller_name and not force:
+        raise ValueError(f"Cannot rename '{old_name}' (you are '{caller_name}'). Use --force to override.")
+        
+    logging.info(f"Attempting to rename agent from {old_name} to {new_name}")
+    if state.rename_agent(old_name, new_name):
+        info = state.get_agent(new_name)
+        tmux_pane = info.get("tmux_pane")
+        tmux_socket = info.get("tmux_socket")
+        logging.info(f"Renamed {old_name} to {new_name} in state. Updating tmux pane {tmux_pane}")
+        if tmux_pane:
+            try:
+                tmux_util.set_agent_name_sync(tmux_pane, new_name, tmux_socket)
+                tmux_util.set_pane_title_sync(tmux_pane, new_name, tmux_socket)
+                # Force status bar refresh
+                subprocess.run(["tmux-status-refresh"], check=False)
+            except Exception as e:
+                logging.error(f"Failed to update tmux pane for {new_name}: {e}")
+        return True
+    logging.error(f"Failed to rename {old_name} to {new_name}. Agent not found or new name exists.")
+    raise ValueError("Agent not found or new name exists")
+
+def handle_unregister(params: dict, caller_pid: int = None) -> bool:
+    """Unregisters an agent from state."""
+    agent_name = _identify_agent(params, caller_pid)
+    if not agent_name:
+        # Try to find by tmux_pane if provided
+        tmux_pane = params.get("tmux_pane")
+        if tmux_pane:
+            agent_name = state.get_agent_name_by_pane(tmux_pane)
+                    
+    if not agent_name:
+        raise ValueError("Agent not identified")
+        
+    info = state.get_agent(agent_name)
+    if not info:
+        raise ValueError(f"Agent '{agent_name}' not found")
+        
+    logging.info(f"Unregistering agent: {agent_name}")
+    
+    # Remove inbox file
+    uuid_str = info.get("uuid") or agent_name
+    inbox_file = os.path.join(state.INBOX_DIR, f"{uuid_str}.inbox")
+    if os.path.exists(inbox_file):
+        try:
+            os.remove(inbox_file)
+        except OSError as e:
+            logging.error(f"Failed to remove inbox file for {agent_name}: {e}")
+            
+    state.delete_agent(agent_name)
+    return True
+
+def _resolve_target_agent_name(params: dict) -> str | None:
+    """Resolves a target agent by explicit agent_id first, then display name."""
+    agent_id = params.get("agent_id")
+    if agent_id:
+        resolved_name = state.get_agent_name_by_id(agent_id)
+        if resolved_name:
+            return resolved_name
+
+    agent_name = params.get("agent_name")
+    if agent_name and state.get_agent(agent_name):
+        return agent_name
+
+    return None
+
+
+def handle_spin_agent(params: dict, caller_pid: int = None) -> str:
+    """Spins a new agent in a new tmux pane."""
+    command = params.get("command")
+    directory = params.get("directory")
+    name = params.get("name")
+    env = params.get("env") or {}
+
+    caller_name = _identify_agent({}, caller_pid) if caller_pid else None
+    caller_info = state.get_agent(caller_name) if caller_name else None
+
+    session = params.get("session") or (caller_info or {}).get("session")
+    target_pane = params.get("target_pane") or (caller_info or {}).get("tmux_pane")
+    tmux_socket = params.get("tmux_socket") or (caller_info or {}).get("tmux_socket")
+
+    if not (session and command and name):
+        raise ValueError("Invalid params")
+
+    parent_id = (caller_info or {}).get("agent_id") or (caller_info or {}).get("uuid")
+    if parent_id and (env.get("AGENT_ID") == parent_id or env.get("AGENT_UUID") == parent_id or env.get("AGENT_NAME") == caller_name):
+        logging.info("Stripping inherited agent identity from spun agent environment for caller %s", caller_name)
+        env.pop("AGENT_ID", None)
+        env.pop("AGENT_NAME", None)
+        env.pop("AGENT_UUID", None)
+    for key in ("AGENT_ID", "AGENT_NAME", "AGENT_UUID"):
+        if env.get(key) == "":
+            env.pop(key, None)
+
+    agent_name = _generate_unique_agent_name(name, session, is_register=False)
+    env["SUGGESTED_AGENT_NAME"] = agent_name
+
+    state.set_agent(agent_name, {"status": "spawning", "timestamp": time.time(), "cwd": directory or "unknown"})
+
+    try:
+        pane_id = tmux_util.spin_agent(agent_name, command, target_pane, session=session, directory=directory, env=env, tmux_socket=tmux_socket)
+        placeholder_updates = {}
+        if session:
+            placeholder_updates["session"] = session
+        if pane_id:
+            placeholder_updates["tmux_pane"] = pane_id
+        if placeholder_updates:
+            state.update_agent(agent_name, **placeholder_updates)
+        return agent_name
+    except Exception as e:
+        state.delete_agent(agent_name)
+        raise RuntimeError(f"Failed to spin agent: {e}")
+
+def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: str | None = None, verify: bool = False) -> str:
+    """Writes a message to a local agent inbox and triggers/queues notification."""
+    info = state.get_agent(target_name_or_id)
+    if not info:
+        raise DeliveryTargetNotFound("Target agent not found")
+
+    current_name = state.get_agent_name_by_id(info["agent_id"]) or target_name_or_id
+    uuid_str = info.get("uuid") or current_name
+    inbox_file = os.path.join(state.INBOX_DIR, f"{uuid_str}.inbox")
+    notify_sender = notify_sender or msg_obj.get("sender", "unknown")
+    attach_dir = None
+    msg_id = msg_obj.get("message_id")
+
+    try:
+        with _locked_inbox(inbox_file):
+            if msg_id and os.path.exists(inbox_file):
+                with open(inbox_file, "r") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            if json.loads(line).get("message_id") == msg_id:
+                                logging.info(f"Skipping duplicate delivery {msg_id} for {current_name}")
+                                return current_name
+                        except json.JSONDecodeError:
+                            continue
+
+            attachments = []
+            if msg_obj.get("attachments"):
+                msg_id = msg_id or str(uuid.uuid4())
+                attach_dir = os.path.join(state.INBOX_DIR, "attachments", uuid_str, msg_id)
+                os.makedirs(attach_dir, exist_ok=True)
+                seen_names = set()
+                for att in msg_obj["attachments"]:
+                    raw_name = att.get("name")
+                    safe_name = os.path.basename(raw_name or "")
+                    if not safe_name or "content_b64" not in att:
+                        raise DeliveryValidationError("invalid attachments")
+                    if safe_name in seen_names:
+                        raise DeliveryValidationError("duplicate attachment name")
+                    seen_names.add(safe_name)
+                    try:
+                        content = base64.b64decode(att["content_b64"], validate=True)
+                    except (binascii.Error, ValueError) as e:
+                        raise DeliveryValidationError(f"invalid attachment payload: {e}")
+                    path = os.path.join(attach_dir, safe_name)
+                    with open(path, "wb") as af:
+                        af.write(content)
+                    attachments.append({
+                        "name": safe_name,
+                        "path": path,
+                        "content_type": att.get("content_type", "application/octet-stream"),
+                        "size": os.path.getsize(path),
+                    })
+                msg_obj = {**msg_obj, "message_id": msg_id, "attachments": attachments}
+
+            with open(inbox_file, "a") as f:
+                f.write(json.dumps(msg_obj) + "\n")
+
+        notification = {
+            "target_agent_id": info.get("agent_id"),
+            "target_agent_name": current_name,
+            "sender": notify_sender,
+            "message_id": msg_obj.get("message_id"),
+            "has_attachments": bool(msg_obj.get("attachments")),
+        }
+        state.publish_event("message_delivered", notification)
+        if msg_obj.get("sender_tracker_id") and msg_obj.get("sender_tracker_id") != registry_client.TRACKER_ID:
+            registry_client.publish_tracker_event(msg_obj.get("sender_tracker_id"), "message_delivered", {
+                "message_id": msg_obj.get("message_id"),
+                "sender_agent_id": msg_obj.get("sender_agent_id"),
+                "receiver_agent_id": info.get("agent_id"),
+                "receiver_agent_name": current_name,
+            })
+
+        pending_item = {
+            "sender": notify_sender,
+            "message_id": msg_obj.get("message_id"),
+            "sender_agent_id": msg_obj.get("sender_agent_id"),
+            "sender_tracker_id": msg_obj.get("sender_tracker_id"),
+        }
+        if info.get("no_notify_with_send_keys", False):
+            logging.info(f"Skipping tmux send-keys notification for {current_name} from {notify_sender}")
+        else:
+            notify_msg = f"New message in inbox from {notify_sender}"
+            enable_reliable = os.environ.get("ENABLE_RELIABLE_SEND_KEYS", "true").lower() == "true"
+            delivered = False
+            if enable_reliable or verify:
+                try:
+                    logging.info(f"Attempting reliable notification delivery for {current_name} to pane {info['tmux_pane']} (verify={verify})")
+                    delivered = tmux_util.send_keys_reliable(info["tmux_pane"], notify_msg, info["tmux_socket"], timeout=5)
+                    if delivered:
+                        logging.info(f"Reliable notification successfully delivered to {current_name} in pane {info['tmux_pane']}")
+                    else:
+                        if verify:
+                            raise RuntimeError("Notification delivery timed out")
+                        logging.warning(f"Reliable notification delivery timed out/failed for {current_name} in pane {info['tmux_pane']}. Falling back to legacy send_keys.")
+                except Exception as e:
+                    if verify:
+                        raise RuntimeError(f"Reliable notification delivery failed: {e}")
+                    logging.warning(f"Error during reliable notification delivery: {e}. Falling back to legacy send_keys.")
+
+            if not delivered:
+                tmux_util.send_keys(info["tmux_pane"], notify_msg, info["tmux_socket"])
+                
+            _publish_message_notified(info, current_name, pending_item)
+        return current_name
+    except DeliveryValidationError:
+        if attach_dir and os.path.isdir(attach_dir):
+            for root, _, files in os.walk(attach_dir, topdown=False):
+                for name in files:
+                    os.remove(os.path.join(root, name))
+                os.rmdir(root)
+        raise
+    except OSError as e:
+        if attach_dir and os.path.isdir(attach_dir):
+            for root, _, files in os.walk(attach_dir, topdown=False):
+                for name in files:
+                    os.remove(os.path.join(root, name))
+                os.rmdir(root)
+        logging.error(f"Failed to write to inbox file for {target_name_or_id}: {e}")
+        raise RuntimeError(f"Failed to send message: {e}")
+
+
+def handle_send_message(params: dict, caller_pid: int = None) -> bool:
+    """Sends a message locally or routes it remotely via the registry when target_address is hostname-qualified."""
+    sender_name = params.get("sender_name") or _identify_agent(params, caller_pid) or "cli-user"
+    msg = params.get("message")
+    attachments = params.get("attachments")
+    target_address = params.get("target_address")
+    sender_info = state.get_agent(params.get("sender_id") or sender_name) or {}
+    sender_id = sender_info.get("agent_id") or params.get("sender_id")
+
+    if target_address and "/" in target_address:
+        registry_name = None
+        hostname, target = target_address.split("/", 1)
+         
+        logging.info("handle_send_message sender=%s sender_id=%s target_address=%s message_id=%s attachments=%s", sender_name, sender_id, target_address, params.get("message_id"), bool(attachments))
+        if ":" in hostname:
+            registry_name, hostname = hostname.split(":", 1)
+        if hostname not in {"local", LOCAL_HOSTNAME}:
+            if registry_name:
+                status, body = registry_client.send_remote_message_to_registry(
+                    registry_name, sender_name, sender_id, registry_client.TRACKER_ID, hostname, target, msg, attachments, params.get("message_id")
+                )
+            else:
+                status, body = registry_client.send_remote_message(
+                    sender_name,
+                    sender_id,
+                    registry_client.TRACKER_ID,
+                    hostname,
+                    target,
+                    msg,
+                    attachments,
+                    params.get("message_id"),
+                )
+            if status == 202:
+                return True
+            raise RuntimeError(f"Remote delivery failed: {(body or {}).get('message', 'unknown error')}")
+        params = {**params, **({"agent_id": target} if _is_uuid(target) else {"agent_name": target})}
+
+    agent_name = _resolve_target_agent_name(params)
+    if not agent_name or (not msg and not attachments):
+        raise ValueError("Invalid params")
+
+    current_name = state.get_agent_name_by_id(state.get_agent(agent_name)["agent_id"])
+    warning_msg = None
+    if agent_name != current_name:
+        warning_msg = f"Note: Agent '{agent_name}' was renamed to '{current_name}'."
+        logging.info(warning_msg)
+
+    payload = {
+        "sender": sender_name,
+        "timestamp": _utc_now_isoformat(),
+        "message": msg,
+        "attachments": attachments,
+        "read": False,
+        "message_id": params.get("message_id"),
+        "sender_agent_id": sender_id,
+        "sender_tracker_id": registry_client.TRACKER_ID,
+    }
+    logging.info("local delivery payload target=%s sender=%s message_id=%s sender_agent_id=%s sender_tracker_id=%s", agent_name, sender_name, payload.get("message_id"), payload.get("sender_agent_id"), payload.get("sender_tracker_id"))
+    verify = params.get("verify", False)
+    deliver_local_message(agent_name, payload, sender_name, verify=verify)
+    return {"success": True, "warning": warning_msg} if warning_msg else True
+
+def _read_and_update_inbox_file(inbox_file: str, clear: bool, last_n: int = None, agent_name: str | None = None, agent_info: dict | None = None) -> dict:
+    """Reads inbox history and marks returned messages read under a file lock."""
+    if not os.path.exists(inbox_file):
+        return {"mode": "history", "messages": []}
+
+    try:
+        with _locked_inbox(inbox_file):
+            all_messages = []
+            with open(inbox_file, "r") as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            all_messages.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+
+            mode = "unread"
+            newly_read = []
+            if last_n is not None:
+                mode = "last_n"
+                result_messages = all_messages[-last_n:] if last_n > 0 else []
+            else:
+                result_messages = [m for m in all_messages if not m.get("read", False)]
+                if not result_messages:
+                    mode = "history"
+                    result_messages = all_messages[-5:]
+
+            if mode != "history":
+                for msg in result_messages:
+                    if not msg.get("read", False):
+                        newly_read.append(msg)
+                    msg["read"] = True
+
+            if clear:
+                remaining = all_messages[-25:] if len(all_messages) > 25 else all_messages
+                _atomic_write_inbox(inbox_file, remaining)
+            else:
+                _atomic_write_inbox(inbox_file, all_messages)
+
+        if agent_name and agent_info:
+            for msg in newly_read:
+                logging.info("publishing message_read target=%s sender=%s message_id=%s sender_agent_id=%s sender_tracker_id=%s", agent_name, msg.get("sender", "unknown"), msg.get("message_id"), msg.get("sender_agent_id"), msg.get("sender_tracker_id"))
+                state.publish_event("message_read", {
+                    "target_agent_id": agent_info.get("agent_id"),
+                    "target_agent_name": agent_name,
+                    "sender": msg.get("sender", "unknown"),
+                    "message_id": msg.get("message_id"),
+                })
+                if msg.get("sender_tracker_id") and msg.get("sender_tracker_id") != registry_client.TRACKER_ID:
+                    logging.info("relaying remote message_read back to sender_tracker_id=%s message_id=%s reader=%s", msg.get("sender_tracker_id"), msg.get("message_id"), agent_name)
+                    registry_client.publish_tracker_event(msg.get("sender_tracker_id"), "message_read", {
+                        "message_id": msg.get("message_id"),
+                        "sender_agent_id": msg.get("sender_agent_id"),
+                        "reader_agent_id": agent_info.get("agent_id"),
+                        "reader_agent_name": agent_name,
+                    })
+        return {"mode": mode, "messages": result_messages}
+    except IOError as e:
+        raise RuntimeError(f"Failed to access inbox file: {e}")
+
+
+def _identify_agent(params: dict, caller_pid: int = None) -> str:
+    """Identifies the agent name based on params (id/name/pane) or caller PID."""
+    agent_id = params.get("sender_id") or params.get("agent_id")
+    if agent_id:
+        resolved_name = state.get_agent_name_by_id(agent_id)
+        if resolved_name:
+            return resolved_name
+
+    agent_name = params.get("agent_name")
+    if agent_name:
+        return agent_name
+        
+    tmux_pane = params.get("tmux_pane")
+    agents = state.get_all_agents()
+    
+    if tmux_pane:
+        resolved_name = state.get_agent_name_by_pane(tmux_pane)
+        if resolved_name:
+            return resolved_name
+                
+    if caller_pid:
+        # Trace up the process tree to find a match with wrapper_pid or pid
+        curr_pid = caller_pid
+        while curr_pid > 1:
+            for name, info in agents.items():
+                if info.get("wrapper_pid") == curr_pid or info.get("pid") == curr_pid:
+                    return name
+            try:
+                with open(f"/proc/{curr_pid}/status", "r") as f:
+                    for line in f:
+                        if line.startswith("PPid:"):
+                            curr_pid = int(line.split()[1])
+                            break
+                    else:
+                        break
+            except (IOError, ValueError):
+                break
+    return None
+
+
+def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
+    """Handles get_inbox RPC call by reading directly from the inbox file."""
+    clear = params.get("clear", False)
+    last_n = params.get("last_n")
+    
+    if last_n is not None:
+        try:
+            last_n = int(last_n)
+        except ValueError:
+            raise ValueError("last_n must be an integer")
+            
+    agent_name = _identify_agent(params, caller_pid)
+    if not agent_name:
+        raise ValueError("Agent not identified. Provide agent_name or run from an agent pane.")
+        
+    info = state.get_agent(agent_name)
+    if not info:
+        raise ValueError(f"Agent '{agent_name}' not found")
+        
+    uuid_str = info.get("uuid") or agent_name
+    inbox_file = os.path.join(state.INBOX_DIR, f"{uuid_str}.inbox")
+            
+    return _read_and_update_inbox_file(inbox_file, clear, last_n, agent_name, info)
+
+
+def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
+    """Best-effort event long-poll for observers; clients must read inbox for truth."""
+    try:
+        since = int(params.get("since", 0) if params.get("since") is not None else 0)
+        timeout = float(params.get("timeout", 25.0) if params.get("timeout") is not None else 25.0)
+    except (TypeError, ValueError):
+        raise ValueError("since must be an integer and timeout must be a number")
+    if since < 0 or timeout < 0:
+        raise ValueError("since and timeout must be non-negative")
+    filters = {
+        key: params[key]
+        for key in ("target_agent_id", "target_agent_name")
+        if params.get(key)
+    }
+    return state.wait_events(since=since, timeout=timeout, filters=filters)
+
+
+def handle_whoami(params: dict, caller_pid: int = None) -> dict:
+    """Returns information about the calling agent."""
+    agent_name = _identify_agent(params, caller_pid)
+    if not agent_name:
+        raise ValueError("Agent not identified. Run from an agent pane or process.")
+        
+    info = state.get_agent(agent_name)
+    if not info:
+        raise ValueError(f"Agent '{agent_name}' not found in state.")
+        
+    return {
+        "name": agent_name,
+        "agent_id": info.get("agent_id") or info.get("uuid"),
+        "uuid": info.get("uuid"),
+        "pid": info.get("pid"),
+        "pane_id": info.get("tmux_pane")
+    }
+
+
+def handle_capture_pane(params: dict, caller_pid: int = None) -> dict:
+    """Captures visible text and details for a specified agent or tmux pane."""
+    last_lines = params.get("last_lines", _default_capture_pane_lines())
+    if last_lines is not None:
+        try:
+            last_lines = int(last_lines)
+        except ValueError:
+            raise ValueError("last_lines must be an integer")
+        
+        # Enforce safety bounds: cap last_lines at 1000 and set floor at 1
+        if last_lines > 1000:
+            logging.info(f"Capping requested last_lines={last_lines} to 1000 for safety.")
+            last_lines = 1000
+        elif last_lines <= 0:
+            last_lines = 1
+            
+    include_ansi = bool(params.get("include_ansi", False))
+
+    agent_name = None
+    agent_id = None
+    tmux_pane = params.get("tmux_pane") or params.get("pane")
+    tmux_socket = params.get("tmux_socket")
+    session = None
+
+    # Try to resolve via agent_name or agent_id
+    resolved_agent_name = _resolve_target_agent_name(params)
+    if resolved_agent_name:
+        agent_name = resolved_agent_name
+        info = state.get_agent(agent_name)
+        if info:
+            agent_id = info.get("agent_id")
+            tmux_pane = tmux_pane or info.get("tmux_pane")
+            tmux_socket = tmux_socket or info.get("tmux_socket")
+            session = info.get("session")
+    
+    # If no agent was resolved but we have a tmux_pane, look up if there is a matching agent.
+    if not agent_name and tmux_pane:
+        resolved_agent_name = state.get_agent_name_by_pane(tmux_pane)
+        if resolved_agent_name:
+            agent_name = resolved_agent_name
+            info = state.get_agent(agent_name)
+            if info:
+                agent_id = info.get("agent_id")
+                tmux_socket = tmux_socket or info.get("tmux_socket")
+                session = info.get("session")
+
+    # If we still don't have a tmux_pane, identify the caller agent (self-capture)
+    if not tmux_pane:
+        caller_name = _identify_agent(params, caller_pid)
+        if caller_name:
+            agent_name = caller_name
+            info = state.get_agent(agent_name)
+            if info:
+                agent_id = info.get("agent_id")
+                tmux_pane = info.get("tmux_pane")
+                tmux_socket = tmux_socket or info.get("tmux_socket")
+                session = info.get("session")
+
+    if not tmux_pane:
+        raise ValueError("Target agent or tmux pane could not be resolved")
+
+    # Query session info if not already retrieved
+    if not session:
+        pane_info = tmux_util.get_pane_info(tmux_pane)
+        if pane_info:
+            session = pane_info.get("session")
+
+    # Query copy-mode status
+    copy_mode = tmux_util.is_pane_in_copy_mode(tmux_pane, tmux_socket)
+
+    # Capture visible text with graceful failure handling
+    try:
+        content = tmux_util.capture_pane_visible_text(
+            tmux_pane,
+            last_lines=last_lines,
+            socket_path=tmux_socket,
+            include_ansi=include_ansi
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to capture pane visible text buffer: {e}")
+
+    captured_at = _utc_now_isoformat()
+
+    return {
+        "agent_name": agent_name,
+        "agent_id": agent_id,
+        "tmux_pane": tmux_pane,
+        "session": session,
+        "copy_mode": copy_mode,
+        "captured_at": captured_at,
+        "lines_requested": last_lines,
+        "content": content
+    }
+
+
+def handle_publish_tracker_event(params: dict) -> dict:
+    target_tracker_id = params.get("target_tracker_id")
+    event_type = params.get("event_type")
+    payload = params.get("payload")
+    if not target_tracker_id or not event_type or not payload:
+        raise ValueError("target_tracker_id, event_type, and payload are required")
+
+    status = registry_client.publish_tracker_event(target_tracker_id, event_type, payload)
+    if status in (200, 202):
+        return {"success": True}
+    raise RuntimeError(f"Failed to publish tracker event: status {status}")
+
+
+def handle_list_trackers(params: dict) -> list[dict]:
+    """Fetches registered trackers and configs from the registry."""
+    status, body = registry_client.fetch_trackers()
+    if status == 200:
+        return body.get("trackers") or []
+    raise RuntimeError(f"Failed to list trackers from registry: status {status}")
+
+
+dispatcher = {
+    "register": handle_register,
+    "list": handle_list,
+    "update_agent": handle_update_agent,
+    "heartbeat": handle_heartbeat,
+    "rename": handle_rename,
+    "spin_agent": handle_spin_agent,
+    "send_message": handle_send_message,
+    "get_inbox": handle_get_inbox,
+    "wait_events": handle_wait_events,
+    "whoami": handle_whoami,
+    "unregister": handle_unregister,
+    "publish_tracker_event": handle_publish_tracker_event,
+    "list_trackers": handle_list_trackers,
+    "capture_pane": handle_capture_pane
+}
+
+def handle_client(conn: socket.socket) -> None:
+    """Handles a single client connection, reading JSON-RPC request and sending response."""
+    try:
+        conn.settimeout(2.0)
+        
+        # Try to get peer credentials (PID)
+        caller_pid = None
+        try:
+            # SO_PEERCRED returns (pid, uid, gid) as 3 integers
+            creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i'))
+            caller_pid, _, _ = struct.unpack('3i', creds)
+        except Exception as e:
+            logging.debug(f"Failed to get SO_PEERCRED: {e}")
+
+        data = b""
+        while True:
+            chunk = conn.recv(BUFFER_SIZE)
+            if not chunk:
+                break
+            data += chunk
+            
+        if not data:
+            return
+            
+        try:
+            req = json.loads(data.decode())
+        except json.JSONDecodeError:
+            return
+            
+        method = req.get("method")
+        params = req.get("params", {})
+        req_id = req.get("id")
+        
+        result = None
+        error = None
+        
+        handler = dispatcher.get(method)
+        if handler:
+            try:
+                # Pass caller_pid to handlers that might need it
+                if method in ["get_inbox", "update_agent", "heartbeat", "send_message", "wait_events", "whoami", "list", "rename", "unregister", "spin_agent", "capture_pane"]:
+                    result = handler(params, caller_pid=caller_pid)
+                else:
+                    result = handler(params)
+            except ValueError as e:
+                error = {"code": -32602, "message": str(e)}
+            except RuntimeError as e:
+                error = {"code": -32603, "message": str(e)}
+            except Exception as e:
+                error = {"code": -32603, "message": f"Internal error: {e}"}
+        else:
+            error = {"code": -32601, "message": "Method not found"}
+            
+        resp = {"jsonrpc": "2.0", "id": req_id}
+        if error:
+            resp["error"] = error
+        else:
+            resp["result"] = result
+            
+        conn.sendall(json.dumps(resp).encode())
+    except (socket.error, socket.timeout) as e:
+        logging.error(f"Socket error handling client: {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error handling client: {e}")
+    finally:
+        conn.close()

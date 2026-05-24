@@ -1,0 +1,1072 @@
+import datetime
+import json
+import os
+import threading
+import time
+import unittest
+from unittest import mock
+
+import registry_client
+import rpc_handler
+import state
+
+
+class TestRpcHandler(unittest.TestCase):
+    def setUp(self):
+        state.state = {}
+        state.name_index = {}
+        state.pane_index = {}
+        state.events = []
+        state.event_seq = 0
+        state.INBOX_DIR = "/tmp/test-agent-inboxes"
+
+    @mock.patch("tmux_util.set_agent_no_registry")
+    @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")
+    @mock.patch("tmux_util.set_agent_cmd")
+    @mock.patch("tmux_util.set_agent_type")
+    @mock.patch("tmux_util.set_agent_name")
+    @mock.patch("tmux_util.set_pane_title")
+    @mock.patch("tmux_util.set_agent_uuid")
+    @mock.patch("tmux_util.set_agent_id")
+    def test_register_same_agent_id_preserves_runtime_state(self, _set_agent_id, _set_agent_uuid, _set_pane_title, _set_agent_name, _set_agent_type, _set_agent_cmd, _set_agent_no_notify, _set_agent_no_registry):
+        state.set_agent(
+            "agent1",
+            {
+                "agent_id": "id-1",
+                "status": "working",
+                "waiting_approval": True,
+                "pending_notifications": ["peer-agent"],
+                "pid": 12345,
+                "session": "old-session",
+                "tmux_pane": "%1",
+                "tmux_socket": "old-sock",
+                "wrapper_pid": 111,
+                "agent_type": "pi",
+                "agent_cmd": "pi",
+            },
+        )
+
+        name = rpc_handler.handle_register(
+            {
+                "session": "new-session",
+                "tmux_pane": "%2",
+                "wrapper_pid": 222,
+                "tmux_socket": "new-sock",
+                "name": "agent1",
+                "agent_type": "pi",
+                "agent_cmd": "pi",
+                "agent_id": "id-1",
+            }
+        )
+
+        self.assertEqual(name, "agent1")
+        info = state.get_agent("agent1")
+        self.assertEqual(info["agent_id"], "id-1")
+        self.assertEqual(info["status"], "working")
+        self.assertTrue(info["waiting_approval"])
+        self.assertEqual(info["pending_notifications"], ["peer-agent"])
+        self.assertEqual(info["pid"], 12345)
+        self.assertEqual(info["session"], "new-session")
+        self.assertEqual(info["tmux_pane"], "%2")
+        self.assertEqual(info["tmux_socket"], "new-sock")
+        self.assertEqual(info["wrapper_pid"], 222)
+        self.assertFalse(info.get("no_notify_with_send_keys", False))
+        self.assertFalse(info.get("no_registry", False))
+        self.assertIn("last_heartbeat", info)
+        self.assertEqual(len(state.state), 1)
+
+    @mock.patch("tmux_util.set_pane_title")
+    @mock.patch("tmux_util.set_agent_no_registry")
+    @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")
+    @mock.patch("tmux_util.set_agent_cmd")
+    @mock.patch("tmux_util.set_agent_type")
+    @mock.patch("tmux_util.set_agent_name")
+    @mock.patch("tmux_util.set_agent_uuid")
+    @mock.patch("tmux_util.set_agent_id")
+    def test_register_persists_restart_recovery_tmux_metadata(
+        self,
+        set_agent_id,
+        set_agent_uuid,
+        set_agent_name,
+        set_agent_type,
+        set_agent_cmd,
+        set_agent_no_notify,
+        set_agent_no_registry,
+        set_pane_title,
+    ):
+        name = rpc_handler.handle_register(
+            {
+                "session": "sess",
+                "tmux_pane": "%9",
+                "wrapper_pid": 999,
+                "tmux_socket": "sock",
+                "name": "agent9",
+                "agent_type": "pi",
+                "agent_cmd": "pi",
+                "agent_id": "id-9",
+            }
+        )
+
+        self.assertEqual(name, "agent9")
+        set_agent_id.assert_called_once_with("%9", "id-9", "sock")
+        set_agent_uuid.assert_called_once_with("%9", "id-9", "sock")
+        set_agent_name.assert_called_once_with("%9", "agent9", "sock")
+        set_agent_type.assert_called_once_with("%9", "pi", "sock")
+        set_agent_cmd.assert_called_once_with("%9", "pi", "sock")
+        set_agent_no_notify.assert_called_once_with("%9", False, "sock")
+        set_agent_no_registry.assert_called_once_with("%9", False, "sock")
+        set_pane_title.assert_called_once_with("%9", "agent9", "sock")
+
+    @mock.patch("tmux_util.set_pane_title")
+    @mock.patch("tmux_util.set_agent_no_registry")
+    @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")
+    @mock.patch("tmux_util.set_agent_cmd")
+    @mock.patch("tmux_util.set_agent_type")
+    @mock.patch("tmux_util.set_agent_name")
+    @mock.patch("tmux_util.set_agent_uuid")
+    @mock.patch("tmux_util.set_agent_id")
+    def test_register_stores_no_registry_and_no_notify_flags(
+        self,
+        _set_agent_id,
+        _set_agent_uuid,
+        _set_agent_name,
+        _set_agent_type,
+        _set_agent_cmd,
+        set_agent_no_notify,
+        set_agent_no_registry,
+        _set_pane_title,
+    ):
+        name = rpc_handler.handle_register({
+            "session": "sess",
+            "tmux_pane": "%9",
+            "wrapper_pid": 999,
+            "tmux_socket": "sock",
+            "name": "agent9",
+            "agent_type": "pi",
+            "agent_cmd": "pi",
+            "agent_id": "id-9",
+            "no_notify_with_send_keys": True,
+            "no_registry": True,
+            "cwd": "/work/project",
+        })
+        self.assertEqual(name, "agent9")
+        info = state.get_agent("agent9")
+        self.assertTrue(info["no_notify_with_send_keys"])
+        self.assertTrue(info["no_registry"])
+        self.assertEqual(info["cwd"], "/work/project")
+        set_agent_no_notify.assert_called_once_with("%9", True, "sock")
+        set_agent_no_registry.assert_called_once_with("%9", True, "sock")
+
+    @mock.patch("rpc_handler.time.time", return_value=123.0)
+    @mock.patch("tmux_util.set_agent_no_registry")
+    @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")
+    @mock.patch("tmux_util.set_agent_cmd")
+    @mock.patch("tmux_util.set_agent_type")
+    @mock.patch("tmux_util.set_agent_name")
+    @mock.patch("tmux_util.set_pane_title")
+    @mock.patch("tmux_util.set_agent_uuid")
+    @mock.patch("tmux_util.set_agent_id")
+    @mock.patch("state.discover_agent_process", return_value=None)
+    @mock.patch("tmux_util.get_pane_info", return_value={"tty": "/dev/pts/1", "session": "sess", "pid": 101})
+    @mock.patch("tmux_util.list_panes", return_value=[{
+        "pane_id": "%1",
+        "agent_name": "agent1",
+        "agent_id": "id-1",
+        "agent_uuid": "id-1",
+        "agent_type": "pi",
+        "agent_cmd": "pi",
+        "no_notify_with_send_keys": True,
+        "no_registry": True,
+        "pane_active": False,
+    }])
+    def test_register_clears_recovered_at_after_recovery(
+        self,
+        _list_panes,
+        _get_pane_info,
+        _discover_agent_process,
+        _set_agent_id,
+        _set_agent_uuid,
+        _set_pane_title,
+        _set_agent_name,
+        _set_agent_type,
+        _set_agent_cmd,
+        _set_agent_no_notify,
+        _set_agent_no_registry,
+        _time,
+    ):
+        state.init_state()
+        recovered = state.get_agent("agent1")
+        self.assertEqual(recovered["status"], "unknown")
+        self.assertTrue(recovered["no_notify_with_send_keys"])
+        self.assertTrue(recovered["no_registry"])
+        self.assertIsNotNone(recovered["recovered_at"])
+
+        rpc_handler.handle_register(
+            {
+                "session": "new-session",
+                "tmux_pane": "%2",
+                "wrapper_pid": 222,
+                "tmux_socket": "new-sock",
+                "name": "agent1",
+                "agent_type": "pi",
+                "agent_cmd": "pi",
+                "agent_id": "id-1",
+            }
+        )
+
+        info = state.get_agent("agent1")
+        self.assertEqual(info["tmux_pane"], "%2")
+        self.assertEqual(info["wrapper_pid"], 222)
+        self.assertEqual(info["last_heartbeat"], 123.0)
+        self.assertFalse(info["no_notify_with_send_keys"])
+        self.assertFalse(info["no_registry"])
+        self.assertIsNone(info["recovered_at"])
+
+    @mock.patch("rpc_handler.time.time", return_value=456.0)
+    def test_heartbeat_clears_recovered_at(self, _time):
+        state.set_agent(
+            "agent1",
+            {
+                "agent_id": "id-1",
+                "status": "unknown",
+                "recovered_at": 100.0,
+            },
+        )
+
+        self.assertTrue(rpc_handler.handle_heartbeat({"agent_id": "id-1"}))
+
+        info = state.get_agent("agent1")
+        self.assertEqual(info["last_heartbeat"], 456.0)
+        self.assertIsNone(info["recovered_at"])
+
+    @mock.patch("tmux_util.set_agent_uuid")
+    @mock.patch("tmux_util.set_agent_id")
+    @mock.patch("state.discover_agent_process", return_value=None)
+    @mock.patch("tmux_util.get_pane_info", return_value={"tty": "/dev/pts/1", "session": "sess", "pid": 101})
+    @mock.patch("tmux_util.list_panes", return_value=[{
+        "pane_id": "%1",
+        "agent_name": "agent2",
+        "agent_id": "id-1",
+        "agent_uuid": "id-1",
+        "agent_type": "pi",
+        "agent_cmd": "pi",
+        "pane_active": False,
+    }])
+    @mock.patch("subprocess.run")
+    @mock.patch("tmux_util.set_pane_title_sync")
+    @mock.patch("tmux_util.set_agent_name_sync")
+    def test_recovery_prefers_tmux_name_over_stale_register_name(
+        self,
+        _set_agent_name_sync,
+        _set_pane_title_sync,
+        _subprocess_run,
+        _list_panes,
+        _get_pane_info,
+        _discover_agent_process,
+        _set_agent_id,
+        _set_agent_uuid,
+    ):
+        state.set_agent(
+            "agent1",
+            {
+                "agent_id": "id-1",
+                "status": "idle",
+                "tmux_pane": "%1",
+                "tmux_socket": "sock",
+            },
+        )
+        self.assertTrue(rpc_handler.handle_rename({"old_name": "agent1", "new_name": "agent2", "force": True}))
+        self.assertIsNotNone(state.get_agent("agent2"))
+
+        state.state = {}
+        state.name_index = {}
+        state.init_state()
+        self.assertIsNotNone(state.get_agent("agent2"))
+
+        assigned_name = rpc_handler.handle_register(
+            {
+                "session": "new-session",
+                "tmux_pane": "%2",
+                "wrapper_pid": 222,
+                "tmux_socket": "new-sock",
+                "name": "agent1",
+                "agent_type": "pi",
+                "agent_cmd": "pi",
+                "agent_id": "id-1",
+            }
+        )
+
+        self.assertEqual(assigned_name, "agent2")
+        self.assertIsNone(state.get_agent("agent1"))
+        info = state.get_agent("agent2")
+        self.assertEqual(info["agent_id"], "id-1")
+        self.assertEqual(info["tmux_pane"], "%2")
+
+    @mock.patch("tmux_util.send_keys")
+    def test_send_message_targets_agent_id(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent(
+                "agent1",
+                {
+                    "agent_id": "id-1",
+                    "status": "working",
+                    "waiting_approval": False,
+                    "pending_notifications": [],
+                    "tmux_pane": "%1",
+                    "tmux_socket": "sock",
+                },
+            )
+            self.assertTrue(
+                rpc_handler.handle_send_message({"agent_id": "id-1", "message": "hello", "sender_name": "tester"})
+            )
+            info = state.get_agent("agent1")
+            self.assertEqual(info.get("pending_notifications", []), [])
+            send_keys.assert_called_once_with("%1", "New message in inbox from tester", "sock")
+            with open(inbox_path, "r") as f:
+                message = json.loads(f.readline())
+            timestamp = datetime.datetime.fromisoformat(message["timestamp"])
+            self.assertIsNotNone(timestamp.tzinfo)
+            self.assertIsNotNone(timestamp.utcoffset())
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    def test_deliver_local_message_is_idempotent_for_message_id(self):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent(
+                "agent1",
+                {
+                    "agent_id": "id-1",
+                    "status": "working",
+                    "waiting_approval": False,
+                    "pending_notifications": [],
+                    "tmux_pane": "%1",
+                    "tmux_socket": "sock",
+                },
+            )
+            msg = {"sender": "tester", "timestamp": rpc_handler._utc_now_isoformat(), "message": "hello", "read": False, "message_id": "m1"}
+            rpc_handler.deliver_local_message("agent1", msg, "tester")
+            rpc_handler.deliver_local_message("agent1", msg, "tester")
+            with open(inbox_path, "r") as f:
+                lines = [line for line in f if line.strip()]
+            self.assertEqual(len(lines), 1)
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    def test_deliver_local_message_publishes_event_for_communicator(self, _send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "sock",
+                "status": "idle",
+            })
+
+            rpc_handler.deliver_local_message("receiver", {
+                "sender": "sender-agent",
+                "timestamp": "now",
+                "message": "hello",
+                "read": False,
+                "message_id": "msg-1",
+            })
+
+            result = rpc_handler.handle_wait_events({"since": 0, "timeout": 0})
+            self.assertEqual(len(result["events"]), 2)
+            event = result["events"][0]
+            self.assertEqual(event["type"], "message_delivered")
+            self.assertEqual(event["target_agent_id"], "receiver-id")
+            self.assertEqual(event["target_agent_name"], "receiver")
+            self.assertEqual(event["sender"], "sender-agent")
+            self.assertEqual(event["message_id"], "msg-1")
+            self.assertEqual(result["events"][1]["type"], "message_notified")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    def test_deliver_local_message_publishes_notified_event_when_idle(self, _send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "sock",
+                "status": "idle",
+            })
+
+            rpc_handler.deliver_local_message("receiver", {
+                "sender": "sender-agent",
+                "timestamp": "now",
+                "message": "hello",
+                "read": False,
+                "message_id": "msg-1",
+            })
+
+            result = rpc_handler.handle_wait_events({"since": 0, "timeout": 0})
+            self.assertEqual([event["type"] for event in result["events"]], ["message_delivered", "message_notified"])
+            self.assertEqual(result["events"][1]["message_id"], "msg-1")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("registry_client.publish_tracker_event")
+    @mock.patch("tmux_util.send_keys")
+    def test_deliver_local_message_relays_remote_delivered_and_notified(self, _send_keys, publish_tracker_event):
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "sock",
+                "status": "idle",
+            })
+
+            rpc_handler.deliver_local_message("receiver", {
+                "sender": "sender-agent (via host)",
+                "timestamp": "now",
+                "message": "hello",
+                "read": False,
+                "message_id": "msg-1",
+                "sender_agent_id": "sender-id",
+                "sender_tracker_id": "tracker-1",
+            })
+
+            publish_tracker_event.assert_any_call("tracker-1", "message_delivered", {
+                "message_id": "msg-1",
+                "sender_agent_id": "sender-id",
+                "receiver_agent_id": "receiver-id",
+                "receiver_agent_name": "receiver",
+            })
+            publish_tracker_event.assert_any_call("tracker-1", "message_notified", {
+                "message_id": "msg-1",
+                "sender_agent_id": "sender-id",
+                "receiver_agent_id": "receiver-id",
+                "receiver_agent_name": "receiver",
+            })
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    def test_wait_events_timeout_returns_empty_best_effort_response(self):
+        result = rpc_handler.handle_wait_events({"since": 0, "timeout": 0})
+        self.assertEqual(result["events"], [])
+        self.assertEqual(result["last_seq"], 0)
+        self.assertFalse(result["reset"])
+        self.assertFalse(result["gap"])
+
+    def test_wait_events_wakes_on_publish(self):
+        result_box = {}
+        waiter = threading.Thread(
+            target=lambda: result_box.update(rpc_handler.handle_wait_events({"since": 0, "timeout": 2}))
+        )
+        waiter.start()
+        time.sleep(0.05)
+        state.publish_event("message_delivered", {"target_agent_id": "id-1"})
+        waiter.join(timeout=1)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(result_box["events"][0]["target_agent_id"], "id-1")
+
+    def test_wait_events_reports_seq_reset(self):
+        result = rpc_handler.handle_wait_events({"since": 99, "timeout": 0})
+        self.assertTrue(result["reset"])
+        self.assertEqual(result["events"], [])
+        state.publish_event("message_delivered", {"target_agent_id": "id-1"})
+        result = rpc_handler.handle_wait_events({"since": 99, "timeout": 0})
+        self.assertTrue(result["reset"])
+        self.assertEqual(len(result["events"]), 1)
+
+    def test_wait_events_reports_gap_when_events_truncated(self):
+        old_max = state.MAX_EVENTS
+        try:
+            state.MAX_EVENTS = 2
+            state.publish_event("message_delivered", {"target_agent_id": "id-1"})
+            state.publish_event("message_delivered", {"target_agent_id": "id-2"})
+            state.publish_event("message_delivered", {"target_agent_id": "id-3"})
+            result = rpc_handler.handle_wait_events({"since": 0, "timeout": 0})
+            self.assertTrue(result["gap"])
+            self.assertEqual([event["target_agent_id"] for event in result["events"]], ["id-2", "id-3"])
+        finally:
+            state.MAX_EVENTS = old_max
+
+    def test_wait_events_filters_and_rejects_invalid_params(self):
+        state.publish_event("message_delivered", {"target_agent_id": "id-1", "target_agent_name": "one"})
+        state.publish_event("message_delivered", {"target_agent_id": "id-2", "target_agent_name": "two"})
+        result = rpc_handler.handle_wait_events({"since": 0, "timeout": 0, "target_agent_id": "id-2"})
+        self.assertEqual(len(result["events"]), 1)
+        self.assertEqual(result["events"][0]["target_agent_name"], "two")
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_wait_events({"since": -1})
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_wait_events({"timeout": "bad"})
+
+    @mock.patch("tmux_util.send_keys")
+    def test_no_notify_with_send_keys_suppresses_tmux_notification(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent(
+                "agent1",
+                {
+                    "agent_id": "id-1",
+                    "status": "idle",
+                    "waiting_approval": False,
+                    "pending_notifications": [],
+                    "tmux_pane": "%1",
+                    "tmux_socket": "sock",
+                    "no_notify_with_send_keys": True,
+                },
+            )
+
+            self.assertTrue(
+                rpc_handler.handle_send_message({"agent_id": "id-1", "message": "hello", "sender_name": "tester"})
+            )
+
+            send_keys.assert_not_called()
+            self.assertEqual(state.get_agent("agent1").get("pending_notifications"), [])
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("state.publish_event")
+    def test_get_inbox_publishes_message_read_event_once(self, publish_event):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            with open(inbox_path, "w") as f:
+                f.write(json.dumps({"sender": "agent-communicator", "message": "hi", "read": False, "message_id": "m1"}) + "\n")
+
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1"})
+            self.assertEqual(result["mode"], "unread")
+            publish_event.assert_called_once_with("message_read", {
+                "target_agent_id": "id-1",
+                "target_agent_name": "agent1",
+                "sender": "agent-communicator",
+                "message_id": "m1",
+            })
+
+            publish_event.reset_mock()
+            rpc_handler.handle_get_inbox({"agent_name": "agent1"})
+            publish_event.assert_not_called()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    def test_send_message_notifies_recovered_unknown_agent(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent(
+                "agent1",
+                {
+                    "agent_id": "id-1",
+                    "status": "unknown",
+                    "waiting_approval": False,
+                    "pending_notifications": [],
+                    "tmux_pane": "%1",
+                    "tmux_socket": "sock",
+                },
+            )
+
+            self.assertTrue(
+                rpc_handler.handle_send_message({"agent_id": "id-1", "message": "hello", "sender_name": "tester"})
+            )
+
+            info = state.get_agent("agent1")
+            self.assertEqual(info["pending_notifications"], [])
+            send_keys.assert_called_once_with("%1", "New message in inbox from tester", "sock")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.set_agent_uuid")
+    @mock.patch("tmux_util.set_agent_id")
+    def test_simultaneous_wrapper_reconnect_race(self, _set_agent_id, _set_agent_uuid):
+        state.set_agent(
+            "agent1",
+            {
+                "agent_id": "id-1",
+                "status": "unknown",
+                "waiting_approval": False,
+                "pending_notifications": [],
+                "tmux_pane": "%1",
+                "tmux_socket": "sock",
+            },
+        )
+
+        name1 = rpc_handler.handle_register(
+            {
+                "session": "sess",
+                "tmux_pane": "%1",
+                "wrapper_pid": 111,
+                "tmux_socket": "sock",
+                "name": "agent1",
+                "agent_id": "id-1",
+            }
+        )
+        name2 = rpc_handler.handle_register(
+            {
+                "session": "sess",
+                "tmux_pane": "%1",
+                "wrapper_pid": 222,
+                "tmux_socket": "sock",
+                "name": "agent1",
+                "agent_id": "id-1",
+            }
+        )
+
+        self.assertEqual(name1, "agent1")
+        self.assertEqual(name2, "agent1")
+        self.assertEqual(len(state.state), 1)
+        info = state.get_agent("agent1")
+        self.assertEqual(info["wrapper_pid"], 222)
+        self.assertEqual(info["status"], "unknown")
+
+    @mock.patch("tmux_util.spin_agent")
+    @mock.patch("tmux_util.set_agent_uuid")
+    @mock.patch("tmux_util.set_agent_id")
+    def test_placeholder_spawning_replaced_by_real_register(self, _set_agent_id, _set_agent_uuid, _spin):
+        _spin.return_value = "%42"
+        assigned_name = rpc_handler.handle_spin_agent(
+            {"session": "sess", "command": "jetski", "name": "agent1"}
+        )
+        self.assertEqual(assigned_name, "agent1")
+        spawning_info = state.get_agent("agent1")
+        self.assertEqual(spawning_info["status"], "spawning")
+        self.assertEqual(spawning_info["session"], "sess")
+        self.assertEqual(spawning_info["tmux_pane"], "%42")
+
+        real_name = rpc_handler.handle_register(
+            {
+                "session": "sess",
+                "tmux_pane": "%2",
+                "wrapper_pid": 333,
+                "tmux_socket": "sock",
+                "name": "agent1",
+                "agent_id": "real-uuid-123",
+            }
+        )
+        self.assertEqual(real_name, "agent1")
+        self.assertEqual(len(state.state), 1)
+        info = state.get_agent("agent1")
+        self.assertEqual(info["agent_id"], "real-uuid-123")
+        self.assertEqual(info["status"], "idle")
+
+    @mock.patch("tmux_util.spin_agent")
+    @mock.patch("rpc_handler._identify_agent", return_value="parent-agent")
+    def test_handle_spin_agent_strips_inherited_identity(self, mock_identify, mock_spin):
+        mock_spin.return_value = "%42"
+        state.set_agent("parent-agent", {"agent_id": "parent-id", "session": "sess", "tmux_pane": "%1", "tmux_socket": "sock"})
+
+        env = {"PATH": "/bin", "AGENT_ID": "parent-id", "AGENT_NAME": "parent-agent", "AGENT_UUID": "parent-id"}
+        rpc_handler.handle_spin_agent(
+            {"session": "sess", "command": "jetski", "name": "agent1", "env": env},
+            caller_pid=999
+        )
+
+        mock_identify.assert_called_once_with({}, 999)
+        mock_spin.assert_called_once_with("agent1", "jetski", "%1", session="sess", directory=None, env=env, tmux_socket="sock")
+        self.assertNotIn("AGENT_ID", env)
+        self.assertNotIn("AGENT_NAME", env)
+        self.assertNotIn("AGENT_UUID", env)
+        self.assertEqual(env["SUGGESTED_AGENT_NAME"], "agent1")
+        self.assertEqual(env["PATH"], "/bin")
+
+    @mock.patch("tmux_util.spin_agent")
+    @mock.patch("rpc_handler._identify_agent", return_value="parent-agent")
+    def test_handle_spin_agent_preserves_explicit_identity_override(self, mock_identify, mock_spin):
+        mock_spin.return_value = "%42"
+        state.set_agent("parent-agent", {"agent_id": "parent-id", "session": "sess", "tmux_pane": "%1", "tmux_socket": "sock"})
+
+        env = {"PATH": "/bin", "AGENT_ID": "custom-subagent-id", "AGENT_NAME": "custom-subagent-name", "AGENT_UUID": "custom-subagent-id"}
+        rpc_handler.handle_spin_agent(
+            {"session": "sess", "command": "jetski", "name": "agent1", "env": env},
+            caller_pid=999
+        )
+
+        mock_identify.assert_called_once_with({}, 999)
+        mock_spin.assert_called_once_with("agent1", "jetski", "%1", session="sess", directory=None, env=env, tmux_socket="sock")
+        self.assertEqual(env["AGENT_ID"], "custom-subagent-id")
+        self.assertEqual(env["AGENT_NAME"], "custom-subagent-name")
+        self.assertEqual(env["AGENT_UUID"], "custom-subagent-id")
+        self.assertEqual(env["SUGGESTED_AGENT_NAME"], "agent1")
+        self.assertEqual(env["PATH"], "/bin")
+
+    @mock.patch("tmux_util.spin_agent")
+    @mock.patch("rpc_handler._identify_agent", return_value="caller")
+    def test_spin_uses_caller_tmux_context_and_placeholder_name(self, mock_identify, mock_spin):
+        mock_spin.return_value = "%42"
+        state.set_agent("caller", {"agent_id": "caller-id", "session": "sess", "tmux_pane": "%5", "tmux_socket": "sock"})
+
+        assigned_name = rpc_handler.handle_spin_agent({"command": "pi", "name": "child", "env": {}}, caller_pid=222)
+
+        self.assertEqual(assigned_name, "child")
+        mock_identify.assert_called_once_with({}, 222)
+        mock_spin.assert_called_once_with("child", "pi", "%5", session="sess", directory=None, env={"SUGGESTED_AGENT_NAME": "child"}, tmux_socket="sock")
+        self.assertEqual(state.get_agent("child")["status"], "spawning")
+
+    @mock.patch("registry_client.send_remote_message", return_value=(202, {"ok": True}))
+    def test_send_message_routes_remote_target_address_via_registry(self, send_remote):
+        state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
+        self.assertTrue(rpc_handler.handle_send_message({"agent_name": "sender", "target_address": "remote-host/agent2", "message": "hello"}))
+        send_remote.assert_called_once_with("sender", "id-s", mock.ANY, "remote-host", "agent2", "hello", None, None)
+
+    @mock.patch("registry_client.send_remote_message", return_value=(202, {"ok": True}))
+    def test_send_message_routes_remote_uuid_target_address_via_registry(self, send_remote):
+        state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
+        target_id = "961477f2-6523-4dae-87ea-bc6223fa04df"
+        self.assertTrue(rpc_handler.handle_send_message({"agent_name": "sender", "target_address": f"remote-host/{target_id}", "message": "hello"}))
+        send_remote.assert_called_once_with("sender", "id-s", mock.ANY, "remote-host", target_id, "hello", None, None)
+
+    @mock.patch("registry_client.send_remote_message_to_registry", return_value=(202, {"ok": True}))
+    def test_send_message_routes_explicit_registry_target_address(self, send_remote):
+        state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
+        self.assertTrue(rpc_handler.handle_send_message({"agent_name": "sender", "target_address": "corp:remote-host/agent2", "message": "hello"}))
+        send_remote.assert_called_once_with("corp", "sender", "id-s", mock.ANY, "remote-host", "agent2", "hello", None, None)
+
+    @mock.patch("tmux_util.send_keys")
+    def test_local_send_preserves_message_id_and_sender_metadata(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+            state.set_agent("agent-communicator", {"agent_id": "sender-id", "status": "idle"})
+
+            self.assertTrue(rpc_handler.handle_send_message({"agent_name": "agent1", "message": "hello", "sender_name": "agent-communicator", "message_id": "m1"}))
+
+            with open(inbox_path) as f:
+                msg = json.loads(f.readline())
+            self.assertEqual(msg["message_id"], "m1")
+            self.assertEqual(msg["sender_agent_id"], "sender-id")
+            self.assertEqual(msg["sender_tracker_id"], registry_client.TRACKER_ID)
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("registry_client.send_remote_message")
+    @mock.patch("tmux_util.send_keys")
+    def test_send_message_treats_local_target_address_as_local_only(self, send_keys, send_remote):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+            self.assertTrue(rpc_handler.handle_send_message({"target_address": "local/agent1", "message": "hello", "sender_name": "tester"}))
+            send_remote.assert_not_called()
+            send_keys.assert_called_once()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    def test_busy_agent_notifies_immediately(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent(
+                "agent1",
+                {
+                    "agent_id": "id-1",
+                    "status": "working",
+                    "waiting_approval": False,
+                    "pending_notifications": [],
+                    "tmux_pane": "%1",
+                    "tmux_socket": "sock",
+                },
+            )
+
+            self.assertTrue(
+                rpc_handler.handle_send_message({"agent_id": "id-1", "message": "msg1", "sender_name": "alice"})
+            )
+            self.assertTrue(
+                rpc_handler.handle_send_message({"agent_id": "id-1", "message": "msg2", "sender_name": "bob"})
+            )
+
+            info = state.get_agent("agent1")
+            self.assertEqual(info.get("pending_notifications", []), [])
+            self.assertEqual(send_keys.call_count, 2)
+            send_keys.assert_any_call("%1", "New message in inbox from alice", "sock")
+            send_keys.assert_any_call("%1", "New message in inbox from bob", "sock")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    def test_get_inbox_clear_keeps_last_25_messages(self):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            
+            with open(inbox_path, "w") as f:
+                for i in range(1, 31):
+                    msg = {"sender": f"agent-{i}", "message": f"msg-{i}", "read": False, "message_id": f"m{i}"}
+                    f.write(json.dumps(msg) + "\n")
+
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "clear": True})
+            
+            self.assertEqual(result["mode"], "unread")
+            self.assertEqual(len(result["messages"]), 30)
+
+            self.assertTrue(os.path.exists(inbox_path))
+            remaining_messages = []
+            with open(inbox_path, "r") as f:
+                for line in f:
+                    if line.strip():
+                        remaining_messages.append(json.loads(line))
+
+            self.assertEqual(len(remaining_messages), 25)
+            self.assertEqual(remaining_messages[0]["sender"], "agent-6")
+            self.assertEqual(remaining_messages[-1]["sender"], "agent-30")
+            self.assertTrue(all(msg["read"] for msg in remaining_messages))
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    @mock.patch("tmux_util.send_keys_reliable")
+    def test_deliver_local_message_reliable_success(self, mock_send_keys_reliable, mock_send_keys):
+        mock_send_keys_reliable.return_value = True
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "sock",
+                "status": "idle",
+            })
+
+            rpc_handler.deliver_local_message("receiver", {
+                "sender": "sender-agent",
+                "message": "hello",
+                "message_id": "msg-1",
+            })
+
+            mock_send_keys_reliable.assert_called_once_with("%1", "New message in inbox from sender-agent", "sock", timeout=5)
+            mock_send_keys.assert_not_called()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    @mock.patch("tmux_util.send_keys_reliable")
+    def test_deliver_local_message_reliable_failure_fallback(self, mock_send_keys_reliable, mock_send_keys):
+        mock_send_keys_reliable.return_value = False
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "sock",
+                "status": "idle",
+            })
+
+            rpc_handler.deliver_local_message("receiver", {
+                "sender": "sender-agent",
+                "message": "hello",
+                "message_id": "msg-1",
+            })
+
+            mock_send_keys_reliable.assert_called_once_with("%1", "New message in inbox from sender-agent", "sock", timeout=5)
+            mock_send_keys.assert_called_once_with("%1", "New message in inbox from sender-agent", "sock")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    @mock.patch("tmux_util.send_keys_reliable")
+    def test_deliver_local_message_reliable_exception_fallback(self, mock_send_keys_reliable, mock_send_keys):
+        mock_send_keys_reliable.side_effect = Exception("tmux error")
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "sock",
+                "status": "idle",
+            })
+
+            rpc_handler.deliver_local_message("receiver", {
+                "sender": "sender-agent",
+                "message": "hello",
+                "message_id": "msg-1",
+            })
+
+            mock_send_keys_reliable.assert_called_once_with("%1", "New message in inbox from sender-agent", "sock", timeout=5)
+            mock_send_keys.assert_called_once_with("%1", "New message in inbox from sender-agent", "sock")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.capture_pane_visible_text")
+    @mock.patch("tmux_util.is_pane_in_copy_mode")
+    def test_handle_capture_pane_by_agent_name(self, mock_copy_mode, mock_capture):
+        state.set_agent("agent1", {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "session": "sess-1",
+            "status": "idle"
+        })
+        mock_copy_mode.return_value = False
+        mock_capture.return_value = "Screen Text"
+
+        res = rpc_handler.handle_capture_pane({
+            "agent_name": "agent1",
+            "last_lines": 100,
+            "include_ansi": True
+        })
+
+        self.assertEqual(res["agent_name"], "agent1")
+        self.assertEqual(res["agent_id"], "id-1")
+        self.assertEqual(res["tmux_pane"], "%1")
+        self.assertEqual(res["session"], "sess-1")
+        self.assertFalse(res["copy_mode"])
+        self.assertEqual(res["content"], "Screen Text")
+        self.assertEqual(res["lines_requested"], 100)
+        mock_copy_mode.assert_called_once_with("%1", "sock")
+        mock_capture.assert_called_once_with("%1", last_lines=100, socket_path="sock", include_ansi=True)
+
+    @mock.patch("tmux_util.capture_pane_visible_text")
+    @mock.patch("tmux_util.is_pane_in_copy_mode")
+    def test_handle_capture_pane_by_agent_id(self, mock_copy_mode, mock_capture):
+        state.set_agent("agent1", {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "session": "sess-1"
+        })
+        mock_copy_mode.return_value = True
+        mock_capture.return_value = "Screen Text Copy"
+
+        res = rpc_handler.handle_capture_pane({
+            "agent_id": "id-1",
+            "last_lines": 200
+        })
+
+        self.assertEqual(res["agent_name"], "agent1")
+        self.assertEqual(res["agent_id"], "id-1")
+        self.assertTrue(res["copy_mode"])
+        self.assertEqual(res["content"], "Screen Text Copy")
+        mock_capture.assert_called_once_with("%1", last_lines=200, socket_path="sock", include_ansi=False)
+
+    @mock.patch("tmux_util.capture_pane_visible_text")
+    @mock.patch("tmux_util.is_pane_in_copy_mode")
+    @mock.patch("tmux_util.get_pane_info")
+    def test_handle_capture_pane_by_pane_directly(self, mock_pane_info, mock_copy_mode, mock_capture):
+        mock_copy_mode.return_value = False
+        mock_capture.return_value = "Direct Pane Text"
+        mock_pane_info.return_value = {"tty": "/dev/pts/1", "session": "sess-direct", "pid": 123}
+
+        res = rpc_handler.handle_capture_pane({
+            "pane": "%5",
+            "last_lines": 50
+        })
+
+        self.assertIsNone(res["agent_name"])
+        self.assertIsNone(res["agent_id"])
+        self.assertEqual(res["tmux_pane"], "%5")
+        self.assertEqual(res["session"], "sess-direct")
+        self.assertEqual(res["content"], "Direct Pane Text")
+        mock_capture.assert_called_once_with("%5", last_lines=50, socket_path=None, include_ansi=False)
+
+    @mock.patch("tmux_util.capture_pane_visible_text")
+    @mock.patch("tmux_util.is_pane_in_copy_mode")
+    def test_handle_capture_pane_default_lines_from_env(self, mock_copy_mode, mock_capture):
+        state.set_agent("agent1", {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "session": "sess-1"
+        })
+        mock_copy_mode.return_value = False
+        mock_capture.return_value = "Default lines text"
+
+        with mock.patch.dict(os.environ, {"AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES": "42"}, clear=False):
+            res = rpc_handler.handle_capture_pane({"agent_id": "id-1"})
+
+        self.assertEqual(res["lines_requested"], 42)
+        mock_capture.assert_called_once_with("%1", last_lines=42, socket_path="sock", include_ansi=False)
+
+    def test_handle_capture_pane_invalid_target_raises(self):
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_capture_pane({
+                "agent_name": "non-existent"
+            })
+
+    @mock.patch("tmux_util.capture_pane_visible_text")
+    @mock.patch("tmux_util.is_pane_in_copy_mode")
+    def test_handle_capture_pane_safety_bounds_cap(self, mock_copy_mode, mock_capture):
+        state.set_agent("agent1", {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "session": "sess-1"
+        })
+        mock_copy_mode.return_value = False
+        mock_capture.return_value = "Screen Text capped"
+
+        res = rpc_handler.handle_capture_pane({
+            "agent_id": "id-1",
+            "last_lines": 5000
+        })
+
+        self.assertEqual(res["lines_requested"], 1000) # capped!
+        mock_capture.assert_called_once_with("%1", last_lines=1000, socket_path="sock", include_ansi=False)
+
+    @mock.patch("tmux_util.capture_pane_visible_text")
+    @mock.patch("tmux_util.is_pane_in_copy_mode")
+    def test_handle_capture_pane_graceful_exception(self, mock_copy_mode, mock_capture):
+        state.set_agent("agent1", {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "session": "sess-1"
+        })
+        mock_copy_mode.return_value = False
+        mock_capture.side_effect = RuntimeError("tmux command failed or zero-column")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            rpc_handler.handle_capture_pane({
+                "agent_id": "id-1",
+                "last_lines": 100
+            })
+        self.assertIn("Failed to capture pane visible text buffer", str(ctx.exception))
+
+
+
+
+if __name__ == "__main__":
+    unittest.main()
+
