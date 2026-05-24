@@ -40,6 +40,9 @@ func DefaultSocketPath() string {
 	if path := os.Getenv("AGENT_TRACKER_SOCKET"); path != "" {
 		return path
 	}
+	if runtimeDir := os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR"); runtimeDir != "" {
+		return filepath.Join(runtimeDir, "agent-tracker.sock")
+	}
 	cacheHome := os.Getenv("XDG_CACHE_HOME")
 	if cacheHome == "" {
 		home, err := os.UserHomeDir()

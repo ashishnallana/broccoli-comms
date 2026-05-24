@@ -123,12 +123,16 @@ Notes:
 
 ## Related commands
 
-Managed agent config commands:
+Managed agent config/window commands:
 
 ```sh
 broccoli-comms agent add <name> --cwd <dir> --command <cmd>
+broccoli-comms agent focus <name>
+broccoli-comms agent attach <name>
 broccoli-comms agent remove <name>
 broccoli-comms agent restart <name>
 ```
 
-These commands also print JSON-friendly results.
+`focus` selects a running managed-agent window using private tmux metadata/window ids and prints a JSON-friendly result. `attach` attaches the current terminal directly to that managed window. Other commands also print JSON-friendly results.
+
+When launched via `broccoli-comms open` / `broccoli-comms ui`, `agent-communicator` receives `AGENT_TRACKER_SOCKET`, `AGENT_TRACKER_TMUX_SOCKET`, and `BROCCOLI_COMMS_TMUX_SOCKET` for the app-owned runtime. Frontends should prefer these explicit sockets and avoid inherited/default tmux state in app mode.

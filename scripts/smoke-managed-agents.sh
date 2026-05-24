@@ -126,6 +126,18 @@ if [[ "$(managed_count "$agent_name")" != "1" ]]; then
 fi
 wait_for_agent "$agent_name"
 first_pane="$(managed_pane_id "$agent_name")"
+first_window="$(managed_window_id "$agent_name")"
+
+focus_json="$(broccoli agent focus "$agent_name")"
+FOCUS_JSON="$focus_json" python3 - "$agent_name" "$first_window" <<'PY'
+import json, os, sys
+name, window_id = sys.argv[1:]
+payload = json.loads(os.environ["FOCUS_JSON"])
+if payload.get("focused") != name:
+    raise SystemExit("focus payload name mismatch")
+if payload.get("window", {}).get("window_id") != window_id:
+    raise SystemExit("focus payload window_id mismatch")
+PY
 
 status_json="$(broccoli status --json)"
 STATUS_JSON="$status_json" python3 <<'PY'

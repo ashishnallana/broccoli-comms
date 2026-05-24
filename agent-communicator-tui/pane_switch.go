@@ -2,13 +2,55 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
 type paneSwitched struct{ Err error }
+
+func privateTmuxSocket() string {
+	return firstNonEmpty(os.Getenv("AGENT_TRACKER_TMUX_SOCKET"), os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET"))
+}
+
+func tmuxCommandArgs(args ...string) []string {
+	cmdArgs := append([]string{}, args...)
+	if socket := privateTmuxSocket(); socket != "" {
+		cmdArgs = append([]string{"-S", socket}, cmdArgs...)
+	}
+	return cmdArgs
+}
+
+func tmuxCommandEnv(stripInherited bool) []string {
+	if !stripInherited {
+		return nil
+	}
+	env := os.Environ()
+	filtered := env[:0]
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TMUX=") || strings.HasPrefix(entry, "TMUX_PANE=") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+func newTmuxCommand(args ...string) *exec.Cmd {
+	cmdArgs := tmuxCommandArgs(args...)
+	cmd := exec.Command("tmux", cmdArgs...)
+	if len(cmdArgs) >= 2 && cmdArgs[0] == "-S" {
+		cmd.Env = tmuxCommandEnv(true)
+	}
+	return cmd
+}
+
+var runTmuxCommand = func(args ...string) error {
+	return newTmuxCommand(args...).Run()
+}
 
 func switchToAgentPane(row agentRow) tea.Cmd {
 	return func() tea.Msg {
@@ -18,7 +60,7 @@ func switchToAgentPane(row agentRow) tea.Cmd {
 		if row.TmuxPane == "" {
 			return paneSwitched{Err: fmt.Errorf("agent %s has no tmux pane", row.Name)}
 		}
-		return paneSwitched{Err: exec.Command("tmux", "switch-client", "-t", row.TmuxPane).Run()}
+		return paneSwitched{Err: runTmuxCommand("switch-client", "-t", row.TmuxPane)}
 	}
 }
 

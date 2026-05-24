@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +19,13 @@ const (
 	advancedView
 	savedView
 )
+
+type runtimeInfo struct {
+	AppRuntime    bool
+	RuntimeDir    string
+	TrackerSocket string
+	TmuxSocket    string
+}
 
 type model struct {
 	width, height, selected int
@@ -45,6 +53,7 @@ type model struct {
 	eventSeq                int64
 	ownName                 string
 	local                   localClient
+	runtime                 runtimeInfo
 
 	// Custom Agent Configurations (Ctrl-L)
 	configItems       []ConfigSelectionItem
@@ -65,10 +74,33 @@ type model struct {
 	paneCaptureStatus string
 }
 
+func runtimeInfoFromEnv() runtimeInfo {
+	info := runtimeInfo{
+		RuntimeDir:    os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR"),
+		TrackerSocket: os.Getenv("AGENT_TRACKER_SOCKET"),
+		TmuxSocket:    firstNonEmpty(os.Getenv("AGENT_TRACKER_TMUX_SOCKET"), os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET")),
+	}
+	info.AppRuntime = os.Getenv("BROCCOLI_COMMS_APP_RUNTIME") == "1" || info.RuntimeDir != "" || os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET") != ""
+	if info.TrackerSocket == "" && info.RuntimeDir != "" {
+		info.TrackerSocket = info.RuntimeDir + "/agent-tracker.sock"
+	}
+	return info
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func newModel(local localClient, ownName string) model {
 	return model{
 		local:             local,
 		ownName:           ownName,
+		runtime:           runtimeInfoFromEnv(),
 		sentMessages:      map[string][]tracker.Message{},
 		unreadRows:        map[string]bool{},
 		hiddenAgents:      map[string]bool{},

@@ -68,6 +68,29 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 		t.Fatal("run --unknown succeeded, want error")
 	}
 }
+
+func TestRuntimeInfoFromEnvDetectsBroccoliRuntime(t *testing.T) {
+	t.Setenv("BROCCOLI_COMMS_APP_RUNTIME", "1")
+	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "/tmp/broccoli-runtime")
+	t.Setenv("AGENT_TRACKER_SOCKET", "")
+	t.Setenv("BROCCOLI_COMMS_TMUX_SOCKET", "/tmp/broccoli-runtime/tmux.sock")
+	info := runtimeInfoFromEnv()
+	if !info.AppRuntime || info.TrackerSocket != "/tmp/broccoli-runtime/agent-tracker.sock" || info.TmuxSocket != "/tmp/broccoli-runtime/tmux.sock" {
+		t.Fatalf("runtimeInfoFromEnv() = %+v", info)
+	}
+}
+
+func TestFooterShowsBroccoliRuntimeStatus(t *testing.T) {
+	m := model{
+		width:   120,
+		runtime: runtimeInfo{AppRuntime: true, TrackerSocket: "/tmp/broccoli-runtime/agent-tracker.sock"},
+		rows:    []agentRow{{Name: "alpha", Scope: "local"}},
+	}
+	footer := m.footer(120)
+	if !strings.Contains(footer, "Broccoli Comms runtime") || !strings.Contains(footer, "tracker connected") || !strings.Contains(footer, "agents 1") {
+		t.Fatalf("footer missing runtime status: %q", footer)
+	}
+}
 func TestCtrlNCtrlPNavigationAndInboxLoad(t *testing.T) {
 	m := model{messageOffset: 3, rows: []agentRow{{Name: "a", Scope: "local"}, {Name: "b", Scope: "local"}}, local: &fakeLocal{}}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})

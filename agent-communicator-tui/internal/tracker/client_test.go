@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -28,6 +29,22 @@ func fakeClient(t *testing.T, handler func(r rpcRequest) any) *Client {
 			}()
 			return client, nil
 		},
+	}
+}
+
+func TestDefaultSocketPathUsesBroccoliRuntimeDir(t *testing.T) {
+	t.Setenv("AGENT_TRACKER_SOCKET", "")
+	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "/tmp/broccoli-runtime")
+	if got, want := DefaultSocketPath(), filepath.Join("/tmp/broccoli-runtime", "agent-tracker.sock"); got != want {
+		t.Fatalf("DefaultSocketPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultSocketPathPrefersExplicitAgentTrackerSocket(t *testing.T) {
+	t.Setenv("AGENT_TRACKER_SOCKET", "/tmp/private/tracker.sock")
+	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "/tmp/broccoli-runtime")
+	if got := DefaultSocketPath(); got != "/tmp/private/tracker.sock" {
+		t.Fatalf("DefaultSocketPath() = %q, want explicit socket", got)
 	}
 }
 

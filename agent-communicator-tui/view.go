@@ -128,10 +128,14 @@ func (m model) footer(width int) string {
 		"c-t view · tab section · c-n/p agent · c-a read · c-o prompts · c-h hide · c-f save · c-s save agent",
 		"↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · c-q quit · c-x debug capture",
 	}
+	if status := m.runtimeStatusLine(); status != "" {
+		lines = append([]string{status}, lines...)
+	}
 	if m.paneCaptureStatus != "" {
 		lines = []string{m.paneCaptureStatus}
 	} else if m.err != nil {
-		lines = []string{m.err.Error()}
+		lines = append([]string{}, lines...)
+		lines = append(lines, m.err.Error())
 	}
 	for i, text := range lines {
 		if lipgloss.Width(text) > width {
@@ -143,6 +147,24 @@ func (m model) footer(width int) string {
 		return lipgloss.NewStyle().Foreground(palette.Red).Render(text)
 	}
 	return mutedStyle.Render(text)
+}
+
+func (m model) runtimeStatusLine() string {
+	if !m.runtime.AppRuntime {
+		return ""
+	}
+	state := "tracker connected"
+	if m.agentListLoading {
+		state = "tracker refreshing"
+	}
+	if m.agentListStale || m.err != nil {
+		state = "tracker unavailable"
+	}
+	details := []string{"Broccoli Comms runtime", state, fmt.Sprintf("agents %d", len(m.rows))}
+	if m.runtime.TrackerSocket != "" {
+		details = append(details, "socket "+filepath.Base(m.runtime.TrackerSocket))
+	}
+	return strings.Join(details, " · ")
 }
 
 func (m model) agentListTitle() string {

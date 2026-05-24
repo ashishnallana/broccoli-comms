@@ -47,7 +47,7 @@ Committed history:
 Current work:
 
 - Chunk 5 is committed: `agent-tracker-ctl spin` auto-wraps raw commands with `agent-wrapper`, Nix/source wrapper resolution is updated, and bootstrap tmux dependency docs/checks were tightened.
-- Next planned work is Chunk 6: app-aware TUI integration and agent pane/focus affordances.
+- Chunk 6 first slice is in progress: app-aware TUI runtime status/private socket handling and managed-agent focus/attach CLI affordances.
 
 Current agent coordination:
 
@@ -219,16 +219,28 @@ Known limitations to track:
 
 ### Chunk 6: app-aware TUI integration
 
-Status: planned.
+Status: in progress in the working tree; pending full validation, review, and lead commit.
 
 Planned tasks:
 
-- [ ] Make `agent-communicator-tui` app-aware.
-- [ ] Make TUI use the private tracker socket automatically when launched by `broccoli-comms`.
-- [ ] Show runtime health and managed-agent state.
-- [ ] Add attach/open-pane affordances.
-- [ ] Add private tmux capture/focus actions where appropriate.
-- [ ] Later: add global advanced view over all app-managed inboxes.
+- [x] Make `agent-communicator-tui` detect Broccoli Comms app runtime from explicit env.
+- [x] Make TUI use the private tracker socket automatically when launched by `broccoli-comms`.
+- [x] Show minimal runtime health/tracker status in the existing TUI footer.
+- [x] Preserve private tmux boundaries for local pane switching by using explicit private tmux socket env when present.
+- [x] Add `broccoli-comms agent focus <name>` and `broccoli-comms agent attach <name>` affordances using managed-window metadata/window ids.
+- [x] Add focused unit coverage for app-runtime socket/status and private tmux command construction.
+- [x] Run full validation gate.
+- [ ] Reviewer approval for Chunk 6.
+- [ ] Lead commit after approval.
+
+Future work (not implemented in Chunk 6 first slice):
+
+- [ ] Wire managed-agent focus/attach into TUI hotkeys if useful after UX review.
+- [ ] Add global advanced view over all app-managed inboxes.
+- [ ] Design a generic permission request model.
+- [ ] Design remote pane capture via agent-tracker/registry.
+- [ ] Design remote send-keys/send-text for approvals/denials.
+- [ ] Keep pane/control features agent-agnostic with detector/adaptor backends for pi/claude/codex/etc.
 
 ### Chunk 7: doctor, bootstrap, and packaging polish
 

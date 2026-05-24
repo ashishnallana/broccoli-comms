@@ -29,6 +29,7 @@ The Nix packages include the runtime dependencies they launch, including `tmux`.
 nix run .#broccoli-comms
 nix run .#broccoli-comms -- status --json
 nix run .#broccoli-comms -- attach
+nix run .#broccoli-comms -- agent focus main
 nix run .#broccoli-comms -- stop
 ```
 
@@ -79,6 +80,8 @@ Or manage the same config through the CLI:
 broccoli-comms agent list --json
 broccoli-comms agent add main --cwd /home/user/project --command 'pi'
 broccoli-comms agent add reviewer --cwd /home/user/project --command 'pi --role reviewer'
+broccoli-comms agent focus main
+broccoli-comms agent attach main
 broccoli-comms agent restart main
 broccoli-comms agent remove reviewer
 ```
@@ -91,6 +94,10 @@ broccoli-comms attach
 ```
 
 `start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
+
+`open` / `ui` launches `agent-communicator` as the Broccoli Comms frontend with `AGENT_TRACKER_SOCKET` and private tmux socket variables set to the app-owned runtime. The TUI shows a small Broccoli Comms runtime/tracker status line when launched in this app mode.
+
+`agent focus <name>` selects a running managed-agent window by private tmux metadata/window id, and `agent attach <name>` attaches directly to that managed window.
 
 `agent-tracker-ctl spin <dir> <command> [args...]` also auto-wraps raw commands through `agent-wrapper` before creating the tmux window/session, so spun agents register, heartbeat, inherit the intended tracker/tmux socket environment, and appear in status/communicator views. Commands already starting with `agent-wrapper` are not wrapped again.
 

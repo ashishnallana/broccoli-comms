@@ -75,6 +75,7 @@ def base_env() -> dict[str, str]:
     env.pop("TMUX", None)
     env.pop("TMUX_PANE", None)
     env.update({
+        "BROCCOLI_COMMS_APP_RUNTIME": "1",
         "BROCCOLI_COMMS_RUNTIME_DIR": str(p["runtime"]),
         "BROCCOLI_COMMS_CACHE_DIR": str(p["cache"]),
         "BROCCOLI_COMMS_CONFIG_DIR": str(p["config"]),
@@ -506,6 +507,43 @@ def agent_restart(args: argparse.Namespace) -> None:
     print(json.dumps({"restarted": args.name, "window_killed": window_killed, "launched": args.name in launched}, indent=2, sort_keys=True))
 
 
+def managed_window_for_agent(name: str) -> dict[str, str]:
+    cfg = load_config()
+    agent_spec(cfg, name)
+    ensure_tracker()
+    ensure_tmux()
+    windows = managed_windows(name)
+    if not windows:
+        raise SystemExit(f"agent {name!r} is configured but has no running managed window; run `broccoli-comms start` or `broccoli-comms agent restart {name}`")
+    return windows[0]
+
+
+def focus_managed_window(name: str) -> dict[str, str]:
+    window = managed_window_for_agent(name)
+    window_id = window["window_id"]
+    tmux("select-window", "-t", window_id)
+    tmux("switch-client", "-t", window_id, check=False)
+    return window
+
+
+def agent_focus(args: argparse.Namespace) -> None:
+    try:
+        validate_agent_name(args.name)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    window = focus_managed_window(args.name)
+    print(json.dumps({"focused": args.name, "window": window}, indent=2, sort_keys=True))
+
+
+def agent_attach(args: argparse.Namespace) -> None:
+    try:
+        validate_agent_name(args.name)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    window = focus_managed_window(args.name)
+    os.execvpe("tmux", ["tmux", "-S", str(paths()["tmux_socket"]), "attach", "-t", window["window_id"]], base_env())
+
+
 def stop(_args: argparse.Namespace) -> None:
     p = paths()
     tmux("kill-server", check=False)
@@ -594,6 +632,12 @@ def main() -> None:
     agent_restart_parser = agent_sub.add_parser("restart", help="Restart a configured agent window")
     agent_restart_parser.add_argument("name", help="Agent/window name")
     agent_restart_parser.set_defaults(func=agent_restart)
+    agent_focus_parser = agent_sub.add_parser("focus", help="Focus a running managed agent window in the private tmux session")
+    agent_focus_parser.add_argument("name", help="Agent/window name")
+    agent_focus_parser.set_defaults(func=agent_focus)
+    agent_attach_parser = agent_sub.add_parser("attach", help="Attach to a running managed agent window in the private tmux session")
+    agent_attach_parser.add_argument("name", help="Agent/window name")
+    agent_attach_parser.set_defaults(func=agent_attach)
     args = parser.parse_args()
     if not hasattr(args, "func"):
         args.func = ui
