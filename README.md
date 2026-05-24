@@ -71,6 +71,16 @@ Edit `$XDG_CONFIG_HOME/broccoli-comms/config.json`:
 }
 ```
 
+Or manage the same config through the CLI:
+
+```sh
+broccoli-comms agent list --json
+broccoli-comms agent add main --cwd /home/user/project --command 'pi'
+broccoli-comms agent add reviewer --cwd /home/user/project --command 'pi --role reviewer'
+broccoli-comms agent restart main
+broccoli-comms agent remove reviewer
+```
+
 Then run:
 
 ```sh
@@ -78,17 +88,21 @@ broccoli-comms start
 broccoli-comms attach
 ```
 
+`start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
+
 ## Smoke test
 
 Run the private runtime lifecycle smoke test with isolated temp runtime/cache/config directories:
 
 ```sh
 bash scripts/smoke-private-runtime.sh
+bash scripts/smoke-managed-agents.sh
 # or
 make smoke-private-runtime
+make smoke-managed-agents
 ```
 
-The test starts `broccoli-comms`, verifies the private tracker and tmux sockets/session, checks status JSON, stops the runtime, and verifies cleanup.
+The runtime test starts `broccoli-comms`, verifies the private tracker and tmux sockets/session, checks status JSON, stops the runtime, and verifies cleanup. The managed-agent test adds a harmless `sleep 60` configured agent, verifies reconciliation/no duplicates/restart/remove, and cleans up isolated temp state.
 
 ## Source copied from home-manager-core
 

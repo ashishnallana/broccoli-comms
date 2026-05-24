@@ -12,14 +12,18 @@ import json
 import os
 from pathlib import Path
 import shlex
+import re
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 APP = "broccoli-comms"
 SESSION = "broccoli-comms"
+MANAGED_AGENT_OPTION = "@broccoli_managed_agent"
+AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def xdg_runtime() -> Path:
@@ -94,6 +98,35 @@ def can_connect(sock: Path) -> bool:
         return False
 
 
+def tracker_rpc(method: str, params: dict | None = None) -> object | None:
+    sock_path = paths()["tracker_socket"]
+    s = None
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(2.0)
+        s.connect(str(sock_path))
+        s.sendall(json.dumps({"jsonrpc": "2.0", "method": method, "params": params or {}, "id": 1}).encode())
+        s.shutdown(socket.SHUT_WR)
+        chunks = []
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        data = json.loads(b"".join(chunks).decode())
+        if data.get("error"):
+            raise RuntimeError(data["error"].get("message", "tracker RPC error"))
+        return data.get("result")
+    except OSError:
+        return None
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except Exception:
+                pass
+
+
 def tracker_script() -> str:
     return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER") or str(repo_root() / "agent-tracker" / "agent-tracker.py")
 
@@ -156,33 +189,152 @@ def ensure_tmux() -> None:
     tmux("-f", str(paths()["tmux_conf"]), "new-session", "-d", "-s", SESSION, "-c", str(Path.home()), "bash")
 
 
+def default_config() -> dict:
+    return {"agents": {}}
+
+
+def normalize_config(cfg: dict) -> dict:
+    if not isinstance(cfg, dict):
+        raise ValueError("config must be a JSON object")
+    agents = cfg.get("agents") or {}
+    if not isinstance(agents, dict):
+        raise ValueError("config agents must be an object")
+    normalized = {**cfg, "agents": agents}
+    for name, spec in agents.items():
+        validate_agent_name(name)
+        if not isinstance(spec, dict):
+            raise ValueError(f"agent {name!r} config must be an object")
+    return normalized
+
+
 def load_config() -> dict:
     p = paths()["config_json"]
     if not p.exists():
-        p.write_text(json.dumps({"agents": {}}, indent=2) + "\n")
-    return json.loads(p.read_text())
+        save_config(default_config())
+    try:
+        return normalize_config(json.loads(p.read_text()))
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"failed to parse config {p}: {e}")
+    except ValueError as e:
+        raise SystemExit(f"invalid config {p}: {e}")
+
+
+def save_config(cfg: dict) -> None:
+    ensure_dirs()
+    cfg = normalize_config(cfg)
+    p = paths()["config_json"]
+    with tempfile.NamedTemporaryFile("w", dir=p.parent, delete=False) as f:
+        json.dump(cfg, f, indent=2, sort_keys=True)
+        f.write("\n")
+        tmp = Path(f.name)
+    tmp.replace(p)
+
+
+def validate_agent_name(name: str) -> None:
+    if not name or not AGENT_NAME_RE.match(name):
+        raise ValueError("agent name must contain only letters, numbers, dot, underscore, and dash")
+
+
+def agent_spec(cfg: dict, name: str) -> dict:
+    agents = cfg.get("agents") or {}
+    if name not in agents:
+        raise SystemExit(f"agent {name!r} is not configured")
+    return agents[name]
+
+
+def tmux_up() -> bool:
+    return tmux("has-session", "-t", SESSION, check=False).returncode == 0
+
+
+def managed_windows(name: str | None = None) -> list[dict[str, str]]:
+    if not tmux_up():
+        return []
+    fmt = f"#{{window_id}}\t#{{window_name}}\t#{{{MANAGED_AGENT_OPTION}}}\t#{{pane_id}}"
+    result = tmux("list-windows", "-t", SESSION, "-F", fmt, check=False)
+    if result.returncode != 0:
+        return []
+    windows = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t", 3)
+        if len(parts) != 4:
+            continue
+        window_id, window_name, managed_agent, pane_id = parts
+        if not managed_agent:
+            continue
+        if name is not None and managed_agent != name:
+            continue
+        windows.append({
+            "window_id": window_id,
+            "window_name": window_name,
+            "managed_agent": managed_agent,
+            "pane_id": pane_id,
+        })
+    return windows
 
 
 def window_exists(name: str) -> bool:
-    result = tmux("list-windows", "-t", SESSION, "-F", "#{window_name}", check=False)
-    return result.returncode == 0 and name in result.stdout.splitlines()
+    return bool(managed_windows(name))
 
 
-def reconcile_agents() -> None:
+def agent_window_pane(name: str) -> str | None:
+    windows = managed_windows(name)
+    if not windows:
+        return None
+    return windows[0].get("pane_id") or None
+
+
+def unregister_agent_pane(pane_id: str | None) -> None:
+    if pane_id and can_connect(paths()["tracker_socket"]):
+        try:
+            tracker_rpc("unregister", {"tmux_pane": pane_id})
+        except Exception:
+            pass
+
+
+def kill_agent_window(name: str) -> bool:
+    killed_any = False
+    for window in managed_windows(name):
+        window_id = window["window_id"]
+        pane_id = window.get("pane_id")
+        killed = tmux("kill-window", "-t", window_id, check=False).returncode == 0
+        if killed:
+            killed_any = True
+            unregister_agent_pane(pane_id)
+    return killed_any
+
+
+def managed_agent_launch_command(name: str, command: str) -> str:
+    p = paths()
+    return " ".join([
+        f"SUGGESTED_AGENT_NAME={shlex.quote(name)}",
+        f"AGENT_TRACKER_SOCKET={shlex.quote(str(p['tracker_socket']))}",
+        f"AGENT_TRACKER_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
+        f"BROCCOLI_COMMS_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
+        shlex.quote(wrapper_path()),
+        command,
+    ])
+
+
+def reconcile_agents(names: set[str] | None = None) -> list[str]:
     cfg = load_config()
     agents = cfg.get("agents") or {}
+    launched = []
     for name, spec in agents.items():
+        if names is not None and name not in names:
+            continue
         if window_exists(name):
             continue
-        cwd = spec.get("cwd") or str(Path.home())
+        cwd = os.path.abspath(os.path.expanduser(spec.get("cwd") or str(Path.home())))
+        if not os.path.isdir(cwd):
+            raise SystemExit(f"configured cwd for agent {name!r} does not exist: {cwd}")
         command = spec.get("command") or "bash"
-        launch = " ".join([
-            f"SUGGESTED_AGENT_NAME={shlex.quote(name)}",
-            f"AGENT_TRACKER_SOCKET={shlex.quote(str(paths()['tracker_socket']))}",
-            shlex.quote(wrapper_path()),
-            command,
-        ])
-        tmux("new-window", "-d", "-t", SESSION, "-n", name, "-c", cwd, launch)
+        launch = managed_agent_launch_command(name, command)
+        result = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", SESSION, "-n", name, "-c", cwd, launch)
+        window_id = result.stdout.strip()
+        if window_id:
+            tmux("set-option", "-w", "-t", window_id, MANAGED_AGENT_OPTION, name)
+        launched.append(name)
+    return launched
 
 
 def start(_args: argparse.Namespace) -> None:
@@ -213,6 +365,74 @@ def status(_args: argparse.Namespace) -> None:
         "tmux_up": tmux("has-session", "-t", SESSION, check=False).returncode == 0,
         "config": str(paths()["config_json"]),
     }, indent=2))
+
+
+def agent_list(args: argparse.Namespace) -> None:
+    cfg = load_config()
+    agents = cfg.get("agents") or {}
+    runtime_up = tmux_up()
+    payload = {
+        "config": str(paths()["config_json"]),
+        "runtime": {"tmux_up": runtime_up},
+        "agents": {
+            name: {
+                "cwd": spec.get("cwd"),
+                "command": spec.get("command"),
+                "window_exists": window_exists(name) if runtime_up else False,
+            }
+            for name, spec in sorted(agents.items())
+        },
+    }
+    print(json.dumps(payload if args.json else payload["agents"], indent=2, sort_keys=True))
+
+
+def agent_add(args: argparse.Namespace) -> None:
+    try:
+        validate_agent_name(args.name)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    cwd = os.path.abspath(os.path.expanduser(args.cwd))
+    if not os.path.isdir(cwd):
+        raise SystemExit(f"cwd does not exist: {cwd}")
+    command = args.command.strip()
+    if not command:
+        raise SystemExit("--command must not be empty")
+    cfg = load_config()
+    agents = cfg.setdefault("agents", {})
+    if args.name in agents and not args.force:
+        raise SystemExit(f"agent {args.name!r} already exists; use --force to update")
+    agents[args.name] = {"cwd": cwd, "command": command}
+    save_config(cfg)
+    print(json.dumps({"added": args.name, "config": str(paths()["config_json"]), "agent": agents[args.name]}, indent=2, sort_keys=True))
+
+
+def agent_remove(args: argparse.Namespace) -> None:
+    try:
+        validate_agent_name(args.name)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    cfg = load_config()
+    agents = cfg.get("agents") or {}
+    if args.name not in agents:
+        raise SystemExit(f"agent {args.name!r} is not configured")
+    removed = agents.pop(args.name)
+    save_config(cfg)
+    window_killed = kill_agent_window(args.name)
+    print(json.dumps({"removed": args.name, "window_killed": window_killed, "agent": removed}, indent=2, sort_keys=True))
+
+
+def agent_restart(args: argparse.Namespace) -> None:
+    try:
+        validate_agent_name(args.name)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    cfg = load_config()
+    agent_spec(cfg, args.name)
+    ensure_tracker()
+    ensure_tmux()
+    window_killed = kill_agent_window(args.name)
+    launched = reconcile_agents({args.name})
+    print(json.dumps({"restarted": args.name, "window_killed": window_killed, "launched": args.name in launched}, indent=2, sort_keys=True))
 
 
 def stop(_args: argparse.Namespace) -> None:
@@ -268,6 +488,24 @@ def main() -> None:
     sub.add_parser("status").set_defaults(func=status)
     sub.add_parser("stop").set_defaults(func=stop)
     sub.add_parser("doctor").set_defaults(func=doctor)
+
+    agent = sub.add_parser("agent", help="Manage configured agents")
+    agent_sub = agent.add_subparsers(dest="agent_command", required=True)
+    agent_list_parser = agent_sub.add_parser("list", help="List configured agents")
+    agent_list_parser.add_argument("--json", action="store_true", help="Include config/runtime metadata in JSON output")
+    agent_list_parser.set_defaults(func=agent_list)
+    agent_add_parser = agent_sub.add_parser("add", help="Add or update a configured agent")
+    agent_add_parser.add_argument("name", help="Agent/window name")
+    agent_add_parser.add_argument("--cwd", required=True, help="Working directory")
+    agent_add_parser.add_argument("--command", required=True, help="Command to run through agent-wrapper")
+    agent_add_parser.add_argument("--force", action="store_true", help="Update an existing agent")
+    agent_add_parser.set_defaults(func=agent_add)
+    agent_remove_parser = agent_sub.add_parser("remove", help="Remove a configured agent and stop its managed window if running")
+    agent_remove_parser.add_argument("name", help="Agent/window name")
+    agent_remove_parser.set_defaults(func=agent_remove)
+    agent_restart_parser = agent_sub.add_parser("restart", help="Restart a configured agent window")
+    agent_restart_parser.add_argument("name", help="Agent/window name")
+    agent_restart_parser.set_defaults(func=agent_restart)
     args = parser.parse_args()
     if not hasattr(args, "func"):
         args.func = ui

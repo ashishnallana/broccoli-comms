@@ -3,7 +3,7 @@ BINDIR ?= $(PREFIX)/bin
 GO ?= go
 PYTHON ?= python3
 
-.PHONY: build install check smoke-private-runtime clean
+.PHONY: build install check smoke-private-runtime smoke-managed-agents clean
 
 build:
 	mkdir -p bin
@@ -24,6 +24,9 @@ check:
 
 smoke-private-runtime:
 	bash scripts/smoke-private-runtime.sh
+
+smoke-managed-agents:
+	bash scripts/smoke-managed-agents.sh
 
 clean:
 	rm -rf bin
