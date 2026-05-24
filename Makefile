@@ -3,7 +3,7 @@ BINDIR ?= $(PREFIX)/bin
 GO ?= go
 PYTHON ?= python3
 
-.PHONY: build install check clean
+.PHONY: build install check smoke-private-runtime clean
 
 build:
 	mkdir -p bin
@@ -21,6 +21,9 @@ install: build
 check:
 	$(PYTHON) -m py_compile app/broccoli-comms.py agent-tracker/*.py agent-registry/*.py
 	$(GO) -C agent-communicator-tui test ./...
+
+smoke-private-runtime:
+	bash scripts/smoke-private-runtime.sh
 
 clean:
 	rm -rf bin

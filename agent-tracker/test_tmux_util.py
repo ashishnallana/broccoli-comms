@@ -10,6 +10,20 @@ class TestTmuxUtil(unittest.TestCase):
         # Reset the global state before each test
         tmux_util.last_send_keys_time = 0.0
 
+    def test_tmux_command_uses_private_socket_from_env(self):
+        with mock.patch.dict("os.environ", {"AGENT_TRACKER_TMUX_SOCKET": "/tmp/private.sock"}, clear=True):
+            self.assertEqual(
+                tmux_util.tmux_command(["list-panes", "-a"]),
+                ["tmux", "-S", "/tmp/private.sock", "list-panes", "-a"],
+            )
+
+    def test_tmux_command_does_not_double_prefix_explicit_socket(self):
+        with mock.patch.dict("os.environ", {"AGENT_TRACKER_TMUX_SOCKET": "/tmp/private.sock"}, clear=True):
+            self.assertEqual(
+                tmux_util.tmux_command(["-S", "/tmp/explicit.sock", "list-panes", "-a"]),
+                ["tmux", "-S", "/tmp/explicit.sock", "list-panes", "-a"],
+            )
+
     @mock.patch("tmux_util.enqueue_tmux_cmd")
     def test_send_keys_rate_limiting_gap(self, mock_enqueue):
         # 1. Trigger first send_keys (initial state)

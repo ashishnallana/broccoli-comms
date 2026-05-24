@@ -78,6 +78,18 @@ broccoli-comms start
 broccoli-comms attach
 ```
 
+## Smoke test
+
+Run the private runtime lifecycle smoke test with isolated temp runtime/cache/config directories:
+
+```sh
+bash scripts/smoke-private-runtime.sh
+# or
+make smoke-private-runtime
+```
+
+The test starts `broccoli-comms`, verifies the private tracker and tmux sockets/session, checks status JSON, stops the runtime, and verifies cleanup.
+
 ## Source copied from home-manager-core
 
 Initial copied slices:

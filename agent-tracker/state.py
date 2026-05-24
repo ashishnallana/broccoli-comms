@@ -105,7 +105,7 @@ def init_state() -> None:
                         "session": session,
                         "tmux_pane": pane_id,
                         "pid": agent_pid,
-                        "tmux_socket": "", # Fallback to default
+                        "tmux_socket": tmux_util.default_tmux_socket() or "", # Fallback to configured default
                         "wrapper_pid": None,
                         "status": "unknown",
                         "waiting_approval": False,

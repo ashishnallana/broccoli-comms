@@ -48,6 +48,7 @@ def setup_signals():
 def main():
     setup_signals()
     os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
+    os.makedirs(CACHE_DIR, exist_ok=True)
 
     with open(LOCK_PATH, "a+") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)

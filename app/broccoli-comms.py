@@ -23,7 +23,10 @@ SESSION = "broccoli-comms"
 
 
 def xdg_runtime() -> Path:
-    return Path(os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR") or os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}") / APP
+    override = os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR")
+    if override:
+        return Path(override)
+    return Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}") / APP
 
 
 def xdg_cache() -> Path:
@@ -63,11 +66,15 @@ def ensure_dirs() -> None:
 def base_env() -> dict[str, str]:
     p = paths()
     env = os.environ.copy()
+    env.pop("TMUX", None)
+    env.pop("TMUX_PANE", None)
     env.update({
         "BROCCOLI_COMMS_RUNTIME_DIR": str(p["runtime"]),
         "BROCCOLI_COMMS_CACHE_DIR": str(p["cache"]),
         "BROCCOLI_COMMS_CONFIG_DIR": str(p["config"]),
+        "BROCCOLI_COMMS_TMUX_SOCKET": str(p["tmux_socket"]),
         "AGENT_TRACKER_SOCKET": str(p["tracker_socket"]),
+        "AGENT_TRACKER_TMUX_SOCKET": str(p["tmux_socket"]),
         "XDG_CACHE_HOME": str(p["cache"]),
         "AGENT_TRACKER_HTTP_PORT": env.get("AGENT_TRACKER_HTTP_PORT", "19876"),
     })
@@ -209,14 +216,37 @@ def status(_args: argparse.Namespace) -> None:
 
 
 def stop(_args: argparse.Namespace) -> None:
+    p = paths()
     tmux("kill-server", check=False)
-    pid_file = paths()["tracker_pid"]
+    for _ in range(50):
+        if tmux("has-session", "-t", SESSION, check=False).returncode != 0:
+            break
+        time.sleep(0.1)
+    if p["tmux_socket"].exists() and tmux("has-session", "-t", SESSION, check=False).returncode != 0:
+        p["tmux_socket"].unlink(missing_ok=True)
+
+    pid_file = p["tracker_pid"]
     if pid_file.exists():
         try:
             os.kill(int(pid_file.read_text().strip()), signal.SIGTERM)
         except Exception:
             pass
+        for _ in range(50):
+            if not can_connect(p["tracker_socket"]):
+                break
+            time.sleep(0.1)
+        if can_connect(p["tracker_socket"]):
+            try:
+                os.kill(int(pid_file.read_text().strip()), signal.SIGKILL)
+            except Exception:
+                pass
+            for _ in range(20):
+                if not can_connect(p["tracker_socket"]):
+                    break
+                time.sleep(0.1)
         pid_file.unlink(missing_ok=True)
+    if p["tracker_socket"].exists() and not can_connect(p["tracker_socket"]):
+        p["tracker_socket"].unlink(missing_ok=True)
     print(f"{APP} stopped")
 
 

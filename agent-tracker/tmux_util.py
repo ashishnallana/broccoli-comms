@@ -34,10 +34,33 @@ def enqueue_tmux_cmd(cmd):
     """Enqueues a tmux command for background execution."""
     task_queue.put({'cmd': cmd})
 
+
+def default_tmux_socket():
+    """Returns the app-private tmux socket configured for this tracker, if any."""
+    return os.environ.get("AGENT_TRACKER_TMUX_SOCKET") or os.environ.get("BROCCOLI_COMMS_TMUX_SOCKET") or None
+
+
+def tmux_base(socket_path=None):
+    """Builds a tmux command prefix, defaulting to the configured private socket."""
+    socket_path = socket_path if socket_path is not None else default_tmux_socket()
+    cmd = ["tmux"]
+    if socket_path:
+        cmd.extend(["-S", socket_path])
+    return cmd
+
+
+def tmux_command(args=None, socket_path=None):
+    """Builds a full tmux command without double-prefixing explicit tmux options."""
+    args = list(args or [])
+    if args and args[0] in ("-S", "-L"):
+        return ["tmux"] + args
+    return tmux_base(socket_path) + args
+
+
 def run_tmux_cmd(cmd, timeout=5):
     """Helper to run tmux commands synchronously."""
     try:
-        result = subprocess.run(["tmux"] + cmd, check=True, capture_output=True, timeout=timeout)
+        result = subprocess.run(tmux_command(cmd), check=True, capture_output=True, timeout=timeout)
         return result.stdout.decode("utf-8").strip()
     except subprocess.CalledProcessError as e:
         logging.error(f"Tmux command failed: {e} - {e.stderr.decode('utf-8')}")
@@ -47,50 +70,32 @@ def run_tmux_cmd(cmd, timeout=5):
         raise
 
 def set_agent_id(pane_id, agent_id, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["set-option", "-p", "-t", pane_id, "@agent_id", agent_id])
+    cmd = tmux_command(["set-option", "-p", "-t", pane_id, "@agent_id", agent_id], socket_path)
     enqueue_tmux_cmd(cmd)
 
 
 def set_agent_uuid(pane_id, uuid, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["set-option", "-p", "-t", pane_id, "@agent_uuid", uuid])
+    cmd = tmux_command(["set-option", "-p", "-t", pane_id, "@agent_uuid", uuid], socket_path)
     enqueue_tmux_cmd(cmd)
 
 
 def set_agent_type(pane_id, agent_type, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["set-option", "-p", "-t", pane_id, "@agent_type", agent_type])
+    cmd = tmux_command(["set-option", "-p", "-t", pane_id, "@agent_type", agent_type], socket_path)
     enqueue_tmux_cmd(cmd)
 
 
 def set_agent_cmd(pane_id, agent_cmd, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["set-option", "-p", "-t", pane_id, "@agent_cmd", agent_cmd])
+    cmd = tmux_command(["set-option", "-p", "-t", pane_id, "@agent_cmd", agent_cmd], socket_path)
     enqueue_tmux_cmd(cmd)
 
 
 def set_agent_no_notify_with_send_keys(pane_id, value, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["set-option", "-p", "-t", pane_id, "@agent_no_notify_with_send_keys", "on" if value else "off"])
+    cmd = tmux_command(["set-option", "-p", "-t", pane_id, "@agent_no_notify_with_send_keys", "on" if value else "off"], socket_path)
     enqueue_tmux_cmd(cmd)
 
 
 def set_agent_no_registry(pane_id, value, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["set-option", "-p", "-t", pane_id, "@agent_no_registry", "on" if value else "off"])
+    cmd = tmux_command(["set-option", "-p", "-t", pane_id, "@agent_no_registry", "on" if value else "off"], socket_path)
     enqueue_tmux_cmd(cmd)
 
 
@@ -139,53 +144,31 @@ def get_pane_info(pane_id):
     return None
 
 def set_agent_name(pane_id, name, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["set-option", "-p", "-t", pane_id, "@agent_name", name])
+    cmd = tmux_command(["set-option", "-p", "-t", pane_id, "@agent_name", name], socket_path)
     enqueue_tmux_cmd(cmd)
 
 def set_agent_name_sync(pane_id, name, socket_path=None):
-    cmd = ["set-option", "-p", "-t", pane_id, "@agent_name", name]
-    if socket_path:
-        run_tmux_cmd(["-S", socket_path] + cmd)
-    else:
-        run_tmux_cmd(cmd)
+    run_tmux_cmd(tmux_command(["set-option", "-p", "-t", pane_id, "@agent_name", name], socket_path)[1:])
 
 def unset_agent_name(pane_id, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["set-option", "-p", "-u", "-t", pane_id, "@agent_name"])
+    cmd = tmux_command(["set-option", "-p", "-u", "-t", pane_id, "@agent_name"], socket_path)
     enqueue_tmux_cmd(cmd)
 
 def set_pane_title(pane_id, title, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["select-pane", "-t", pane_id, "-T", title])
+    cmd = tmux_command(["select-pane", "-t", pane_id, "-T", title], socket_path)
     enqueue_tmux_cmd(cmd)
 
 def set_pane_title_sync(pane_id, title, socket_path=None):
-    cmd = ["select-pane", "-t", pane_id, "-T", title]
-    if socket_path:
-        run_tmux_cmd(["-S", socket_path] + cmd)
-    else:
-        run_tmux_cmd(cmd)
+    run_tmux_cmd(tmux_command(["select-pane", "-t", pane_id, "-T", title], socket_path)[1:])
 
 def unset_pane_title(pane_id, socket_path=None):
-    cmd = ["tmux"]
-    if socket_path:
-        cmd.extend(["-S", socket_path])
-    cmd.extend(["select-pane", "-t", pane_id, "-T", ""])
+    cmd = tmux_command(["select-pane", "-t", pane_id, "-T", ""], socket_path)
     enqueue_tmux_cmd(cmd)
 
 def send_keys(pane_id, keys, socket_path=None):
     """Sends keys followed by a short delay and Enter to ensure submission."""
     global last_send_keys_time
-    cmd_base = ["tmux"]
-    if socket_path:
-        cmd_base.extend(["-S", socket_path])
+    cmd_base = tmux_base(socket_path)
     
     import time
     with send_keys_lock:
@@ -212,9 +195,7 @@ def spin_agent(agent_name, command, target_pane=None, session=None, directory=No
     import shlex
 
     identity_keys = ("AGENT_ID", "AGENT_NAME", "AGENT_UUID")
-    tmux_base = ["tmux"]
-    if tmux_socket:
-        tmux_base.extend(["-S", tmux_socket])
+    tmux_cmd_prefix = tmux_base(tmux_socket)
 
     command_parts = shlex.split(command)
     spawn_env = dict(env or {})
@@ -237,6 +218,8 @@ def spin_agent(agent_name, command, target_pane=None, session=None, directory=No
     run_env = os.environ.copy()
     for key in identity_keys:
         run_env.pop(key, None)
+    run_env.pop("TMUX", None)
+    run_env.pop("TMUX_PANE", None)
     run_env["SUGGESTED_AGENT_NAME"] = agent_name
 
     try:
@@ -251,19 +234,19 @@ def spin_agent(agent_name, command, target_pane=None, session=None, directory=No
             list(spawn_env.keys()) if spawn_env else None,
         )
         if session and directory:
-            has_session = subprocess.run(tmux_base + ["has-session", "-t", session], capture_output=True, env=run_env).returncode == 0
+            has_session = subprocess.run(tmux_cmd_prefix + ["has-session", "-t", session], capture_output=True, env=run_env).returncode == 0
             if has_session:
-                cmd = tmux_base + ["new-window", "-P", "-F", "#{pane_id}", "-t", session, "-c", directory] + env_args + [wrapped_command]
+                cmd = tmux_cmd_prefix + ["new-window", "-P", "-F", "#{pane_id}", "-t", session, "-c", directory] + env_args + [wrapped_command]
             else:
-                cmd = tmux_base + ["new-session", "-d", "-P", "-F", "#{pane_id}", "-s", session, "-c", directory] + env_args + [wrapped_command]
+                cmd = tmux_cmd_prefix + ["new-session", "-d", "-P", "-F", "#{pane_id}", "-s", session, "-c", directory] + env_args + [wrapped_command]
             logging.info("spin_agent tmux_cmd=%s", cmd)
             result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=run_env)
             pane_id = result.stdout.strip() or None
             logging.info("spin_agent tmux_result pane_id=%s has_session=%s", pane_id, has_session)
-            subprocess.run(tmux_base + ["switch-client", "-t", session], check=False, capture_output=True, env=run_env)
+            subprocess.run(tmux_cmd_prefix + ["switch-client", "-t", session], check=False, capture_output=True, env=run_env)
             return pane_id
 
-        tmux_cmd = tmux_base[:]
+        tmux_cmd = tmux_cmd_prefix[:]
         if target_pane:
             tmux_cmd.extend(["split-window", "-P", "-F", "#{pane_id}", "-t", target_pane])
         else:
@@ -281,11 +264,11 @@ def spin_agent(agent_name, command, target_pane=None, session=None, directory=No
 
 def send_keys_reliable(pane_id, keys, socket_path=None, timeout=10):
     """Sends keys to a pane reliably, verifying they appeared on screen."""
-    return tmux_reliability.send_keys_reliable(pane_id, keys, socket_path, timeout)
+    return tmux_reliability.send_keys_reliable(pane_id, keys, socket_path if socket_path is not None else default_tmux_socket(), timeout)
 
 def execute_command_reliable(pane_id, command, socket_path=None, timeout=30):
     """Executes a command in a pane reliably, waiting for execution and returning the exit code."""
-    return tmux_reliability.execute_command_reliable(pane_id, command, socket_path, timeout)
+    return tmux_reliability.execute_command_reliable(pane_id, command, socket_path if socket_path is not None else default_tmux_socket(), timeout)
 
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
