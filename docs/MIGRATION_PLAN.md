@@ -43,26 +43,29 @@ Committed history:
 - `8218973` - Add runtime JSON API boundary
 - `59b70c8` - Update migration plan after runtime API chunk
 - `83482c1` - Wrap spun agents with agent-wrapper
+- `8a5ed7f` - Update migration plan after spin wrapper chunk
+- `38ebd93` - Make communicator TUI app-runtime aware
 
 Current work:
 
-- Chunk 5 is committed: `agent-tracker-ctl spin` auto-wraps raw commands with `agent-wrapper`, Nix/source wrapper resolution is updated, and bootstrap tmux dependency docs/checks were tightened.
-- Chunk 6 first slice is in progress: app-aware TUI runtime status/private socket handling and managed-agent focus/attach CLI affordances.
+- Chunk 6 first slice is committed: app-aware TUI runtime status/private socket handling and managed-agent focus/attach CLI affordances.
+- Next work should continue with Chunk 7: doctor/bootstrap/packaging polish, then final code review for pending action items.
 
 Current agent coordination:
 
 - Previous coder/reviewer panes were killed.
 - New `broccoli-comms-coder` and `broccoli-comms-reviewer` agents have been spun and given the current context.
-- Coder and reviewer completed Chunk 5; both can be reused for Chunk 6.
+- Coder and reviewer completed Chunk 6; both can be reused for Chunk 7 and final review.
 
-Latest full validation gate passed before Chunk 5 commit:
+Latest full validation gate passed before Chunk 6 commit:
 
 ```sh
 nix --extra-experimental-features 'nix-command flakes' flake check .
 nix --extra-experimental-features 'nix-command flakes' build .#default --no-link
 bash scripts/smoke-private-runtime.sh
 bash scripts/smoke-managed-agents.sh
-(cd agent-tracker && python3 -m unittest test_tmux_util.py)
+(cd agent-tracker && python3 -m unittest test_tmux_util.py test_spin_command.py)
+(cd agent-communicator-tui && go test ./...)
 python3 -m py_compile app/broccoli-comms.py agent-tracker/*.py agent-tracker/ctl_commands/*.py
 bash -n wrapper/agent-wrapper.sh
 git diff --check
@@ -219,7 +222,7 @@ Known limitations to track:
 
 ### Chunk 6: app-aware TUI integration
 
-Status: in progress in the working tree; pending full validation, review, and lead commit.
+Status: complete and committed.
 
 Planned tasks:
 
@@ -230,8 +233,8 @@ Planned tasks:
 - [x] Add `broccoli-comms agent focus <name>` and `broccoli-comms agent attach <name>` affordances using managed-window metadata/window ids.
 - [x] Add focused unit coverage for app-runtime socket/status and private tmux command construction.
 - [x] Run full validation gate.
-- [ ] Reviewer approval for Chunk 6.
-- [ ] Lead commit after approval.
+- [x] Reviewer approval for Chunk 6.
+- [x] Lead commit after approval.
 
 Future work (not implemented in Chunk 6 first slice):
 
