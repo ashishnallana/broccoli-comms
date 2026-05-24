@@ -41,19 +41,21 @@ Committed history:
 - `61f2d0c` - Harden private tmux socket usage
 - `f81f62c` - Add managed agent CLI
 - `8218973` - Add runtime JSON API boundary
+- `59b70c8` - Update migration plan after runtime API chunk
+- `83482c1` - Wrap spun agents with agent-wrapper
 
 Current work:
 
-- Chunk 4 is committed.
-- Chunk 5 implementation is in progress: `agent-tracker-ctl spin` auto-wraps raw commands with `agent-wrapper`, Nix/source wrapper resolution has been updated, and bootstrap tmux dependency docs/checks are being tightened.
+- Chunk 5 is committed: `agent-tracker-ctl spin` auto-wraps raw commands with `agent-wrapper`, Nix/source wrapper resolution is updated, and bootstrap tmux dependency docs/checks were tightened.
+- Next planned work is Chunk 6: app-aware TUI integration and agent pane/focus affordances.
 
 Current agent coordination:
 
 - Previous coder/reviewer panes were killed.
 - New `broccoli-comms-coder` and `broccoli-comms-reviewer` agents have been spun and given the current context.
-- Coder is ready for Chunk 5 assignment; reviewer is ready for follow-up reviews.
+- Coder and reviewer completed Chunk 5; both can be reused for Chunk 6.
 
-Latest validation run for Chunk 4 passed before commit:
+Latest full validation gate passed before Chunk 5 commit:
 
 ```sh
 nix --extra-experimental-features 'nix-command flakes' flake check .
@@ -193,7 +195,7 @@ Known limitations to track:
 
 ### Chunk 5: enforce wrapped spawned agents
 
-Status: in progress in the working tree; pending full validation, review, and lead commit.
+Status: complete and committed.
 
 Goal: make `agent-tracker-ctl spin` and Broccoli Comms spin paths ensure spawned commands run under `agent-wrapper`.
 
@@ -207,8 +209,13 @@ Planned tasks:
 - [x] Document spin behavior in README/runtime docs.
 - [x] Clarify bootstrap dependency expectations: Nix packages include `tmux`; manual/non-Nix installs currently require system `tmux` and `python3`.
 - [x] Run full validation gate.
-- [ ] Reviewer approval for Chunk 5.
-- [ ] Lead commit after approval.
+- [x] Reviewer approval for Chunk 5.
+- [x] Lead commit after approval.
+
+Known limitations to track:
+
+- Auto-wrap dedup only inspects the first command token. Shell-wrapped commands such as `bash -lc "agent-wrapper pi"` are not inspected.
+- Existing wrapper flag parsing behavior is unchanged; wrapper-specific flags can still be consumed by `agent-wrapper` before the agent command.
 
 ### Chunk 6: app-aware TUI integration
 
