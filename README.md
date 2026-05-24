@@ -131,9 +131,10 @@ broccoli-comms agent list --json
 
 ## Smoke test
 
-Run the private runtime lifecycle smoke test with isolated temp runtime/cache/config directories:
+Run the Nix/package checks and private runtime lifecycle smoke tests with isolated temp runtime/cache/config directories:
 
 ```sh
+nix flake check
 bash scripts/smoke-private-runtime.sh
 bash scripts/smoke-managed-agents.sh
 # or

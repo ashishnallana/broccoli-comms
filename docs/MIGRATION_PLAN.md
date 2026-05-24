@@ -60,7 +60,7 @@ Current agent coordination:
 - New `broccoli-comms-coder` and `broccoli-comms-reviewer` agents have been spun and given the current context.
 - Coder and reviewer completed Chunk 7; both can be reused for final review.
 
-Latest full validation gate passed before Chunk 6 commit:
+Latest full validation gate passed for final review cleanup:
 
 ```sh
 nix --extra-experimental-features 'nix-command flakes' flake check .
@@ -271,9 +271,26 @@ Planned tasks:
 
 Deferred/final-review items:
 
-- [ ] Consider adding flake `checks` outputs for Python syntax, Go tests, and launcher smoke tests where feasible.
+- [x] Add lightweight flake `checks` outputs for Python syntax, selected tracker unit tests, shell syntax, and Go communicator tests.
 - [ ] Decide whether `agent-registry` remains bundled by default or optional.
 - [ ] Expand `doctor` further for agent command version checks, registry config/secrets sanity, and socket repair suggestions.
+
+### Final review / migration-phase cleanup
+
+Status: ready for review in the working tree; validation complete, pending review and lead commit.
+
+Items found/fixed:
+
+- [x] Added flake `checks` for Python compile, tracker unit smoke, shell syntax, and Go communicator tests so `nix flake check` exercises more than package evaluation.
+- [x] Removed stale flake app `meta` warnings by adding app descriptions and avoiding deprecated `pkgs.system` access.
+- [x] Rechecked migration docs for stale completed items and moved remaining work into future-only/deferred lists.
+
+Remaining future-only items:
+
+- [ ] Decide whether `agent-registry` remains bundled by default or optional.
+- [ ] Add full launcher/runtime smokes as Nix checks if they can be made reliable in sandbox/CI tmux environments.
+- [ ] Add deeper `doctor` checks for agent command versions, registry config/secrets, and suggested repairs.
+- [ ] Continue wrapper parity hardening against the Home Manager wrapper over time.
 
 ### Chunk 8: future native/Electron/libghostty frontend path
 
@@ -311,7 +328,7 @@ Tasks:
 
 - The standalone `agent-wrapper.sh` is simpler than the Home Manager inline wrapper and still needs parity testing.
 - `agent-tracker` currently imports sibling Python modules; packaging works by copying the whole tree, but this should become a proper Python package later.
-- The copied TUI still has assumptions from `home-manager-core` and needs app-mode integration.
-- Private tmux control has been audited, but should be rechecked after TUI and spin-wrapper changes.
+- The copied TUI is now app-runtime aware for the standalone path, but still shares upstream assumptions/package naming from `home-manager-core` and needs continued sync/parity review.
+- Private tmux control has smoke and unit coverage for the app runtime, but should remain part of future reviews whenever pane-control features change.
 - Manual/non-Nix installs currently require system `tmux`.
 - Existing pre-Chunk-3 managed windows without `@broccoli_managed_agent` metadata are intentionally not managed by the new remove/restart logic.

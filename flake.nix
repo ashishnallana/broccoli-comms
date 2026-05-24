@@ -101,15 +101,55 @@
           default = broccoliComms;
         });
 
-      apps = forAllSystems (pkgs: {
-        default = {
-          type = "app";
-          program = "${self.packages.${pkgs.system}.broccoliComms}/bin/broccoli-comms";
-        };
-        broccoli-comms = {
-          type = "app";
-          program = "${self.packages.${pkgs.system}.broccoliComms}/bin/broccoli-comms";
+      checks = forAllSystems (pkgs: {
+        python-syntax = pkgs.runCommand "broccoli-comms-python-syntax" { } ''
+          cp -R ${./app} app
+          cp -R ${./agent-tracker} agent-tracker
+          chmod -R u+w app agent-tracker
+          ${pkgs.python3}/bin/python3 -m py_compile app/broccoli-comms.py agent-tracker/*.py agent-tracker/ctl_commands/*.py
+          touch $out
+        '';
+
+        tracker-unit = pkgs.runCommand "broccoli-comms-tracker-unit" { } ''
+          cp -R ${./agent-tracker} agent-tracker
+          chmod -R u+w agent-tracker
+          cd agent-tracker
+          ${pkgs.python3}/bin/python3 -m unittest test_tmux_util.py test_spin_command.py
+          touch $out
+        '';
+
+        shell-syntax = pkgs.runCommand "broccoli-comms-shell-syntax" { } ''
+          ${pkgs.bash}/bin/bash -n ${./wrapper/agent-wrapper.sh}
+          ${pkgs.bash}/bin/bash -n ${./scripts/smoke-private-runtime.sh}
+          ${pkgs.bash}/bin/bash -n ${./scripts/smoke-managed-agents.sh}
+          touch $out
+        '';
+
+        communicator-tests = pkgs.buildGoModule {
+          pname = "broccoli-comms-communicator-tests";
+          version = "0.1.0";
+          src = ./agent-communicator-tui;
+          vendorHash = "sha256-TUbaUoqDZoQTkcOMtoE/FlAiqkWN+x49JeGkDguh2UU=";
+          doCheck = true;
+          installPhase = ''
+            mkdir -p $out
+          '';
         };
       });
+
+      apps = forAllSystems (pkgs:
+        let system = pkgs.stdenv.hostPlatform.system;
+        in {
+          default = {
+            type = "app";
+            program = "${self.packages.${system}.broccoliComms}/bin/broccoli-comms";
+            meta.description = "Standalone Broccoli Comms agent runtime";
+          };
+          broccoli-comms = {
+            type = "app";
+            program = "${self.packages.${system}.broccoliComms}/bin/broccoli-comms";
+            meta.description = "Standalone Broccoli Comms agent runtime";
+          };
+        });
     };
 }
