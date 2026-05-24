@@ -115,6 +115,42 @@ class TestTmuxUtil(unittest.TestCase):
         mock_run.assert_called_once_with(["display-message", "-p", "-t", "%0", "#{pane_in_mode}"])
 
     @mock.patch("tmux_util.subprocess.run")
+    def test_send_literal_text_uses_literal_flag_and_submit(self, run):
+        run.return_value = mock.Mock(returncode=0, stdout=b"")
+        tmux_util.send_literal_text("%1", "-C-c", socket_path="/tmp/tmux.sock")
+        self.assertEqual(run.call_args_list[0].args[0], ["tmux", "-S", "/tmp/tmux.sock", "send-keys", "-t", "%1", "-l", "--", "-C-c"])
+        self.assertEqual(run.call_args_list[1].args[0], ["tmux", "-S", "/tmp/tmux.sock", "send-keys", "-t", "%1", "Enter"])
+
+    @mock.patch("tmux_util.subprocess.run")
+    def test_send_literal_text_no_submit(self, run):
+        run.return_value = mock.Mock(returncode=0, stdout=b"")
+        tmux_util.send_literal_text("%1", "draft", submit=False, socket_path="/tmp/tmux.sock")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["tmux", "-S", "/tmp/tmux.sock", "send-keys", "-t", "%1", "-l", "--", "draft"])
+
+    @mock.patch("tmux_util.subprocess.run")
+    def test_send_symbolic_keys_normalizes_aliases(self, run):
+        run.return_value = mock.Mock(returncode=0, stdout=b"")
+        tmux_util.send_symbolic_keys("%1", ["ESC", "Return", "C-C", "Ctrl-D"], socket_path="/tmp/tmux.sock")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["tmux", "-S", "/tmp/tmux.sock", "send-keys", "-t", "%1", "Escape", "Enter", "C-c", "C-d"])
+
+    def test_send_symbolic_keys_rejects_malformed_unknown_keys(self):
+        bad_keys = ["", "C-", "NotAKey", "C- ", "C-;", "C-a;rm", "C--a", "C-M-S-a", "hello world"]
+        for key in bad_keys:
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError):
+                    tmux_util.normalize_key_tokens([key])
+
+    def test_send_literal_text_validates_inputs(self):
+        with self.assertRaises(ValueError):
+            tmux_util.send_literal_text("", "hello")
+        with self.assertRaises(ValueError):
+            tmux_util.send_literal_text("%1", None)
+        with self.assertRaises(ValueError):
+            tmux_util.send_literal_text("%1", "")
+
+    @mock.patch("tmux_util.subprocess.run")
     def test_spin_agent_clears_inherited_agent_identity(self, run):
         inherited_env = {
             "AGENT_ID": "parent-id",

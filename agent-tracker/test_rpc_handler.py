@@ -1065,6 +1065,89 @@ class TestRpcHandler(unittest.TestCase):
         self.assertIn("Failed to capture pane visible text buffer", str(ctx.exception))
 
 
+    @mock.patch("tmux_util.send_literal_text")
+    def test_send_input_text_by_local_name_uses_registered_socket(self, send_literal):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        result = rpc_handler.handle_send_input({"agent_name": "agent1", "input_type": "text", "text": "hello"})
+        self.assertEqual(result, {"success": True, "target": "agent1", "mode": "text", "submitted": True})
+        send_literal.assert_called_once_with("%1", "hello", submit=True, socket_path="sock")
+
+    @mock.patch("tmux_util.send_symbolic_keys")
+    def test_send_input_keys_by_id_uses_registered_socket(self, send_keys):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        result = rpc_handler.handle_send_input({"agent_id": "id-1", "mode": "keys", "key": "C-c"})
+        self.assertEqual(result, {"success": True, "target": "agent1", "mode": "keys", "keys": ["C-c"]})
+        send_keys.assert_called_once_with("%1", ["C-c"], socket_path="sock")
+
+    @mock.patch("tmux_util.send_literal_text")
+    def test_send_input_local_target_address_resolves_locally(self, send_literal):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        result = rpc_handler.handle_send_input({"target_address": "local/agent1", "input_type": "text", "text": "draft", "submit": False})
+        self.assertFalse(result["submitted"])
+        send_literal.assert_called_once_with("%1", "draft", submit=False, socket_path="sock")
+
+    @mock.patch("tmux_util.send_literal_text")
+    def test_send_input_hostname_local_target_address_resolves_locally(self, send_literal):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        result = rpc_handler.handle_send_input({"target_address": f"{rpc_handler.LOCAL_HOSTNAME}/id-1", "input_type": "text", "text": "hello"})
+        self.assertTrue(result["success"])
+        send_literal.assert_called_once_with("%1", "hello", submit=True, socket_path="sock")
+
+    @mock.patch("tmux_util.send_literal_text")
+    def test_send_input_missing_tmux_socket_fails_without_default_fallback(self, send_literal):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1"})
+        with self.assertRaises(RuntimeError) as ctx:
+            rpc_handler.handle_send_input({"agent_name": "agent1", "input_type": "text", "text": "hello"})
+        self.assertIn("no registered tmux socket", str(ctx.exception))
+        send_literal.assert_not_called()
+
+    def test_send_input_missing_pane_fails(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_socket": "sock"})
+        with self.assertRaises(RuntimeError) as ctx:
+            rpc_handler.handle_send_input({"agent_name": "agent1", "input_type": "text", "text": "hello"})
+        self.assertIn("no registered tmux pane", str(ctx.exception))
+
+    @mock.patch("tmux_util.send_literal_text", side_effect=RuntimeError("tmux socket unreachable"))
+    def test_send_input_unreachable_registered_socket_fails_clearly(self, send_literal):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        with self.assertRaises(RuntimeError) as ctx:
+            rpc_handler.handle_send_input({"agent_name": "agent1", "input_type": "text", "text": "hello"})
+        self.assertIn("Failed to send direct pane input", str(ctx.exception))
+        send_literal.assert_called_once_with("%1", "hello", submit=True, socket_path="sock")
+
+    def test_send_input_remote_target_address_disabled(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            rpc_handler.handle_send_input({"target_address": "remote-host/agent1", "input_type": "text", "text": "hello"})
+        self.assertIn("remote direct pane input is disabled", str(ctx.exception))
+
+    def test_send_input_invalid_params(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        invalid_params = [
+            {"agent_name": "agent1", "input_type": "bogus", "text": "hello"},
+            {"agent_name": "agent1", "input_type": "text", "text": "hello", "submit": "yes"},
+            {"agent_name": "agent1", "input_type": "keys"},
+            {"input_type": "text", "text": "hello"},
+        ]
+        for params in invalid_params:
+            with self.subTest(params=params):
+                with self.assertRaises(ValueError):
+                    rpc_handler.handle_send_input(params)
+
+    @mock.patch("tmux_util.send_keys")
+    @mock.patch("tmux_util.send_literal_text")
+    def test_send_input_bypasses_inbox_and_notifications(self, send_literal, notify_send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+            result = rpc_handler.handle_send_input({"agent_name": "agent1", "input_type": "text", "text": "hello"})
+            self.assertTrue(result["success"])
+            self.assertFalse(os.path.exists(inbox_path))
+            notify_send_keys.assert_not_called()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
 
 
 if __name__ == "__main__":

@@ -208,6 +208,144 @@ def send_keys(pane_id, keys, socket_path=None):
         # 3. Send the Enter key to submit
         enqueue_tmux_cmd(cmd_base + ["send-keys", "-t", pane_id, "Enter"])
 
+
+_SIMPLE_KEY_ALIASES = {
+    "esc": "Escape",
+    "escape": "Escape",
+    "enter": "Enter",
+    "return": "Enter",
+    "ret": "Enter",
+    "space": "Space",
+    "spc": "Space",
+    "tab": "Tab",
+    "btab": "BTab",
+    "backtab": "BTab",
+    "bs": "Backspace",
+    "backspace": "Backspace",
+    "del": "Delete",
+    "delete": "Delete",
+    "ins": "Insert",
+    "insert": "Insert",
+    "up": "Up",
+    "down": "Down",
+    "left": "Left",
+    "right": "Right",
+    "home": "Home",
+    "end": "End",
+    "pgup": "PageUp",
+    "pageup": "PageUp",
+    "ppage": "PageUp",
+    "pgdn": "PageDown",
+    "pagedown": "PageDown",
+    "npage": "PageDown",
+}
+
+_SIMPLE_KEYS = set(_SIMPLE_KEY_ALIASES.values()) | {f"F{i}" for i in range(1, 25)}
+_MODIFIER_ALIASES = {
+    "c": "C",
+    "ctrl": "C",
+    "control": "C",
+    "m": "M",
+    "meta": "M",
+    "alt": "M",
+    "s": "S",
+    "shift": "S",
+}
+_SHELL_LIKE_KEY_CHARS = set("|&;<>$`(){}[]*?~!#\"'\\\n\r")
+
+
+def _run_tmux_input(cmd, socket_path=None):
+    return subprocess.run(
+        cmd,
+        check=True,
+        capture_output=True,
+        timeout=5,
+        env=tmux_env(strip_inherited=bool(socket_path) or bool(default_tmux_socket())),
+    )
+
+
+def send_literal_text(pane_id, text, submit=True, socket_path=None):
+    """Type literal text into a pane, optionally pressing Enter afterwards."""
+    if not pane_id:
+        raise ValueError("pane_id is required")
+    if not isinstance(text, str):
+        raise ValueError("text must be a string")
+    if text == "":
+        raise ValueError("text must not be empty")
+    _run_tmux_input(tmux_base(socket_path) + ["send-keys", "-t", pane_id, "-l", "--", text], socket_path)
+    if submit:
+        _run_tmux_input(tmux_base(socket_path) + ["send-keys", "-t", pane_id, "Enter"], socket_path)
+    return True
+
+
+def normalize_key_token(key):
+    """Normalize a whitelisted symbolic tmux key token."""
+    if not isinstance(key, str):
+        raise ValueError("key must be a string")
+    token = key.strip()
+    if not token:
+        raise ValueError("key must not be empty")
+    if token != key or any(ch.isspace() for ch in token):
+        raise ValueError("key must not contain whitespace")
+    if any(ch in _SHELL_LIKE_KEY_CHARS for ch in token):
+        raise ValueError("key contains unsupported characters")
+    if token.endswith("-"):
+        raise ValueError("key has trailing modifier")
+
+    lower = token.lower()
+    if lower in _SIMPLE_KEY_ALIASES:
+        return _SIMPLE_KEY_ALIASES[lower]
+    if re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", lower):
+        return "F" + lower[1:]
+
+    parts = token.split("-")
+    if len(parts) == 1:
+        if token in _SIMPLE_KEYS:
+            return token
+        raise ValueError(f"unknown key: {key}")
+    if len(parts) > 3:
+        raise ValueError("too many key modifiers")
+
+    modifiers = []
+    for raw_modifier in parts[:-1]:
+        modifier = _MODIFIER_ALIASES.get(raw_modifier.lower())
+        if not modifier:
+            raise ValueError(f"unknown key modifier: {raw_modifier}")
+        if modifier in modifiers:
+            raise ValueError(f"duplicate key modifier: {raw_modifier}")
+        modifiers.append(modifier)
+
+    base_raw = parts[-1]
+    if not base_raw:
+        raise ValueError("key has empty base")
+    base_lower = base_raw.lower()
+    if base_lower in _SIMPLE_KEY_ALIASES:
+        base = _SIMPLE_KEY_ALIASES[base_lower]
+    elif re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", base_lower):
+        base = "F" + base_lower[1:]
+    elif len(base_raw) == 1 and base_raw.isalnum():
+        base = base_raw.lower() if "C" in modifiers else base_raw
+    else:
+        raise ValueError(f"unknown key: {key}")
+    return "-".join(modifiers + [base])
+
+
+def normalize_key_tokens(keys):
+    if isinstance(keys, str):
+        keys = [keys]
+    if not isinstance(keys, (list, tuple)) or not keys:
+        raise ValueError("keys must be a non-empty list")
+    return [normalize_key_token(key) for key in keys]
+
+
+def send_symbolic_keys(pane_id, keys, socket_path=None):
+    """Send whitelisted symbolic tmux key tokens to a pane."""
+    if not pane_id:
+        raise ValueError("pane_id is required")
+    normalized = normalize_key_tokens(keys)
+    _run_tmux_input(tmux_base(socket_path) + ["send-keys", "-t", pane_id, *normalized], socket_path)
+    return True
+
 def spin_agent(agent_name, command, target_pane=None, session=None, directory=None, env=None, tmux_socket=None):
     import os
     import shlex

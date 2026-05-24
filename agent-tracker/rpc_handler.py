@@ -544,6 +544,65 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
         raise RuntimeError(f"Failed to send message: {e}")
 
 
+def _resolve_local_target_address(params: dict, allow_remote: bool) -> dict:
+    """Resolve local target_address forms while rejecting remote direct-input targets."""
+    target_address = params.get("target_address")
+    if not target_address or "/" not in target_address:
+        return params
+
+    hostname, target = target_address.split("/", 1)
+    if ":" in hostname:
+        _, hostname = hostname.split(":", 1)
+    if hostname not in {"local", LOCAL_HOSTNAME}:
+        if allow_remote:
+            return params
+        raise RuntimeError("remote direct pane input is disabled/not yet supported")
+    return {**params, **({"agent_id": target} if _is_uuid(target) else {"agent_name": target})}
+
+
+def handle_send_input(params: dict, caller_pid: int = None) -> dict:
+    """Sends local direct pane input to a registered agent pane.
+
+    This bypasses inbox files and notifications. Remote direct input is disabled
+    until registry guardrails, request IDs, and audit paths are implemented.
+    """
+    params = _resolve_local_target_address(params, allow_remote=False)
+    agent_name = _resolve_target_agent_name(params)
+    mode = (params.get("input_type") or params.get("mode") or "").lower()
+    if not agent_name or mode not in {"text", "keys"}:
+        raise ValueError("Invalid params")
+
+    info = state.get_agent(agent_name)
+    if not info:
+        raise ValueError("Target agent not found")
+    tmux_pane = info.get("tmux_pane")
+    tmux_socket = info.get("tmux_socket")
+    if not tmux_pane:
+        raise RuntimeError("Target agent has no registered tmux pane")
+    if not tmux_socket:
+        raise RuntimeError("Target agent has no registered tmux socket; refusing to use default tmux")
+
+    current_name = state.get_agent_name_by_id(info.get("agent_id")) or agent_name
+    try:
+        if mode == "text":
+            text = params.get("text")
+            submit = params.get("submit", True)
+            if not isinstance(submit, bool):
+                raise ValueError("submit must be a boolean")
+            tmux_util.send_literal_text(tmux_pane, text, submit=submit, socket_path=tmux_socket)
+            return {"success": True, "target": current_name, "mode": "text", "submitted": submit}
+        keys = params.get("keys")
+        if keys is None and params.get("key") is not None:
+            keys = [params.get("key")]
+        normalized = tmux_util.normalize_key_tokens(keys)
+        tmux_util.send_symbolic_keys(tmux_pane, normalized, socket_path=tmux_socket)
+        return {"success": True, "target": current_name, "mode": "keys", "keys": normalized}
+    except ValueError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Failed to send direct pane input: {e}")
+
+
 def handle_send_message(params: dict, caller_pid: int = None) -> bool:
     """Sends a message locally or routes it remotely via the registry when target_address is hostname-qualified."""
     sender_name = params.get("sender_name") or _identify_agent(params, caller_pid) or "cli-user"
@@ -892,6 +951,7 @@ dispatcher = {
     "rename": handle_rename,
     "spin_agent": handle_spin_agent,
     "send_message": handle_send_message,
+    "send_input": handle_send_input,
     "get_inbox": handle_get_inbox,
     "wait_events": handle_wait_events,
     "whoami": handle_whoami,
@@ -941,7 +1001,7 @@ def handle_client(conn: socket.socket) -> None:
         if handler:
             try:
                 # Pass caller_pid to handlers that might need it
-                if method in ["get_inbox", "update_agent", "heartbeat", "send_message", "wait_events", "whoami", "list", "rename", "unregister", "spin_agent", "capture_pane"]:
+                if method in ["get_inbox", "update_agent", "heartbeat", "send_message", "send_input", "wait_events", "whoami", "list", "rename", "unregister", "spin_agent", "capture_pane"]:
                     result = handler(params, caller_pid=caller_pid)
                 else:
                     result = handler(params)
