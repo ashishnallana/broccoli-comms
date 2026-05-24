@@ -129,6 +129,8 @@ broccoli-comms status --json
 broccoli-comms agent list --json
 ```
 
+For complete install, dependency, and multi-device registry setup instructions, see `docs/SETUP_AND_MULTI_DEVICE.md`.
+
 ## Smoke test
 
 Run the Nix/package checks and private runtime lifecycle smoke tests with isolated temp runtime/cache/config directories:

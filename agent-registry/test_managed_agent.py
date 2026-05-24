@@ -15,6 +15,26 @@ class TestManagedAgent(unittest.TestCase):
              mock.patch.object(managed_agent.os, "getuid", return_value=1234):
             self.assertEqual(managed_agent.default_tmux_socket(), "/run/user/1234/tmux-1234/default")
 
+    def test_default_tmux_socket_falls_back_for_bare_run_user_runtime_dir(self):
+        with mock.patch.dict(managed_agent.os.environ, {"XDG_RUNTIME_DIR": "/run/user"}, clear=False), \
+             mock.patch.object(managed_agent.os, "getuid", return_value=1000):
+            self.assertEqual(managed_agent.effective_runtime_dir(), "/run/user/1000")
+            self.assertEqual(managed_agent.default_tmux_socket(), "/run/user/1000/tmux-1000/default")
+
+    def test_default_tmux_socket_falls_back_for_other_user_runtime_dir(self):
+        with mock.patch.dict(managed_agent.os.environ, {"XDG_RUNTIME_DIR": "/run/user/1001"}, clear=False), \
+             mock.patch.object(managed_agent.os, "getuid", return_value=1000):
+            self.assertEqual(managed_agent.default_tmux_socket(), "/run/user/1000/tmux-1000/default")
+
+    @mock.patch.object(managed_agent.os, "makedirs")
+    def test_ensure_env_replaces_invalid_runtime_dir(self, makedirs):
+        with mock.patch.dict(managed_agent.os.environ, {"XDG_RUNTIME_DIR": "/run/user", "PATH": "/bin"}, clear=True), \
+             mock.patch.object(managed_agent.os, "getuid", return_value=1000):
+            managed_agent.ensure_env("/home/dev")
+            self.assertEqual(managed_agent.os.environ["XDG_RUNTIME_DIR"], "/run/user/1000")
+            self.assertEqual(managed_agent.os.environ["AGENT_REGISTRY_TMUX_SOCKET"], "/run/user/1000/tmux-1000/default")
+        makedirs.assert_called_once_with("/run/user/1000/tmux-1000", exist_ok=True)
+
     def test_build_launch_command_includes_wrapper_and_env(self):
         cmd = managed_agent.build_launch_command("nixos-expert", "pi --help", "agent-wrapper", "/tmp/tracker.sock")
         self.assertIn("SUGGESTED_AGENT_NAME=nixos-expert", cmd)

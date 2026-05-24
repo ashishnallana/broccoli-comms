@@ -246,6 +246,7 @@ Future work (not implemented in Chunk 6 first slice):
 - [ ] Design a generic permission request model.
 - [ ] Design remote pane capture via agent-tracker/registry.
 - [ ] Design remote send-keys/send-text for approvals/denials.
+- [ ] After current VM setup testing/bug fixes, get feature context from `home-manager-core-agent-1` about the home-manager-core `agent-tracker`/`agent-registry`/`agent-communicator` send-keys and send-text expansion, then create a Broccoli Comms implementation plan for the same capability.
 - [ ] Keep pane/control features agent-agnostic with detector/adaptor backends for pi/claude/codex/etc.
 
 ### Chunk 7: doctor, bootstrap, and packaging polish

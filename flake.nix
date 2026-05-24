@@ -105,8 +105,9 @@
         python-syntax = pkgs.runCommand "broccoli-comms-python-syntax" { } ''
           cp -R ${./app} app
           cp -R ${./agent-tracker} agent-tracker
-          chmod -R u+w app agent-tracker
-          ${pkgs.python3}/bin/python3 -m py_compile app/broccoli-comms.py agent-tracker/*.py agent-tracker/ctl_commands/*.py
+          cp -R ${./agent-registry} agent-registry
+          chmod -R u+w app agent-tracker agent-registry
+          ${pkgs.python3}/bin/python3 -m py_compile app/broccoli-comms.py agent-tracker/*.py agent-tracker/ctl_commands/*.py agent-registry/*.py
           touch $out
         '';
 
@@ -115,6 +116,14 @@
           chmod -R u+w agent-tracker
           cd agent-tracker
           ${pkgs.python3}/bin/python3 -m unittest test_tmux_util.py test_spin_command.py
+          touch $out
+        '';
+
+        registry-unit = pkgs.runCommand "broccoli-comms-registry-unit" { } ''
+          cp -R ${./agent-registry} agent-registry
+          chmod -R u+w agent-registry
+          cd agent-registry
+          ${pkgs.python3}/bin/python3 -m unittest test_managed_agent.py
           touch $out
         '';
 

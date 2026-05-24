@@ -7,15 +7,44 @@ import sys
 import time
 
 
+def fallback_runtime_dir(uid: int | None = None) -> str:
+    return f"/run/user/{os.getuid() if uid is None else uid}"
+
+
+def effective_runtime_dir() -> str:
+    """Return a per-user runtime dir, ignoring invalid bare inherited values.
+
+    Some systemd service contexts can inherit XDG_RUNTIME_DIR=/run/user instead
+    of /run/user/<uid>.  Using that directly would derive tmux sockets under
+    /run/user/tmux-<uid>, which is outside the user's runtime directory and is
+    usually not writable.  If the inherited value is empty, bare /run/user, or a
+    /run/user/<other-uid> path, fall back to /run/user/<current-uid>.
+    """
+    uid = os.getuid()
+    fallback = fallback_runtime_dir(uid)
+    raw = (os.environ.get("XDG_RUNTIME_DIR") or "").strip()
+    if not raw:
+        return fallback
+    runtime_dir = os.path.normpath(os.path.expanduser(raw))
+    if runtime_dir == os.path.normpath("/run/user"):
+        return fallback
+    run_user_prefix = os.path.normpath("/run/user") + os.sep
+    if runtime_dir.startswith(run_user_prefix):
+        first_component = runtime_dir[len(run_user_prefix):].split(os.sep, 1)[0]
+        if first_component != str(uid):
+            return fallback
+    return runtime_dir
+
+
 def default_tmux_socket() -> str:
-    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    runtime_dir = effective_runtime_dir()
     return os.path.join(runtime_dir, f"tmux-{os.getuid()}", "default")
 
 
 def ensure_env(home: str, tracker_socket: str | None = None, tmux_socket: str | None = None) -> None:
     os.environ.setdefault("HOME", home)
     os.environ.setdefault("USER", os.path.basename(home))
-    os.environ.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    os.environ["XDG_RUNTIME_DIR"] = effective_runtime_dir()
     path_parts = [
         os.path.join(home, ".nix-profile", "bin"),
         f"/etc/profiles/per-user/{os.environ.get('USER', '')}/bin",
