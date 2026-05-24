@@ -106,6 +106,21 @@ printf 'Using temp runtime: %s\n' "$tmpdir"
 
 broccoli agent add "$agent_name" --cwd "$tmpdir/project" --command "sleep 60"
 
+doctor_json="$(broccoli doctor --json)"
+DOCTOR_JSON="$doctor_json" python3 - "$agent_name" <<'PY'
+import json, os, sys
+name = sys.argv[1]
+payload = json.loads(os.environ["DOCTOR_JSON"])
+if not payload.get("ok"):
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+    raise SystemExit("doctor --json reported not ok with configured sleep agent")
+checks = {check.get("name"): check for check in payload.get("checks", [])}
+check = checks.get(f"agent command:{name}")
+if not check or check.get("status") != "ok" or check.get("executable") != "sleep":
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+    raise SystemExit("doctor did not validate configured sleep agent command")
+PY
+
 list_json="$(broccoli agent list --json)"
 LIST_JSON="$list_json" python3 - "$agent_name" "$tmpdir/project" <<'PY'
 import json, os, sys

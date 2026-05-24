@@ -579,26 +579,147 @@ def stop(_args: argparse.Namespace) -> None:
     print(f"{APP} stopped")
 
 
-def doctor(_args: argparse.Namespace) -> None:
-    failures = []
-    for exe in ["tmux", sys.executable]:
-        resolved = exe if os.path.isabs(exe) and os.access(exe, os.X_OK) else shutil.which(exe)
-        if resolved:
-            print(f"{exe}: ok ({resolved})")
-        else:
-            print(f"{exe}: missing")
-            failures.append(exe)
+def _resolve_executable(command: str) -> str | None:
+    if not command:
+        return None
+    if os.path.isabs(command) or os.sep in command:
+        return command if os.path.exists(command) and os.access(command, os.X_OK) else None
+    return shutil.which(command, path=base_env().get("PATH"))
 
-    for label, value in [("tracker script", tracker_script()), ("wrapper", wrapper_path())]:
-        if os.path.exists(value):
-            print(f"{label}: ok ({value})")
-        else:
-            print(f"{label}: missing ({value})")
-            failures.append(label)
-    print(f"tui: {tui_path()}")
 
-    if failures:
-        print("doctor failed: install missing dependencies/files. Nix packages include tmux; manual/non-Nix installs require system tmux and python3 on PATH.", file=sys.stderr)
+def _command_version(command: list[str]) -> str | None:
+    try:
+        result = subprocess.run(command, check=False, text=True, capture_output=True, timeout=3, env=base_env())
+    except Exception:
+        return None
+    output = (result.stdout or result.stderr).strip().splitlines()
+    return output[0] if output else None
+
+
+def _doctor_check(checks: list[dict], name: str, status: str, message: str, **extra) -> None:
+    checks.append({"name": name, "status": status, "message": message, **{k: v for k, v in extra.items() if v is not None}})
+
+
+def _check_writable_dir(path: Path) -> tuple[bool, str]:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", dir=path, delete=True) as f:
+            f.write("ok")
+        return True, "writable"
+    except Exception as e:
+        return False, str(e)
+
+
+SHELL_BUILTINS = {
+    "alias", "bg", "cd", "command", "echo", "eval", "exec", "exit", "export", "fg", "hash", "jobs", "pwd", "read", "set", "shift", "test", "trap", "type", "ulimit", "umask", "unalias", "unset", "wait",
+}
+SHELL_COMPLEX_TOKENS = ("|", "&", ";", "<", ">", "(", ")", "$", "`", "\\", "\n")
+
+
+def configured_agent_command_checks() -> list[dict]:
+    checks = []
+    cfg = load_config()
+    for name, spec in sorted((cfg.get("agents") or {}).items()):
+        command = str(spec.get("command") or "").strip()
+        check_name = f"agent command:{name}"
+        if not command:
+            _doctor_check(checks, check_name, "error", "configured command is empty")
+            continue
+        if any(token in command for token in SHELL_COMPLEX_TOKENS):
+            _doctor_check(checks, check_name, "warning", "command is shell-complex; skipping executable lookup", command=command)
+            continue
+        try:
+            parts = shlex.split(command)
+        except ValueError as e:
+            _doctor_check(checks, check_name, "warning", f"could not parse command: {e}", command=command)
+            continue
+        while parts and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", parts[0]):
+            parts = parts[1:]
+        executable = parts[0] if parts else ""
+        if not executable:
+            _doctor_check(checks, check_name, "warning", "command has no executable after env assignments", command=command)
+        elif executable in SHELL_BUILTINS:
+            _doctor_check(checks, check_name, "warning", "command starts with a shell builtin; skipping executable lookup", command=command, executable=executable)
+        else:
+            resolved = _resolve_executable(executable)
+            if resolved:
+                _doctor_check(checks, check_name, "ok", "configured command executable found", command=command, executable=executable, path=resolved)
+            else:
+                _doctor_check(checks, check_name, "error", "configured command executable not found on PATH", command=command, executable=executable)
+    if not checks:
+        _doctor_check(checks, "agent commands", "ok", "no configured agents")
+    return checks
+
+
+def doctor_payload() -> dict:
+    p = paths()
+    checks: list[dict] = []
+
+    tmux_path = _resolve_executable("tmux")
+    _doctor_check(checks, "tmux", "ok" if tmux_path else "error", "tmux executable found" if tmux_path else "tmux executable not found; Nix packages include tmux, manual installs must provide system tmux", path=tmux_path, version=_command_version([tmux_path, "-V"]) if tmux_path else None)
+
+    python_path = sys.executable if os.path.exists(sys.executable) else _resolve_executable("python3")
+    _doctor_check(checks, "python", "ok" if python_path else "error", "Python executable found" if python_path else "python3 executable not found", path=python_path, version=_command_version([python_path, "--version"]) if python_path else None)
+
+    tracker = tracker_script()
+    _doctor_check(checks, "tracker script", "ok" if os.path.exists(tracker) else "error", "tracker script found" if os.path.exists(tracker) else "tracker script missing", path=tracker)
+
+    wrapper = wrapper_path()
+    wrapper_ok = os.path.exists(wrapper) and os.access(wrapper, os.X_OK)
+    _doctor_check(checks, "agent-wrapper", "ok" if wrapper_ok else "error", "agent-wrapper executable found" if wrapper_ok else "agent-wrapper missing or not executable", path=wrapper)
+
+    tui = tui_path()
+    tui_resolved = _resolve_executable(tui)
+    _doctor_check(checks, "agent-communicator", "ok" if tui_resolved else "error", "agent-communicator executable found" if tui_resolved else "agent-communicator executable not found", path=tui_resolved or tui)
+
+    for label, path in (("runtime dir", p["runtime"]), ("cache dir", p["cache"]), ("config dir", p["config"])):
+        ok, message = _check_writable_dir(path)
+        _doctor_check(checks, label, "ok" if ok else "error", message, path=str(path))
+
+    checks.extend(configured_agent_command_checks())
+
+    tracker_socket_exists = p["tracker_socket"].exists()
+    tracker_reachable = can_connect(p["tracker_socket"])
+    if tracker_reachable:
+        _doctor_check(checks, "tracker socket", "ok", "private tracker socket is reachable", path=str(p["tracker_socket"]))
+    elif tracker_socket_exists:
+        _doctor_check(checks, "tracker socket", "warning", "tracker socket exists but is not reachable", path=str(p["tracker_socket"]))
+    else:
+        _doctor_check(checks, "tracker socket", "ok", "runtime is not running; tracker socket not present", path=str(p["tracker_socket"]))
+
+    tmux_socket_exists = p["tmux_socket"].exists()
+    tmux_reachable = bool(tmux_path) and tmux_up()
+    if tmux_reachable:
+        _doctor_check(checks, "tmux socket", "ok", "private tmux session is reachable", path=str(p["tmux_socket"]), session=SESSION)
+    elif tmux_socket_exists:
+        _doctor_check(checks, "tmux socket", "warning", "tmux socket exists but private session is not reachable", path=str(p["tmux_socket"]), session=SESSION)
+    else:
+        _doctor_check(checks, "tmux socket", "ok", "runtime is not running; tmux socket not present", path=str(p["tmux_socket"]), session=SESSION)
+
+    return {
+        "app": APP,
+        "version": VERSION,
+        "ok": not any(check["status"] == "error" for check in checks),
+        "paths": {"runtime_dir": str(p["runtime"]), "cache_dir": str(p["cache"]), "config_dir": str(p["config"])},
+        "runtime": {"tracker_up": tracker_reachable, "tmux_up": tmux_reachable, "tmux_session": SESSION},
+        "checks": checks,
+    }
+
+
+def doctor(args: argparse.Namespace) -> None:
+    payload = doctor_payload()
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for check in payload["checks"]:
+            marker = {"ok": "OK", "warning": "WARN", "error": "FAIL"}.get(check["status"], check["status"].upper())
+            detail = check.get("path") or check.get("command") or ""
+            suffix = f" ({detail})" if detail else ""
+            version = f" [{check['version']}]" if check.get("version") else ""
+            print(f"{marker}: {check['name']}: {check['message']}{suffix}{version}")
+        if not payload["ok"]:
+            print("doctor failed: fix FAIL checks. Nix packages include runtime dependencies such as tmux; manual/non-Nix installs must provide required executables on PATH.", file=sys.stderr)
+    if not payload["ok"]:
         raise SystemExit(1)
 
 
@@ -613,7 +734,9 @@ def main() -> None:
     status_parser.add_argument("--json", action="store_true", help="Emit stable JSON runtime status")
     status_parser.set_defaults(func=status)
     sub.add_parser("stop").set_defaults(func=stop)
-    sub.add_parser("doctor").set_defaults(func=doctor)
+    doctor_parser = sub.add_parser("doctor", help="Check new-machine/runtime readiness")
+    doctor_parser.add_argument("--json", action="store_true", help="Emit JSON doctor results")
+    doctor_parser.set_defaults(func=doctor)
 
     agent = sub.add_parser("agent", help="Manage configured agents")
     agent_sub = agent.add_subparsers(dest="agent_command", required=True)

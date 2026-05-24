@@ -78,6 +78,21 @@ export TMUX_PANE="$sentinel_pane"
 
 printf 'Using temp runtime: %s\n' "$tmpdir"
 
+doctor_json="$(broccoli doctor --json)"
+DOCTOR_JSON="$doctor_json" python3 <<'PY'
+import json, os, sys
+payload = json.loads(os.environ["DOCTOR_JSON"])
+if not payload.get("ok"):
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+    raise SystemExit("doctor --json reported not ok before start")
+checks = {check.get("name"): check for check in payload.get("checks", [])}
+for required in ["tmux", "python", "tracker script", "agent-wrapper", "agent-communicator", "runtime dir", "cache dir", "config dir"]:
+    if checks.get(required, {}).get("status") != "ok":
+        raise SystemExit(f"doctor check {required!r} was not ok")
+if payload.get("runtime", {}).get("tracker_up") or payload.get("runtime", {}).get("tmux_up"):
+    raise SystemExit("doctor reported runtime up before start")
+PY
+
 broccoli start
 
 [[ -S "$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock" ]]
@@ -85,6 +100,21 @@ can_connect_unix "$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock"
 
 [[ -S "$BROCCOLI_COMMS_RUNTIME_DIR/tmux.sock" ]]
 tmux_private has-session -t "$session_name"
+
+doctor_json="$(broccoli doctor --json)"
+DOCTOR_JSON="$doctor_json" python3 <<'PY'
+import json, os, sys
+payload = json.loads(os.environ["DOCTOR_JSON"])
+if not payload.get("ok"):
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+    raise SystemExit("doctor --json reported not ok after start")
+if not payload.get("runtime", {}).get("tracker_up") or not payload.get("runtime", {}).get("tmux_up"):
+    print(json.dumps(payload, indent=2), file=sys.stderr)
+    raise SystemExit("doctor did not report runtime sockets up after start")
+checks = {check.get("name"): check for check in payload.get("checks", [])}
+if checks.get("tracker socket", {}).get("status") != "ok" or checks.get("tmux socket", {}).get("status") != "ok":
+    raise SystemExit("doctor socket checks were not ok after start")
+PY
 
 status_json="$(broccoli status --json)"
 STATUS_JSON="$status_json" python3 <<'PY'

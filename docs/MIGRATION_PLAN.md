@@ -49,7 +49,7 @@ Committed history:
 Current work:
 
 - Chunk 6 first slice is committed: app-aware TUI runtime status/private socket handling and managed-agent focus/attach CLI affordances.
-- Next work should continue with Chunk 7: doctor/bootstrap/packaging polish, then final code review for pending action items.
+- Chunk 7 is approved and ready to commit: `doctor --json`, bootstrap/install docs, and smoke coverage for new-machine readiness checks.
 
 Current agent coordination:
 
@@ -145,7 +145,7 @@ Tasks done:
 Follow-up:
 
 - [ ] Add/verify log files for tmux launch and managed agents.
-- [ ] Expand `broccoli-comms doctor` to cover agent commands, writable dirs, socket reachability, and packaging expectations.
+- [x] Expand `broccoli-comms doctor` baseline checks to cover agent commands, writable dirs, socket reachability, and packaging expectations. Further deep registry/version checks remain in Chunk 7 follow-up items.
 - [ ] Re-run private tmux socket audit after TUI and spin-wrapper changes.
 
 ### Chunk 3 / Phase 3: managed agents
@@ -247,21 +247,30 @@ Future work (not implemented in Chunk 6 first slice):
 
 ### Chunk 7: doctor, bootstrap, and packaging polish
 
-Status: planned.
+Status: in progress in the working tree; pending full validation, review, and lead commit.
 
 Planned tasks:
 
-- [ ] Improve `broccoli-comms doctor` for new-machine readiness:
-  - `tmux` availability or Nix-bundled path
-  - `python3` availability for non-Nix installs
-  - agent command availability (`pi`, `claude`, etc.)
-  - writable runtime/cache/config dirs
-  - socket reachability
-- [ ] Clarify Nix path where `tmux` is bundled and manual path where user must install `tmux`.
-- [ ] Add/verify `nix profile install` docs.
-- [ ] Finalize flake package names.
-- [ ] Add checks for Python syntax, Go tests, launcher smoke tests where feasible in flake checks.
+- [x] Improve `broccoli-comms doctor` for new-machine readiness:
+  - [x] JSON mode: `broccoli-comms doctor --json`
+  - [x] `tmux` availability/version or bundled path
+  - [x] Python/tracker/wrapper/TUI availability
+  - [x] writable runtime/cache/config dirs
+  - [x] configured agent command availability where practical
+  - [x] tracker/tmux socket reachability/status when runtime is up
+- [x] Clarify Nix path where `tmux` is bundled and manual path where user must install `tmux`.
+- [x] Add/verify `nix profile install` docs.
+- [x] Keep exposed flake package names documented in README.
+- [x] Add doctor JSON validation to private-runtime smoke coverage.
+- [x] Run full validation gate.
+- [ ] Reviewer approval for Chunk 7.
+- [ ] Lead commit after approval.
+
+Deferred/final-review items:
+
+- [ ] Consider adding flake `checks` outputs for Python syntax, Go tests, and launcher smoke tests where feasible.
 - [ ] Decide whether `agent-registry` remains bundled by default or optional.
+- [ ] Expand `doctor` further for agent command version checks, registry config/secrets sanity, and socket repair suggestions.
 
 ### Chunk 8: future native/Electron/libghostty frontend path
 

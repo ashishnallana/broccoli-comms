@@ -121,6 +121,24 @@ Notes:
 - `tracker` is best-effort and may be null if the private tracker is down or the wrapper has not registered yet.
 - `cwd` and `command` remain as direct fields for simple clients; prefer `configured.cwd` and `configured.command` for new clients.
 
+## `broccoli-comms doctor --json`
+
+Returns readiness checks for bootstrap/install diagnostics. The top-level `ok` is false when any check has `status: "error"`; warnings are advisory.
+
+Check objects include at least:
+
+```json
+{
+  "name": "tmux",
+  "status": "ok",
+  "message": "tmux executable found",
+  "path": "/nix/store/.../bin/tmux",
+  "version": "tmux 3.6a"
+}
+```
+
+Current checks cover executable availability, writable runtime/cache/config directories, configured agent command lookup where practical, and tracker/tmux socket reachability when the runtime is up.
+
 ## Related commands
 
 Managed agent config/window commands:

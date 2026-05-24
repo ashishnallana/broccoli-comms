@@ -21,11 +21,31 @@ Default private paths:
 - config: `$XDG_CONFIG_HOME/broccoli-comms/config.json`
 - logs/cache: `$XDG_CACHE_HOME/broccoli-comms`
 
-## Nix usage
+## New-machine bootstrap
 
-The Nix packages include the runtime dependencies they launch, including `tmux`.
+Recommended Nix path from a checkout:
 
 ```sh
+nix run .#broccoli-comms -- doctor
+nix run .#broccoli-comms -- start
+nix run .#broccoli-comms -- open
+```
+
+For a persistent install from a checkout:
+
+```sh
+nix profile install .#broccoli-comms
+broccoli-comms doctor --json
+broccoli-comms start
+broccoli-comms open
+```
+
+Nix packages include the runtime dependencies they launch, including `tmux`. Manual/non-Nix installs must provide `python3`, `tmux`, and configured agent commands (for example `pi`, `claude`, or `codex`) on `PATH`.
+
+## Nix usage
+
+```sh
+nix run .#broccoli-comms -- doctor
 nix run .#broccoli-comms
 nix run .#broccoli-comms -- status --json
 nix run .#broccoli-comms -- attach
@@ -45,10 +65,11 @@ Exposed packages:
 
 ## Standalone non-Nix usage
 
-Requires `python3`, `go`, and system `tmux` on `PATH`.
+Requires `python3`, `go`, and system `tmux` on `PATH` for building/running, plus any configured agent commands on `PATH`.
 
 ```sh
 make build
+./bin/broccoli-comms doctor --json
 ./bin/broccoli-comms doctor
 ./bin/broccoli-comms start
 ./bin/broccoli-comms attach
