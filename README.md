@@ -116,7 +116,7 @@ broccoli-comms attach
 
 `start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
 
-`open` / `ui` launches `agent-communicator` as the Broccoli Comms frontend with `AGENT_TRACKER_SOCKET` and private tmux socket variables set to the app-owned runtime. The TUI shows a small Broccoli Comms runtime/tracker status line when launched in this app mode.
+`open` / `ui` launches `agent-communicator` as a wrapped frontend in the private tmux session and attaches to it, with `AGENT_TRACKER_SOCKET` and private tmux socket variables set to the app-owned runtime. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views work without depending on the user's tmux or tracker. The TUI shows a small Broccoli Comms runtime/tracker status line when launched in this app mode.
 
 `agent focus <name>` selects a running managed-agent window by private tmux metadata/window id, and `agent attach <name>` attaches directly to that managed window.
 

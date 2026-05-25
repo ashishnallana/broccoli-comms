@@ -25,6 +25,9 @@ APP = "broccoli-comms"
 VERSION = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
 SESSION = "broccoli-comms"
 MANAGED_AGENT_OPTION = "@broccoli_managed_agent"
+UI_WINDOW_NAME = "ui"
+UI_AGENT_NAME = "agent-communicator"
+UI_AGENT_ID = "00000000-0000-5000-8000-000000000001"
 AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -350,9 +353,73 @@ def start(_args: argparse.Namespace) -> None:
     print(f"tmux socket:    {paths()['tmux_socket']}")
 
 
+def ui_window() -> dict[str, str] | None:
+    if not tmux_up():
+        return None
+    result = tmux("list-windows", "-t", SESSION, "-F", "#{window_id}\t#{window_name}\t#{pane_id}", check=False)
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        window_id, window_name, pane_id = parts
+        if window_name == UI_WINDOW_NAME:
+            return {"window_id": window_id, "window_name": window_name, "pane_id": pane_id}
+    return None
+
+
+def ui_window_registered(window: dict[str, str] | None) -> bool:
+    if not window:
+        return False
+    info = tracker_agents().get(UI_AGENT_NAME) or {}
+    return info.get("tmux_pane") == window.get("pane_id") and info.get("tmux_socket") == str(paths()["tmux_socket"])
+
+
+def ui_launch_command() -> str:
+    p = paths()
+    return " ".join([
+        f"AGENT_ID={shlex.quote(UI_AGENT_ID)}",
+        f"SUGGESTED_AGENT_NAME={shlex.quote(UI_AGENT_NAME)}",
+        f"AGENT_TRACKER_SOCKET={shlex.quote(str(p['tracker_socket']))}",
+        f"AGENT_TRACKER_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
+        f"BROCCOLI_COMMS_APP_RUNTIME=1",
+        f"BROCCOLI_COMMS_RUNTIME_DIR={shlex.quote(str(p['runtime']))}",
+        f"BROCCOLI_COMMS_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
+        shlex.quote(wrapper_path()),
+        shlex.quote(tui_path()),
+    ])
+
+
+def ensure_ui_window() -> dict[str, str]:
+    window = ui_window()
+    if window and ui_window_registered(window):
+        return window
+    if window:
+        tmux("kill-window", "-t", window["window_id"], check=False)
+        unregister_agent_pane(window.get("pane_id"))
+    result = tmux(
+        "new-window",
+        "-d",
+        "-P",
+        "-F",
+        "#{window_id}\t#{pane_id}",
+        "-t",
+        SESSION,
+        "-n",
+        UI_WINDOW_NAME,
+        "-c",
+        str(Path.cwd()),
+        ui_launch_command(),
+    )
+    window_id, pane_id = result.stdout.strip().split("\t", 1)
+    return {"window_id": window_id, "window_name": UI_WINDOW_NAME, "pane_id": pane_id}
+
+
 def ui(args: argparse.Namespace) -> None:
     start(args)
-    os.execvpe(tui_path(), [tui_path()], base_env())
+    window = ensure_ui_window()
+    os.execvpe("tmux", ["tmux", "-S", str(paths()["tmux_socket"]), "attach", "-t", window["window_id"]], base_env())
 
 
 def attach(_args: argparse.Namespace) -> None:
