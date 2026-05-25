@@ -697,6 +697,49 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    @mock.patch("state.publish_event")
+    def test_get_inbox_mark_read_false_does_not_mark_or_publish(self, publish_event):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            with open(inbox_path, "w") as f:
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "hi", "read": False, "message_id": "m1"}) + "\n")
+
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "mark_read": False, "last_n": 100})
+            self.assertEqual(result["mode"], "last_n")
+            self.assertEqual(len(result["messages"]), 1)
+            publish_event.assert_not_called()
+
+            with open(inbox_path, "r") as f:
+                stored = [json.loads(line) for line in f if line.strip()]
+            self.assertFalse(stored[0]["read"])
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("state.publish_event")
+    def test_get_inbox_sender_filter_marks_only_matching_messages(self, publish_event):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            with open(inbox_path, "w") as f:
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "a", "read": False, "message_id": "m1"}) + "\n")
+                f.write(json.dumps({"sender": "beta", "sender_agent_id": "beta-id", "message": "b", "read": False, "message_id": "m2"}) + "\n")
+
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "sender_agent_id": "alpha-id"})
+            self.assertEqual([m["message_id"] for m in result["messages"]], ["m1"])
+
+            with open(inbox_path, "r") as f:
+                stored = [json.loads(line) for line in f if line.strip()]
+            self.assertTrue(stored[0]["read"])
+            self.assertFalse(stored[1]["read"])
+            publish_event.assert_called_once()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
     @mock.patch("tmux_util.send_keys")
     def test_send_message_notifies_recovered_unknown_agent(self, send_keys):
         inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")

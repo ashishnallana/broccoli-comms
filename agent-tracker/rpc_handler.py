@@ -771,8 +771,17 @@ def handle_send_message(params: dict, caller_pid: int = None) -> bool:
     deliver_local_message(agent_name, payload, sender_name, verify=verify)
     return {"success": True, "warning": warning_msg} if warning_msg else True
 
-def _read_and_update_inbox_file(inbox_file: str, clear: bool, last_n: int = None, agent_name: str | None = None, agent_info: dict | None = None) -> dict:
-    """Reads inbox history and marks returned messages read under a file lock."""
+def _read_and_update_inbox_file(
+    inbox_file: str,
+    clear: bool,
+    last_n: int = None,
+    agent_name: str | None = None,
+    agent_info: dict | None = None,
+    mark_read: bool = True,
+    sender_name: str | None = None,
+    sender_agent_id: str | None = None,
+) -> dict:
+    """Reads inbox history and optionally marks returned messages read under a file lock."""
     if not os.path.exists(inbox_file):
         return {"mode": "history", "messages": []}
 
@@ -787,18 +796,27 @@ def _read_and_update_inbox_file(inbox_file: str, clear: bool, last_n: int = None
                         except json.JSONDecodeError:
                             pass
 
+            def matches_filters(msg):
+                if sender_agent_id and msg.get("sender_agent_id") != sender_agent_id:
+                    return False
+                if sender_name and msg.get("sender") != sender_name:
+                    return False
+                return True
+
+            candidate_messages = [m for m in all_messages if matches_filters(m)]
+
             mode = "unread"
             newly_read = []
             if last_n is not None:
                 mode = "last_n"
-                result_messages = all_messages[-last_n:] if last_n > 0 else []
+                result_messages = candidate_messages[-last_n:] if last_n > 0 else []
             else:
-                result_messages = [m for m in all_messages if not m.get("read", False)]
+                result_messages = [m for m in candidate_messages if not m.get("read", False)]
                 if not result_messages:
                     mode = "history"
-                    result_messages = all_messages[-5:]
+                    result_messages = candidate_messages[-5:]
 
-            if mode != "history":
+            if mark_read and mode != "history":
                 for msg in result_messages:
                     if not msg.get("read", False):
                         newly_read.append(msg)
@@ -875,7 +893,17 @@ def _identify_agent(params: dict, caller_pid: int = None) -> str:
 def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
     """Handles get_inbox RPC call by reading directly from the inbox file."""
     clear = params.get("clear", False)
+    mark_read = params.get("mark_read", True)
+    sender_name = params.get("sender_name")
+    sender_agent_id = params.get("sender_agent_id")
     last_n = params.get("last_n")
+
+    if not isinstance(mark_read, bool):
+        raise ValueError("mark_read must be a boolean")
+    if sender_name is not None and not isinstance(sender_name, str):
+        raise ValueError("sender_name must be a string")
+    if sender_agent_id is not None and not isinstance(sender_agent_id, str):
+        raise ValueError("sender_agent_id must be a string")
     
     if last_n is not None:
         try:
@@ -894,7 +922,16 @@ def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
     uuid_str = info.get("uuid") or agent_name
     inbox_file = os.path.join(state.INBOX_DIR, f"{uuid_str}.inbox")
             
-    return _read_and_update_inbox_file(inbox_file, clear, last_n, agent_name, info)
+    return _read_and_update_inbox_file(
+        inbox_file,
+        clear,
+        last_n,
+        agent_name,
+        info,
+        mark_read=mark_read,
+        sender_name=sender_name,
+        sender_agent_id=sender_agent_id,
+    )
 
 
 def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
