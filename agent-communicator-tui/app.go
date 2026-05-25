@@ -21,10 +21,11 @@ const (
 )
 
 type runtimeInfo struct {
-	AppRuntime    bool
-	RuntimeDir    string
-	TrackerSocket string
-	TmuxSocket    string
+	AppRuntime               bool
+	RuntimeDir               string
+	TrackerSocket            string
+	TmuxSocket               string
+	RemoteDirectInputEnabled bool
 }
 
 type model struct {
@@ -70,8 +71,10 @@ type model struct {
 	saveFormIndex   int // 0: Name, 1: Description, 2: Command, 3: CWD, 4: Save, 5: Cancel
 	saveFormInputs  []textinput.Model
 
-	// Pane Debug Capture Status (Ctrl-X)
-	paneCaptureStatus string
+	// Short footer statuses
+	paneCaptureStatus    string
+	directInputStatus    string
+	directInputStatusErr bool
 }
 
 func runtimeInfoFromEnv() runtimeInfo {
@@ -81,10 +84,20 @@ func runtimeInfoFromEnv() runtimeInfo {
 		TmuxSocket:    firstNonEmpty(os.Getenv("AGENT_TRACKER_TMUX_SOCKET"), os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET")),
 	}
 	info.AppRuntime = os.Getenv("BROCCOLI_COMMS_APP_RUNTIME") == "1" || info.RuntimeDir != "" || os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET") != ""
+	info.RemoteDirectInputEnabled = envEnabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED") || envEnabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED") || envEnabled("AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED")
 	if info.TrackerSocket == "" && info.RuntimeDir != "" {
 		info.TrackerSocket = info.RuntimeDir + "/agent-tracker.sock"
 	}
 	return info
+}
+
+func envEnabled(name string) bool {
+	switch strings.ToLower(os.Getenv(name)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func firstNonEmpty(values ...string) string {
@@ -284,9 +297,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, switchToAgentPane(m.currentRow())
 		case tea.KeyEnter:
 			if m.mode != savedView && m.canSendCurrent() && strings.TrimSpace(string(m.composer)) != "" {
-				body := string(m.composer)
+				input := string(m.composer)
 				row := m.rows[m.selected]
-				record := makeOutboxRecord(m.ownName, row, body)
+				action := parseComposerAction(input)
+				if action.Kind == "direct_text" || action.Kind == "direct_keys" {
+					m.composer = nil
+					m.directInputStatus = fmt.Sprintf("Sending pane control to %s...", row.Name)
+					return m, sendDirectInput(m.local, row, action, m.runtime.RemoteDirectInputEnabled)
+				}
+				if strings.TrimSpace(action.Body) == "" {
+					return m, nil
+				}
+				record := makeOutboxRecord(m.ownName, row, action.Body)
 				m.composer = nil
 				unhideCmd := m.unhideAgent(row)
 				m.clearUnread(row)
@@ -317,6 +339,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.composer = append(m.composer, ' ')
 			m.messageOffset = 0
 		}
+	case directInputSent:
+		if msg.Err != nil {
+			m.composer = []rune(msg.Original)
+			m.directInputStatus = fmt.Sprintf("Pane control failed for %s: %s", msg.Row.Name, msg.Err.Error())
+			m.directInputStatusErr = true
+		} else {
+			m.directInputStatusErr = false
+			if msg.Mode == "direct_text" {
+				m.directInputStatus = fmt.Sprintf("Pane text sent to %s", msg.Row.Name)
+			} else {
+				m.directInputStatus = fmt.Sprintf("Pane key(s) sent to %s", msg.Row.Name)
+			}
+		}
+		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return clearDirectInputStatusTick{} })
+	case clearDirectInputStatusTick:
+		m.directInputStatus = ""
+		m.directInputStatusErr = false
+		return m, nil
 	case paneCaptured:
 		if msg.Err != nil {
 			m.paneCaptureStatus = fmt.Sprintf("Failed to capture %s: %s", msg.Target, msg.Err.Error())
@@ -484,8 +524,6 @@ func (m model) canSendCurrent() bool {
 	return len(m.rows) > 0 && !m.agentListStale
 }
 
-func conversationKey(row agentRow) string { return rowTarget(row) }
-
 func (m *model) selectLatestMessage() {
 	m.messageSelected = 0
 	m.messageOffset = 0
@@ -505,7 +543,7 @@ func (m model) mergeSentMessages(row agentRow, inbound []tracker.Message) []trac
 	merged := append([]tracker.Message{}, inbound...)
 	key := conversationKey(row)
 	for _, rec := range m.outbox {
-		if rec.TargetAddress == key {
+		if outboxRecordMatchesRow(rec, row) {
 			merged = append(merged, outboxMessage(rec, false))
 		}
 	}

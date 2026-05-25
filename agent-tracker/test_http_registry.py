@@ -18,7 +18,7 @@ import registry_client
 import rpc_handler
 import state
 
-_REGISTRY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "agent-registry", "server.py")
+_REGISTRY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent-registry", "server.py")
 _spec = importlib.util.spec_from_file_location("agent_registry_server", _REGISTRY_PATH)
 registry_server = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(registry_server)
@@ -56,7 +56,7 @@ class TestHttpAndRegistry(unittest.TestCase):
 
     def test_sidecar_requires_auth_and_returns_snapshot(self):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1"})
-        server, base = start(http_sidecar.make_handler(token="secret"))
+        server, base = start(http_sidecar.make_handler(token="secret", auth_required=True))
         self.addCleanup(server.shutdown)
         self.addCleanup(server.server_close)
         with self.assertRaises(urllib.error.HTTPError) as ctx:
@@ -73,7 +73,7 @@ class TestHttpAndRegistry(unittest.TestCase):
         if os.path.exists(inbox_path):
             os.remove(inbox_path)
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
-        server, base = start(http_sidecar.make_handler(token="secret"))
+        server, base = start(http_sidecar.make_handler(token="secret", auth_required=True))
         self.addCleanup(server.shutdown)
         self.addCleanup(server.server_close)
         with self.assertRaises(urllib.error.HTTPError) as ctx:
@@ -128,6 +128,91 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.assertNotIn("BrokenPipeError", stderr.getvalue())
             self.assertNotIn("Exception occurred during processing", stderr.getvalue())
 
+    def test_registry_pane_inputs_default_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            source = {"tracker_id": "t1", "hostname": "host1", "address": "host1", "http_port": 19875, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            target = {"tracker_id": "t2", "hostname": "host2", "address": "host2", "http_port": 19876, "agents": [{"agent_id": "a2", "name": "agent2", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            store.put_tracker(source)
+            store.put_tracker(target)
+            server, base = start(registry_server.make_handler(store=store, token="secret", remote_pane_input_enabled=False))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/pane-inputs", {"sender_tracker_id": "t1", "target_agent_id": "a2", "pane_input_id": "pi-1", "request_id": "req-1", "input_type": "text", "text": "hello"}, token="secret")
+            self.assertEqual(ctx.exception.code, 403)
+            self.assertEqual(store.wait_for_deliveries("t2", 0), [])
+
+    def test_registry_pane_inputs_validate_queue_and_persist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "registry-state.json")
+            store = registry_server.Store(state_path=state_path)
+            source = {"tracker_id": "t1", "hostname": "host1", "address": "host1", "http_port": 19875, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            target = {"tracker_id": "t2", "hostname": "host2", "address": "host2", "http_port": 19876, "agents": [{"agent_id": "a2", "name": "agent2", "aliases": ["alias2"], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            store.put_tracker(source)
+            store.put_tracker(target)
+            server, base = start(registry_server.make_handler(store=store, token="secret", remote_pane_input_enabled=True))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            payload = {
+                "sender_tracker_id": "t1",
+                "sender_agent_id": "a1",
+                "sender_agent_name": "agent1",
+                "target_hostname": "host2",
+                "target_agent_name": "alias2",
+                "pane_input_id": "pi-1",
+                "request_id": "req-1",
+                "input_type": "keys",
+                "keys": ["ctrl-c", "Enter"],
+            }
+            code, body = post(f"{base}/pane-inputs", payload, token="secret")
+            self.assertEqual(code, 202)
+            self.assertEqual(body["pane_input_id"], "pi-1")
+            reloaded = registry_server.Store(state_path=state_path)
+            delivery = reloaded.wait_for_deliveries("t2", 0)[0]
+            self.assertEqual(delivery["delivery_type"], "pane_input")
+            self.assertEqual(delivery["message_id"], "pi-1")
+            self.assertEqual(delivery["request_id"], "req-1")
+            self.assertEqual(delivery["target_agent_id"], "a2")
+            self.assertEqual(delivery["keys"], ["C-c", "Enter"])
+            self.assertNotIn("message", delivery)
+
+    def test_registry_pane_inputs_reject_invalid_same_tracker_and_offline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            source = {"tracker_id": "t1", "hostname": "host1", "address": "host1", "http_port": 19875, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            target = {"tracker_id": "t2", "hostname": "host2", "address": "host2", "http_port": 19876, "agents": [{"agent_id": "a2", "name": "agent2", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            store.put_tracker(source)
+            store.put_tracker(target)
+            server, base = start(registry_server.make_handler(store=store, token="secret", remote_pane_input_enabled=True))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/pane-inputs", {"sender_tracker_id": "t1", "target_agent_name": "agent2", "pane_input_id": "pi-1", "request_id": "req-1", "input_type": "text", "text": "hello"}, token="secret")
+            self.assertEqual(ctx.exception.code, 400)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/pane-inputs", {"sender_tracker_id": "t1", "target_agent_id": "a2", "pane_input_id": ["bad"], "request_id": "req-list", "input_type": "text", "text": "hello"}, token="secret")
+            self.assertEqual(ctx.exception.code, 400)
+            self.assertEqual(store.wait_for_deliveries("t2", 0), [])
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/pane-inputs", {"sender_tracker_id": "t1", "target_agent_id": "a2", "pane_input_id": "   ", "request_id": "req-blank", "input_type": "text", "text": "hello"}, token="secret")
+            self.assertEqual(ctx.exception.code, 400)
+            self.assertEqual(store.wait_for_deliveries("t2", 0), [])
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/pane-inputs", {"sender_tracker_id": "missing", "target_agent_id": "a2", "pane_input_id": "pi-missing", "request_id": "req-missing", "input_type": "text", "text": "hello"}, token="secret")
+            self.assertEqual(ctx.exception.code, 404)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/pane-inputs", {"sender_tracker_id": "t2", "target_agent_id": "a2", "pane_input_id": "pi-2", "request_id": "req-2", "input_type": "text", "text": "hello"}, token="secret")
+            self.assertEqual(ctx.exception.code, 400)
+            store.trackers["t2"]["last_heartbeat"] = time.time() - 100
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/pane-inputs", {"sender_tracker_id": "t1", "target_agent_id": "a2", "pane_input_id": "pi-3", "request_id": "req-3", "input_type": "text", "text": "hello"}, token="secret")
+            self.assertEqual(ctx.exception.code, 503)
+            store.trackers["t2"]["last_heartbeat"] = time.time()
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/pane-inputs", {"sender_tracker_id": "t1", "target_agent_id": "a2", "pane_input_id": "pi-4", "request_id": "req-4", "input_type": "keys", "keys": ["bad;key"]}, token="secret")
+            self.assertEqual(ctx.exception.code, 400)
+
     def test_registry_messages_queue_ack_and_persist(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = os.path.join(tmp, "registry-state.json")
@@ -181,7 +266,7 @@ class TestHttpAndRegistry(unittest.TestCase):
             target = {"tracker_id": "t2", "hostname": "host2", "address": "host2", "http_port": 19876, "agents": [{"agent_id": "a2", "name": "agent2", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
             store.put_tracker(source)
             store.put_tracker(target)
-            server, base = start(registry_server.make_handler(store=store, token="secret"))
+            server, base = start(registry_server.make_handler(store=store, token="secret", auth_required=True))
             self.addCleanup(server.shutdown)
             self.addCleanup(server.server_close)
             with self.assertRaises(urllib.error.HTTPError) as ctx:
@@ -291,6 +376,97 @@ class TestHttpAndRegistry(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 registry_client._delivery_loop()
         ack.assert_not_called()
+
+    def test_registry_client_delivery_loop_dispatches_pane_input_and_acks_after_injection(self):
+        delivery = {
+            "delivery_type": "pane_input",
+            "message_id": "pi-1",
+            "pane_input_id": "pi-1",
+            "request_id": "req-1",
+            "target_agent_id": "a2",
+            "input_type": "text",
+            "text": "hello",
+            "submit": False,
+        }
+        with mock.patch.dict(os.environ, {"AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED": "1"}, clear=True), \
+             mock.patch.object(registry_client, "fetch_deliveries", side_effect=[(200, {"deliveries": [delivery]}), SystemExit]), \
+             mock.patch.object(registry_client, "ack_delivery") as ack, \
+             mock.patch.object(state, "pane_input_was_applied", return_value=False) as was_applied, \
+             mock.patch.object(state, "mark_pane_input_applied") as mark_applied, \
+             mock.patch("rpc_handler.handle_send_input", return_value={"success": True}):
+            with self.assertRaises(SystemExit):
+                registry_client._delivery_loop()
+        was_applied.assert_called_once_with("req-1")
+        mark_applied.assert_called_once_with("req-1", "pi-1", "a2")
+        ack.assert_called_once_with("pi-1")
+
+    def test_registry_client_delivery_loop_acks_duplicate_pane_input_without_injecting(self):
+        delivery = {
+            "delivery_type": "pane_input",
+            "message_id": "pi-1",
+            "pane_input_id": "pi-1",
+            "request_id": "req-1",
+            "target_agent_id": "a2",
+            "input_type": "keys",
+            "keys": ["Enter"],
+        }
+        with mock.patch.object(registry_client, "fetch_deliveries", side_effect=[(200, {"deliveries": [delivery]}), SystemExit]), \
+             mock.patch.object(registry_client, "ack_delivery") as ack, \
+             mock.patch.object(state, "pane_input_was_applied", return_value=True), \
+             mock.patch("rpc_handler.handle_send_input") as send_input:
+            with self.assertRaises(SystemExit):
+                registry_client._delivery_loop()
+        send_input.assert_not_called()
+        ack.assert_called_once_with("pi-1")
+
+    def test_registry_client_delivery_loop_does_not_ack_pane_input_transient_failure(self):
+        delivery = {
+            "delivery_type": "pane_input",
+            "message_id": "pi-1",
+            "pane_input_id": "pi-1",
+            "request_id": "req-1",
+            "target_agent_id": "a2",
+            "input_type": "text",
+            "text": "hello",
+        }
+        with mock.patch.dict(os.environ, {"AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED": "1"}, clear=True), \
+             mock.patch.object(registry_client, "fetch_deliveries", side_effect=[(200, {"deliveries": [delivery]}), SystemExit]), \
+             mock.patch.object(registry_client, "ack_delivery") as ack, \
+             mock.patch.object(registry_client.time, "sleep"), \
+             mock.patch.object(state, "pane_input_was_applied", return_value=False), \
+             mock.patch("rpc_handler.handle_send_input", side_effect=RuntimeError("tmux down")):
+            with self.assertRaises(SystemExit):
+                registry_client._delivery_loop()
+        ack.assert_not_called()
+
+    def test_handle_pane_input_delivery_injects_without_inbox_or_notification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_dedupe = state.PANE_INPUT_DEDUPE_PATH
+            state.PANE_INPUT_DEDUPE_PATH = os.path.join(tmp, "dedupe.json")
+            self.addCleanup(setattr, state, "PANE_INPUT_DEDUPE_PATH", old_dedupe)
+            state.set_agent("agent2", {"agent_id": "a2", "status": "idle", "tmux_pane": "%2", "tmux_socket": "sock"})
+            inbox_path = os.path.join(state.INBOX_DIR, "a2.inbox")
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            delivery = {
+                "delivery_type": "pane_input",
+                "message_id": "pi-1",
+                "pane_input_id": "pi-1",
+                "request_id": "req-1",
+                "target_agent_id": "a2",
+                "input_type": "text",
+                "text": "hello",
+                "submit": True,
+            }
+            with mock.patch.dict(os.environ, {"AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED": "1"}, clear=True), \
+                 mock.patch("tmux_util.send_literal_text") as send_literal, \
+                 mock.patch("tmux_util.send_keys") as notify_send_keys:
+                result = registry_client._handle_pane_input_delivery(delivery)
+            self.assertEqual(result, "injected")
+            send_literal.assert_called_once_with("%2", "hello", submit=True, socket_path="sock")
+            notify_send_keys.assert_not_called()
+            self.assertFalse(os.path.exists(inbox_path))
+            self.assertTrue(state.pane_input_was_applied("req-1"))
 
     def test_registry_client_redelivery_after_write_before_ack_is_deduped(self):
         inbox_path = os.path.join(state.INBOX_DIR, "a2.inbox")

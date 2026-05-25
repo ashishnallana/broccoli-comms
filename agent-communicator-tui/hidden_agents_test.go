@@ -96,6 +96,26 @@ func TestInitialHideMarksAgentsWithoutHistoryHidden(t *testing.T) {
 	}
 }
 
+func TestInitialHideKeepsLocalAgentWithIDHistoryAndTrackerID(t *testing.T) {
+	state := t.TempDir()
+	cache := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("XDG_CACHE_HOME", cache)
+	inbox := communicatorInboxPath()
+	if err := os.MkdirAll(filepath.Dir(inbox), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	line := `{"sender":"old-alpha","sender_agent_id":"agent-1","sender_tracker_id":"tracker-local","message":"hi"}` + "\n"
+	if err := os.WriteFile(inbox, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", AgentID: "agent-1"}, {Name: "beta", Scope: "local", AgentID: "agent-2"}}, hiddenAgents: map[string]bool{}}
+	m.applyInitialHiddenForNoHistory()
+	if m.hiddenAgents["local:agent-1"] || !m.hiddenAgents["local:agent-2"] {
+		t.Fatalf("hidden=%+v", m.hiddenAgents)
+	}
+}
+
 func TestSendUnhidesHiddenAgent(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	row := agentRow{Name: "alpha", Scope: "local"}

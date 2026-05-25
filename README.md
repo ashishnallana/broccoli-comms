@@ -122,6 +122,19 @@ broccoli-comms attach
 
 `agent-tracker-ctl spin <dir> <command> [args...]` also auto-wraps raw commands through `agent-wrapper` before creating the tmux window/session, so spun agents register, heartbeat, inherit the intended tracker/tmux socket environment, and appear in status/communicator views. Commands already starting with `agent-wrapper` are not wrapped again.
 
+For explicit pane control, `agent-tracker-ctl send-text TARGET TEXT`, `agent-tracker-ctl send-text --no-submit TARGET TEXT`, and `agent-tracker-ctl send-key TARGET KEY [KEY...]` call the tracker `send_input` backend directly. These bypass inbox messages. Local bare names/UUIDs use the registered private tmux socket; remote `host/agent` targets are registry-routed only when explicitly enabled on sender, registry, and receiver (`BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED=1` or the narrower send/receive/registry env gates). Remote direct input is disabled by default and should be treated as dangerous pane control.
+
+```sh
+agent-tracker-ctl send-text alice "hello"
+agent-tracker-ctl send-text --no-submit alice "draft without enter"
+agent-tracker-ctl send-key alice C-c Enter
+# Remote examples require explicit remote pane-input gates on both trackers and the registry:
+agent-tracker-ctl send-text host-a/alice "hello remotely"
+agent-tracker-ctl send-key registry-a:host-a/alice Escape
+```
+
+Remote-origin inbox delivery can optionally focus the destination pane when `BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES=1` is set. This is disabled by default; when enabled, the tracker uses only the registered/private tmux socket and treats focus as best-effort so message delivery still succeeds if focus fails.
+
 Runtime/frontend JSON contracts are documented in `docs/RUNTIME_API.md`:
 
 ```sh

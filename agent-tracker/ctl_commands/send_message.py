@@ -1,7 +1,7 @@
 import os
 import sys
 
-from .common import call_rpc, is_uuid
+from .common import call_rpc, parse_target_params
 
 
 def register(subparsers):
@@ -36,12 +36,8 @@ def handle(args):
         params["sender_name"] = os.environ["AGENT_NAME"]
     if args.agent_id:
         params["agent_id"] = args.agent_id
-    elif "/" in args.target:
-        params["target_address"] = args.target
-    elif is_uuid(args.target):
-        params["agent_id"] = args.target
     else:
-        params["agent_name"] = args.target
+        params.update(parse_target_params(args.target))
     
     if args.verify:
         params["verify"] = True

@@ -11,6 +11,8 @@ CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/
 SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET", os.path.join(CACHE_DIR, "agent-tracker.sock"))
 LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
 INBOX_DIR = os.path.join(CACHE_DIR, "inboxes")
+PANE_INPUT_DEDUPE_PATH = os.path.join(CACHE_DIR, "pane-input-dedupe.json")
+PANE_INPUT_DEDUPE_MAX = int(os.environ.get("AGENT_PANE_INPUT_DEDUPE_MAX", "1000"))
 
 state = {}  # keyed by stable agent_id
 name_index = {}  # agent_name/alias -> agent_id
@@ -336,6 +338,48 @@ def wait_events(since: int = 0, timeout: float = 25.0, filters: dict | None = No
             if remaining <= 0:
                 return {"events": [], "last_seq": event_seq, "reset": False, "gap": False}
             event_lock.wait(timeout=remaining)
+
+
+def _load_pane_input_dedupe() -> dict:
+    try:
+        with open(PANE_INPUT_DEDUPE_PATH, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logging.warning("failed to load pane input dedupe store %s: %s", PANE_INPUT_DEDUPE_PATH, e)
+        return {}
+
+
+def _write_pane_input_dedupe(data: dict) -> None:
+    os.makedirs(os.path.dirname(PANE_INPUT_DEDUPE_PATH), exist_ok=True)
+    trimmed_items = sorted(data.items(), key=lambda item: item[1].get("applied_at", 0))[-PANE_INPUT_DEDUPE_MAX:]
+    tmp = PANE_INPUT_DEDUPE_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(dict(trimmed_items), f)
+    os.replace(tmp, PANE_INPUT_DEDUPE_PATH)
+
+
+def pane_input_was_applied(request_id: str) -> bool:
+    if not request_id:
+        return False
+    with state_lock:
+        return request_id in _load_pane_input_dedupe()
+
+
+def mark_pane_input_applied(request_id: str, pane_input_id: str | None = None, target_agent_id: str | None = None) -> None:
+    if not request_id:
+        raise ValueError("request_id is required")
+    with state_lock:
+        data = _load_pane_input_dedupe()
+        data[request_id] = {
+            "request_id": request_id,
+            "pane_input_id": pane_input_id or request_id,
+            "target_agent_id": target_agent_id,
+            "applied_at": time.time(),
+        }
+        _write_pane_input_dedupe(data)
 
 
 def get_local_configs_for_registry() -> list[dict]:

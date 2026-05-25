@@ -12,16 +12,18 @@ import (
 )
 
 type outboxRecord struct {
-	ID            string `json:"id"`
-	Timestamp     string `json:"timestamp"`
-	Sender        string `json:"sender"`
-	TargetDisplay string `json:"target_display"`
-	TargetAddress string `json:"target_address"`
-	TargetScope   string `json:"target_scope"`
-	Body          string `json:"body"`
-	Delivered     bool   `json:"delivered,omitempty"`
-	Notified      bool   `json:"notified,omitempty"`
-	Read          bool   `json:"read,omitempty"`
+	ID              string `json:"id"`
+	Timestamp       string `json:"timestamp"`
+	Sender          string `json:"sender"`
+	TargetDisplay   string `json:"target_display"`
+	TargetAddress   string `json:"target_address"`
+	TargetScope     string `json:"target_scope"`
+	TargetAgentID   string `json:"target_agent_id,omitempty"`
+	TargetTrackerID string `json:"target_tracker_id,omitempty"`
+	Body            string `json:"body"`
+	Delivered       bool   `json:"delivered,omitempty"`
+	Notified        bool   `json:"notified,omitempty"`
+	Read            bool   `json:"read,omitempty"`
 }
 
 type outboxLoaded struct {
@@ -111,13 +113,15 @@ func writeOutbox(records []outboxRecord) error {
 func makeOutboxRecord(sender string, row agentRow, body string) outboxRecord {
 	now := time.Now()
 	return outboxRecord{
-		ID:            "sent-" + now.Format("20060102150405.000000000"),
-		Timestamp:     now.Format(time.RFC3339Nano),
-		Sender:        fallback(sender, "agent-communicator"),
-		TargetDisplay: row.Name,
-		TargetAddress: rowTarget(row),
-		TargetScope:   row.Scope,
-		Body:          body,
+		ID:              "sent-" + now.Format("20060102150405.000000000"),
+		Timestamp:       now.Format(time.RFC3339Nano),
+		Sender:          fallback(sender, "agent-communicator"),
+		TargetDisplay:   row.Name,
+		TargetAddress:   rowTarget(row),
+		TargetScope:     row.Scope,
+		TargetAgentID:   row.AgentID,
+		TargetTrackerID: row.TrackerID,
+		Body:            body,
 	}
 }
 

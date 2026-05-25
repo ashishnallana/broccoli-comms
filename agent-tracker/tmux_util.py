@@ -346,6 +346,42 @@ def send_symbolic_keys(pane_id, keys, socket_path=None):
     _run_tmux_input(tmux_base(socket_path) + ["send-keys", "-t", pane_id, *normalized], socket_path)
     return True
 
+
+def focus_pane(pane_id, session=None, socket_path=None):
+    """Best-effort focus of a pane using only an explicit/private tmux socket.
+
+    Returns False instead of falling back to the user's default tmux server when
+    no registered/private socket is available.
+    """
+    if not pane_id:
+        raise ValueError("pane_id is required")
+    socket_path = socket_path or default_tmux_socket()
+    if not socket_path:
+        logging.warning("Refusing to focus pane %s without an explicit/private tmux socket", pane_id)
+        return False
+
+    env = tmux_env(strip_inherited=True)
+    base = tmux_base(socket_path)
+    focused = False
+    if session:
+        try:
+            subprocess.run(base + ["switch-client", "-t", session], check=True, capture_output=True, timeout=5, env=env)
+            focused = True
+        except Exception as e:
+            logging.warning("Failed to switch tmux client to session %s for pane %s: %s", session, pane_id, e)
+    try:
+        subprocess.run(base + ["select-window", "-t", pane_id], check=True, capture_output=True, timeout=5, env=env)
+        focused = True
+    except Exception as e:
+        logging.warning("Failed to select tmux window for pane %s: %s", pane_id, e)
+    try:
+        subprocess.run(base + ["select-pane", "-t", pane_id], check=True, capture_output=True, timeout=5, env=env)
+        focused = True
+    except Exception as e:
+        logging.warning("Failed to select tmux pane %s: %s", pane_id, e)
+    return focused
+
+
 def spin_agent(agent_name, command, target_pane=None, session=None, directory=None, env=None, tmux_socket=None):
     import os
     import shlex

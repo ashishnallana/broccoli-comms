@@ -20,6 +20,8 @@ type localClient interface {
 	ReadInbox(context.Context, string, int, bool) (tracker.ReadInboxResult, error)
 	SendMessage(context.Context, string, string, []tracker.Attachment) error
 	SendMessageFrom(context.Context, string, string, string, []tracker.Attachment) error
+	SendText(context.Context, string, string, bool) error
+	SendKeys(context.Context, string, []string) error
 	WaitEvents(context.Context, tracker.WaitOptions) (tracker.WaitEventsResult, error)
 	ListTrackers(context.Context) ([]tracker.RemoteTracker, error)
 	PublishTrackerEvent(ctx context.Context, targetTrackerID, eventType string, payload any) error
@@ -48,6 +50,12 @@ type messageSent struct {
 	Record outboxRecord
 	Err    error
 }
+type directInputSent struct {
+	Original string
+	Row      agentRow
+	Mode     string
+	Err      error
+}
 type eventsLoaded struct {
 	Result tracker.WaitEventsResult
 	Err    error
@@ -55,6 +63,7 @@ type eventsLoaded struct {
 type refreshTick struct{}
 type retryEvents struct{}
 type agentListSpinnerTick struct{}
+type clearDirectInputStatusTick struct{}
 
 type promptTemplate struct {
 	Name string
@@ -147,7 +156,7 @@ func filterConversation(messages []tracker.Message, row agentRow) []tracker.Mess
 	}
 	filtered := []tracker.Message{}
 	for _, msg := range messages {
-		if senderMatchesRow(msg.Sender, row) {
+		if messageMatchesRow(msg, row) {
 			filtered = append(filtered, msg)
 		}
 	}
@@ -197,6 +206,54 @@ func deletePreviousWord(value []rune) []rune {
 
 const markdownReplyInstruction = "PS: Reply in markdown format."
 
+type composerAction struct {
+	Kind     string
+	Body     string
+	Text     string
+	Submit   bool
+	Keys     []string
+	Original string
+}
+
+func parseComposerAction(input string) composerAction {
+	trimmed := strings.TrimSpace(input)
+	action := composerAction{Kind: "message", Body: input, Submit: true, Original: input}
+	if trimmed == "" {
+		return action
+	}
+	if trimmed == "/msg" {
+		action.Body = ""
+		return action
+	}
+	if strings.HasPrefix(trimmed, "/msg ") {
+		action.Body = strings.TrimSpace(strings.TrimPrefix(trimmed, "/msg"))
+		return action
+	}
+	if trimmed == "/text" {
+		return composerAction{Kind: "direct_text", Submit: true, Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/text ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/text"))
+		submit := true
+		if rest == "--no-submit" {
+			rest = ""
+			submit = false
+		} else if strings.HasPrefix(rest, "--no-submit ") {
+			rest = strings.TrimSpace(strings.TrimPrefix(rest, "--no-submit"))
+			submit = false
+		}
+		return composerAction{Kind: "direct_text", Text: rest, Submit: submit, Original: input}
+	}
+	if trimmed == "/key" {
+		return composerAction{Kind: "direct_keys", Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/key ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/key"))
+		return composerAction{Kind: "direct_keys", Keys: strings.Fields(rest), Original: input}
+	}
+	return action
+}
+
 func sendCurrentMessage(local localClient, senderName string, row agentRow, body string) tea.Cmd {
 	return sendOutboxRecord(local, senderName, row, makeOutboxRecord(senderName, row, body))
 }
@@ -225,6 +282,41 @@ func sendOutboxRecord(local localClient, senderName string, row agentRow, record
 			err = appendOutbox(record)
 		}
 		return messageSent{Body: record.Body, Row: row, Record: record, Err: err}
+	}
+}
+
+func sendDirectInput(local localClient, row agentRow, action composerAction, allowRemote bool) tea.Cmd {
+	return func() tea.Msg {
+		if local == nil {
+			return directInputSent{Original: action.Original, Row: row, Mode: action.Kind, Err: errors.New("local tracker client unavailable")}
+		}
+		if row.Scope == "remote" && !allowRemote {
+			return directInputSent{Original: action.Original, Row: row, Mode: action.Kind, Err: errors.New("remote direct pane input is disabled")}
+		}
+		target := rowTarget(row)
+		if target == "" {
+			return directInputSent{Original: action.Original, Row: row, Mode: action.Kind, Err: errors.New("target agent unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var err error
+		switch action.Kind {
+		case "direct_text":
+			if action.Text == "" {
+				err = errors.New("/text requires TEXT")
+			} else {
+				err = local.SendText(ctx, target, action.Text, action.Submit)
+			}
+		case "direct_keys":
+			if len(action.Keys) == 0 {
+				err = errors.New("/key requires KEY [KEY...]")
+			} else {
+				err = local.SendKeys(ctx, target, action.Keys)
+			}
+		default:
+			err = errors.New("unknown direct input command")
+		}
+		return directInputSent{Original: action.Original, Row: row, Mode: action.Kind, Err: err}
 	}
 }
 

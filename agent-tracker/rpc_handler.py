@@ -420,6 +420,31 @@ def handle_spin_agent(params: dict, caller_pid: int = None) -> str:
         state.delete_agent(agent_name)
         raise RuntimeError(f"Failed to spin agent: {e}")
 
+def remote_message_focus_enabled() -> bool:
+    """Whether remote-origin inbox delivery should best-effort focus target pane.
+
+    Conservative Broccoli default: disabled unless explicitly enabled.
+    """
+    return os.environ.get("BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _maybe_focus_remote_delivery(info: dict, current_name: str, msg_obj: dict) -> None:
+    sender_tracker_id = msg_obj.get("sender_tracker_id")
+    if not sender_tracker_id or sender_tracker_id == registry_client.TRACKER_ID:
+        return
+    if not remote_message_focus_enabled():
+        return
+    tmux_pane = info.get("tmux_pane")
+    tmux_socket = info.get("tmux_socket")
+    if not tmux_pane or not tmux_socket:
+        logging.warning("Skipping remote message focus for %s: missing registered pane or tmux socket", current_name)
+        return
+    try:
+        tmux_util.focus_pane(tmux_pane, session=info.get("session"), socket_path=tmux_socket)
+    except Exception as e:
+        logging.warning("Best-effort remote message focus failed for %s pane %s: %s", current_name, tmux_pane, e)
+
+
 def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: str | None = None, verify: bool = False) -> str:
     """Writes a message to a local agent inbox and triggers/queues notification."""
     info = state.get_agent(target_name_or_id)
@@ -495,6 +520,8 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
                 "receiver_agent_name": current_name,
             })
 
+        _maybe_focus_remote_delivery(info, current_name, msg_obj)
+
         pending_item = {
             "sender": notify_sender,
             "message_id": msg_obj.get("message_id"),
@@ -556,20 +583,104 @@ def _resolve_local_target_address(params: dict, allow_remote: bool) -> dict:
     if hostname not in {"local", LOCAL_HOSTNAME}:
         if allow_remote:
             return params
-        raise RuntimeError("remote direct pane input is disabled/not yet supported")
+        raise RuntimeError("remote direct pane input is disabled")
     return {**params, **({"agent_id": target} if _is_uuid(target) else {"agent_name": target})}
 
 
-def handle_send_input(params: dict, caller_pid: int = None) -> dict:
-    """Sends local direct pane input to a registered agent pane.
+def _validate_send_input_payload(params: dict) -> tuple[str, dict]:
+    mode = (params.get("input_type") or params.get("mode") or "").lower()
+    if mode not in {"text", "keys"}:
+        raise ValueError("Invalid params")
+    if mode == "text":
+        text = params.get("text")
+        if not isinstance(text, str) or text == "":
+            raise ValueError("text must be a non-empty string")
+        max_bytes = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES", "4096"))
+        if len(text.encode("utf-8")) > max_bytes:
+            raise ValueError(f"text exceeds max bytes ({max_bytes})")
+        submit = params.get("submit", True)
+        if not isinstance(submit, bool):
+            raise ValueError("submit must be a boolean")
+        return mode, {"text": text, "submit": submit}
+    keys = params.get("keys")
+    if keys is None and params.get("key") is not None:
+        keys = [params.get("key")]
+    max_keys = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_KEYS", "16"))
+    if isinstance(keys, (list, tuple)) and len(keys) > max_keys:
+        raise ValueError(f"keys exceed max count ({max_keys})")
+    normalized = tmux_util.normalize_key_tokens(keys)
+    return mode, {"keys": normalized}
 
-    This bypasses inbox files and notifications. Remote direct input is disabled
-    until registry guardrails, request IDs, and audit paths are implemented.
+
+def _route_remote_send_input(params: dict, caller_pid: int = None) -> dict | None:
+    target_address = params.get("target_address")
+    if not target_address or "/" not in target_address:
+        return None
+    registry_name = None
+    hostname, target = target_address.split("/", 1)
+    if ":" in hostname:
+        registry_name, hostname = hostname.split(":", 1)
+    if hostname in {"local", LOCAL_HOSTNAME}:
+        return None
+    if not registry_client.remote_pane_input_send_enabled():
+        raise RuntimeError("remote direct pane input is disabled")
+    mode, payload = _validate_send_input_payload(params)
+    sender_name = params.get("sender_name") or _identify_agent(params, caller_pid) or "cli-user"
+    sender_info = state.get_agent(params.get("sender_id") or sender_name) or {}
+    sender_id = sender_info.get("agent_id") or params.get("sender_id")
+    pane_input_id = params.get("pane_input_id") or params.get("request_id") or str(uuid.uuid4())
+    request_id = params.get("request_id") or pane_input_id
+    if registry_name:
+        status, body = registry_client.send_remote_pane_input_to_registry(
+            registry_name,
+            sender_name,
+            sender_id,
+            registry_client.TRACKER_ID,
+            hostname,
+            target,
+            mode,
+            text=payload.get("text"),
+            keys=payload.get("keys"),
+            submit=payload.get("submit", True),
+            pane_input_id=pane_input_id,
+            request_id=request_id,
+        )
+    else:
+        status, body = registry_client.send_remote_pane_input(
+            sender_name,
+            sender_id,
+            registry_client.TRACKER_ID,
+            hostname,
+            target,
+            mode,
+            text=payload.get("text"),
+            keys=payload.get("keys"),
+            submit=payload.get("submit", True),
+            pane_input_id=pane_input_id,
+            request_id=request_id,
+        )
+    if status == 202:
+        return {"success": True, "queued": True, "mode": mode, "pane_input_id": (body or {}).get("pane_input_id", pane_input_id), "request_id": (body or {}).get("request_id", request_id)}
+    raise RuntimeError(f"Remote pane input failed: {(body or {}).get('message', 'unknown error')}")
+
+
+def handle_send_input(params: dict, caller_pid: int = None) -> dict:
+    """Sends direct pane input to a registered agent pane.
+
+    Local input uses the registered/private tmux socket. Remote target_address
+    routing is registry-mediated and remains default-disabled behind sender,
+    registry, and receiver gates.
     """
+    remote_result = _route_remote_send_input(params, caller_pid)
+    if remote_result is not None:
+        return remote_result
     params = _resolve_local_target_address(params, allow_remote=False)
     agent_name = _resolve_target_agent_name(params)
-    mode = (params.get("input_type") or params.get("mode") or "").lower()
-    if not agent_name or mode not in {"text", "keys"}:
+    try:
+        mode, input_payload = _validate_send_input_payload(params)
+    except ValueError:
+        raise
+    if not agent_name:
         raise ValueError("Invalid params")
 
     info = state.get_agent(agent_name)
@@ -585,16 +696,11 @@ def handle_send_input(params: dict, caller_pid: int = None) -> dict:
     current_name = state.get_agent_name_by_id(info.get("agent_id")) or agent_name
     try:
         if mode == "text":
-            text = params.get("text")
-            submit = params.get("submit", True)
-            if not isinstance(submit, bool):
-                raise ValueError("submit must be a boolean")
+            text = input_payload["text"]
+            submit = input_payload["submit"]
             tmux_util.send_literal_text(tmux_pane, text, submit=submit, socket_path=tmux_socket)
             return {"success": True, "target": current_name, "mode": "text", "submitted": submit}
-        keys = params.get("keys")
-        if keys is None and params.get("key") is not None:
-            keys = [params.get("key")]
-        normalized = tmux_util.normalize_key_tokens(keys)
+        normalized = input_payload["keys"]
         tmux_util.send_symbolic_keys(tmux_pane, normalized, socket_path=tmux_socket)
         return {"success": True, "target": current_name, "mode": "keys", "keys": normalized}
     except ValueError:

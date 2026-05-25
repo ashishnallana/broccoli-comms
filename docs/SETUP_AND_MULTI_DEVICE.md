@@ -351,12 +351,67 @@ Expected results:
 - `agent-registry.service` is active
 - tmux has a `registry-smoke` pane tagged with `@agent_name=smoke`
 
-## 10. Current future work
+## 10. Direct pane input over the registry
+
+Normal `send-message` delivery remains inbox-based and is the default. Direct pane input (`send-text`, `send-key`, TUI `/text`, TUI `/key`) bypasses inbox history and controls an agent pane directly.
+
+Local direct input examples:
+
+```sh
+agent-tracker-ctl send-text alice "hello"
+agent-tracker-ctl send-text --no-submit alice "draft prompt"
+agent-tracker-ctl send-key alice C-c Enter
+```
+
+Remote direct input is disabled by default and should be enabled only for trusted registries/trackers. Enable all required gates before using host-qualified remote targets:
+
+```sh
+# Sender tracker/TUI capability
+export BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED=1
+# or umbrella for both send and receive on the same tracker:
+export BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED=1
+
+# Registry service
+export BROCCOLI_COMMS_REMOTE_PANE_INPUT_REGISTRY_ENABLED=1
+# or AGENT_REGISTRY_REMOTE_PANE_INPUT_ENABLED=1
+
+# Receiver tracker
+export BROCCOLI_COMMS_REMOTE_PANE_INPUT_RECEIVE_ENABLED=1
+# or AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED=1
+```
+
+Optional limits:
+
+```sh
+export AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES=4096
+export AGENT_REMOTE_PANE_INPUT_MAX_KEYS=16
+```
+
+Remote examples after enablement:
+
+```sh
+agent-tracker-ctl send-text host-a/alice "hello remotely"
+agent-tracker-ctl send-key registry-a:host-a/alice Escape
+```
+
+Guardrails:
+
+- registry endpoint is separate: `POST /pane-inputs`; `/messages` semantics are unchanged
+- each request carries string `pane_input_id` and `request_id`
+- queued delivery uses `delivery_type=pane_input`
+- receiver dedupes request IDs before injection, so retries do not duplicate keystrokes
+- registry acks only after successful injection or duplicate recognition
+- pane input does not write inbox entries or normal inbox notifications
+- logs/audit include request metadata and text length/hash, not full text payloads
+- `broccoli-comms doctor` warns when remote pane input is enabled without registry auth/token assumptions in the current environment
+
+## 11. Current future work
 
 These are intentionally not required for the basic setup above:
 
 - decide whether `agent-registry` remains bundled by default or optional in Broccoli Comms
 - expose Broccoli Comms top-level NixOS/Home Manager modules for registry setup, instead of using the nested standalone registry flake directly
-- add remote pane capture and send-keys/send-text through registry with capability-gated auth
-- add a generic permission request model for approve/deny prompts across Pi/Claude/Codex/Gemini
+- add remote pane capture UI/approval flows beyond the current snapshot request helper
+- add per-agent or interactive approve/deny policy for remote pane control across Pi/Claude/Codex/Gemini
+- keep future Electron/native/libghostty frontend work out of the main tree until a reviewed frontend plan is selected
 - add deeper `doctor` checks for registry config/secrets and agent command versions

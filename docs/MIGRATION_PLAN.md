@@ -244,10 +244,10 @@ Future work (not implemented in Chunk 6 first slice):
 - [ ] Wire managed-agent focus/attach into TUI hotkeys if useful after UX review.
 - [ ] Add global advanced view over all app-managed inboxes.
 - [ ] Design a generic permission request model.
-- [ ] Design remote pane capture via agent-tracker/registry.
-- [ ] Design remote send-keys/send-text for approvals/denials.
+- [x] Design and implement remote pane capture via agent-tracker/registry snapshot request helper.
+- [x] Design and implement guarded remote send-keys/send-text through registry-routed pane input.
 - [x] After current VM setup testing/bug fixes, get feature context from `home-manager-core-agent-1` about the home-manager-core `agent-tracker`/`agent-registry`/`agent-communicator` send-keys and send-text expansion, then create a Broccoli Comms implementation plan for the same capability (`docs/SEND_KEYS_SEND_TEXT_PLAN.md`).
-- [ ] Implement send-keys/send-text in Broccoli Comms according to `docs/SEND_KEYS_SEND_TEXT_PLAN.md`, starting with local-only Chunk A (tmux primitives + tracker RPC) before any remote direct-input exposure.
+- [x] Implement send-keys/send-text in Broccoli Comms according to `docs/SEND_KEYS_SEND_TEXT_PLAN.md`, including local RPC/CLI, communicator identity/direct-input actions, default-disabled remote protocol, and capability-gated remote TUI dispatch.
 - [ ] Keep pane/control features agent-agnostic with detector/adaptor backends for pi/claude/codex/etc.
 
 ### Chunk 7: doctor, bootstrap, and packaging polish
@@ -274,6 +274,8 @@ Planned tasks:
 Deferred/final-review items:
 
 - [x] Add lightweight flake `checks` outputs for Python syntax, selected tracker unit tests, shell syntax, and Go communicator tests.
+- [x] Document direct pane input CLI/TUI behavior, default-disabled remote gates, registry guardrails, and stable communicator identity expectations.
+- [x] Add `doctor` warnings for remote pane input when enabled without registry auth/token assumptions.
 - [ ] Decide whether `agent-registry` remains bundled by default or optional.
 - [ ] Expand `doctor` further for agent command version checks, registry config/secrets sanity, and socket repair suggestions.
 
@@ -291,12 +293,13 @@ Remaining future-only items:
 
 - [ ] Decide whether `agent-registry` remains bundled by default or optional.
 - [ ] Add full launcher/runtime smokes as Nix checks if they can be made reliable in sandbox/CI tmux environments.
+- [x] Add remote pane-input `doctor` warnings for registry auth/token assumptions.
 - [ ] Add deeper `doctor` checks for agent command versions, registry config/secrets, and suggested repairs.
 - [ ] Continue wrapper parity hardening against the Home Manager wrapper over time.
 
 ### Chunk 8: future native/Electron/libghostty frontend path
 
-Status: future planning only.
+Status: future planning only. Electron mock/prototype artifacts are intentionally not part of the main Chunk 5-7 working tree; keep any future mock app work in a separate reviewed branch or scratch area until a frontend plan is approved.
 
 Planned tasks:
 

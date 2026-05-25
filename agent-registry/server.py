@@ -1,9 +1,11 @@
 import base64
 import binascii
 import errno
+import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -19,6 +21,8 @@ MAX_BODY_BYTES = int(os.environ.get("AGENT_MAX_DELIVERY_BYTES", "5242880"))
 STALE = int(os.environ.get("TRACKER_STALE_SECONDS", "60"))
 GONE = int(os.environ.get("TRACKER_GONE_SECONDS", "180"))
 DELIVERY_WAIT_SECONDS = int(os.environ.get("AGENT_REGISTRY_DELIVERY_WAIT_SECONDS", "25"))
+REMOTE_PANE_INPUT_MAX_TEXT_BYTES = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES", "4096"))
+REMOTE_PANE_INPUT_MAX_KEYS = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_KEYS", "16"))
 STATE_PATH = os.environ.get(
     "AGENT_REGISTRY_STATE_PATH",
     os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "agent-registry", "state.json"),
@@ -344,9 +348,141 @@ def _validate_attachments(body):
     return None
 
 
-def make_handler(store=None, token=None, auth_required=None):
+_SIMPLE_KEY_ALIASES = {
+    "esc": "Escape", "escape": "Escape", "enter": "Enter", "return": "Enter", "ret": "Enter",
+    "space": "Space", "spc": "Space", "tab": "Tab", "btab": "BTab", "backtab": "BTab",
+    "bs": "Backspace", "backspace": "Backspace", "del": "Delete", "delete": "Delete",
+    "ins": "Insert", "insert": "Insert", "up": "Up", "down": "Down", "left": "Left", "right": "Right",
+    "home": "Home", "end": "End", "pgup": "PageUp", "pageup": "PageUp", "ppage": "PageUp",
+    "pgdn": "PageDown", "pagedown": "PageDown", "npage": "PageDown",
+}
+_SIMPLE_KEYS = set(_SIMPLE_KEY_ALIASES.values()) | {f"F{i}" for i in range(1, 25)}
+_MODIFIER_ALIASES = {"c": "C", "ctrl": "C", "control": "C", "m": "M", "meta": "M", "alt": "M", "s": "S", "shift": "S"}
+_SHELL_LIKE_KEY_CHARS = set("|&;<>$`(){}[]*?~!#\"'\\\n\r")
+
+
+def _env_truthy(name):
+    return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def _remote_pane_input_registry_enabled():
+    return _env_truthy("AGENT_REGISTRY_REMOTE_PANE_INPUT_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_REGISTRY_ENABLED")
+
+
+def _normalize_key_token(key):
+    if not isinstance(key, str):
+        raise ValueError("key must be a string")
+    token = key.strip()
+    if not token:
+        raise ValueError("key must not be empty")
+    if token != key or any(ch.isspace() for ch in token):
+        raise ValueError("key must not contain whitespace")
+    if any(ch in _SHELL_LIKE_KEY_CHARS for ch in token):
+        raise ValueError("key contains unsupported characters")
+    if token.endswith("-"):
+        raise ValueError("key has trailing modifier")
+    lower = token.lower()
+    if lower in _SIMPLE_KEY_ALIASES:
+        return _SIMPLE_KEY_ALIASES[lower]
+    if re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", lower):
+        return "F" + lower[1:]
+    parts = token.split("-")
+    if len(parts) == 1:
+        if token in _SIMPLE_KEYS:
+            return token
+        raise ValueError(f"unknown key: {key}")
+    if len(parts) > 3:
+        raise ValueError("too many key modifiers")
+    modifiers = []
+    for raw_modifier in parts[:-1]:
+        modifier = _MODIFIER_ALIASES.get(raw_modifier.lower())
+        if not modifier:
+            raise ValueError(f"unknown key modifier: {raw_modifier}")
+        if modifier in modifiers:
+            raise ValueError(f"duplicate key modifier: {raw_modifier}")
+        modifiers.append(modifier)
+    base_raw = parts[-1]
+    if not base_raw:
+        raise ValueError("key has empty base")
+    base_lower = base_raw.lower()
+    if base_lower in _SIMPLE_KEY_ALIASES:
+        base = _SIMPLE_KEY_ALIASES[base_lower]
+    elif re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", base_lower):
+        base = "F" + base_lower[1:]
+    elif len(base_raw) == 1 and base_raw.isalnum():
+        base = base_raw.lower() if "C" in modifiers else base_raw
+    else:
+        raise ValueError(f"unknown key: {key}")
+    return "-".join(modifiers + [base])
+
+
+def _valid_request_id(value):
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= 200
+
+
+def _pane_input_payload_error(body):
+    if not body.get("sender_tracker_id"):
+        return "sender_tracker_id is required"
+    pane_input_id = body.get("pane_input_id")
+    request_id = body.get("request_id")
+    if not _valid_request_id(pane_input_id) or not _valid_request_id(request_id):
+        return "pane_input_id and request_id must be non-empty strings up to 200 characters"
+    mode = (body.get("input_type") or body.get("mode") or "").lower()
+    if mode not in {"text", "keys"}:
+        return "input_type must be text or keys"
+    if mode == "text":
+        text = body.get("text")
+        if not isinstance(text, str) or not text:
+            return "text must be a non-empty string"
+        if len(text.encode("utf-8")) > REMOTE_PANE_INPUT_MAX_TEXT_BYTES:
+            return f"text exceeds max bytes ({REMOTE_PANE_INPUT_MAX_TEXT_BYTES})"
+        submit = body.get("submit", True)
+        if not isinstance(submit, bool):
+            return "submit must be a boolean"
+    else:
+        keys = body.get("keys")
+        if isinstance(keys, str):
+            keys = [keys]
+        if not isinstance(keys, list) or not keys:
+            return "keys must be a non-empty list"
+        if len(keys) > REMOTE_PANE_INPUT_MAX_KEYS:
+            return f"keys exceed max count ({REMOTE_PANE_INPUT_MAX_KEYS})"
+        try:
+            [_normalize_key_token(key) for key in keys]
+        except ValueError as e:
+            return str(e)
+    if not body.get("target_agent_id") and not body.get("target_agent_name"):
+        return "provide target_agent_id or target_agent_name"
+    if body.get("target_agent_name") and not body.get("target_hostname"):
+        return "target_hostname is required when using target_agent_name; bare-name global resolution is not supported"
+    return None
+
+
+def _pane_input_audit_fields(body, target=None, result=None):
+    mode = (body.get("input_type") or body.get("mode") or "").lower()
+    fields = {
+        "pane_input_id": body.get("pane_input_id") or body.get("request_id"),
+        "request_id": body.get("request_id") or body.get("pane_input_id"),
+        "sender_tracker_id": body.get("sender_tracker_id"),
+        "target_agent_id": (target or {}).get("agent_id") or body.get("target_agent_id"),
+        "target_hostname": (target or {}).get("hostname") or body.get("target_hostname"),
+        "mode": mode,
+        "result": result,
+    }
+    if mode == "text" and isinstance(body.get("text"), str):
+        encoded = body["text"].encode("utf-8")
+        fields["text_bytes"] = len(encoded)
+        fields["text_sha256"] = hashlib.sha256(encoded).hexdigest()[:16]
+    elif mode == "keys":
+        keys = body.get("keys") if isinstance(body.get("keys"), list) else [body.get("keys")]
+        fields["key_count"] = len([k for k in keys if k is not None])
+    return fields
+
+
+def make_handler(store=None, token=None, auth_required=None, remote_pane_input_enabled=None):
     store, token = store or Store(), TOKEN if token is None else token
     auth_required = AUTH_REQUIRED if auth_required is None else auth_required
+    remote_pane_input_enabled = _remote_pane_input_registry_enabled() if remote_pane_input_enabled is None else remote_pane_input_enabled
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -508,6 +644,57 @@ def make_handler(store=None, token=None, auth_required=None):
                 )
                 return self._json(202, {"ok": True, "queued": True, "event_id": event["event_id"], "target_tracker": target["hostname"]})
 
+            if parts == ["pane-inputs"]:
+                if not remote_pane_input_enabled:
+                    LOG.warning("rejected remote pane input while registry gate disabled audit=%s", _pane_input_audit_fields(body, result="registry_disabled"))
+                    return self._json(403, {"error": "remote_pane_input_disabled", "message": "remote direct pane input is disabled on this registry"})
+                validation_error = _pane_input_payload_error(body)
+                if validation_error:
+                    LOG.warning("rejected invalid remote pane input: %s audit=%s", validation_error, _pane_input_audit_fields(body, result="invalid"))
+                    return self._json(400, {"error": "invalid_request", "message": validation_error})
+                if not store.has_tracker(body.get("sender_tracker_id")):
+                    LOG.warning("remote pane input source tracker not found audit=%s", _pane_input_audit_fields(body, result="source_tracker_not_found"))
+                    return self._json(404, {"error": "tracker_not_found", "message": "sender tracker not registered"})
+                target = store.get_agent(body.get("target_agent_id")) if body.get("target_agent_id") else None
+                if not target and body.get("target_agent_name"):
+                    target = next((agent for agent in store.list_agents() if agent["hostname"] == body["target_hostname"] and (agent["name"] == body["target_agent_name"] or body["target_agent_name"] in agent.get("aliases", []))), None)
+                if not target:
+                    LOG.warning("remote pane input target not found audit=%s", _pane_input_audit_fields(body, result="target_not_found"))
+                    return self._json(404, {"error": "agent_not_found", "message": "no agent with that ID or name is registered on the specified tracker"})
+                if body.get("sender_tracker_id") == target["tracker_id"]:
+                    LOG.warning("remote pane input same-tracker rejection audit=%s", _pane_input_audit_fields(body, target, result="same_tracker"))
+                    return self._json(400, {"error": "same_tracker", "message": "target agent is on the same tracker; use local send"})
+                tracker = store.get_tracker(target["tracker_id"]) or {}
+                if tracker.get("status") != "active":
+                    LOG.warning("remote pane input target tracker not active audit=%s tracker_status=%s", _pane_input_audit_fields(body, target, result="tracker_offline"), tracker.get("status", "gone"))
+                    return self._json(503, {"error": "tracker_offline", "message": "target tracker is stale or gone", "tracker_status": tracker.get("status", "gone")})
+                pane_input_id = body.get("pane_input_id") or body.get("request_id")
+                request_id = body.get("request_id") or pane_input_id
+                mode = (body.get("input_type") or body.get("mode") or "").lower()
+                entry_payload = {
+                    "delivery_type": "pane_input",
+                    "message_id": pane_input_id,
+                    "pane_input_id": pane_input_id,
+                    "request_id": request_id,
+                    "target_agent_id": target["agent_id"],
+                    "target_agent_name": target.get("name"),
+                    "sender_agent_id": body.get("sender_agent_id"),
+                    "sender_agent_name": body.get("sender_agent_name"),
+                    "sender_tracker_id": body.get("sender_tracker_id"),
+                    "sender_tracker": (store.get_tracker(body.get("sender_tracker_id")) or {}).get("hostname", body.get("sender_tracker_id")),
+                    "input_type": mode,
+                    "submit": body.get("submit", True),
+                    "sent_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+                }
+                if mode == "text":
+                    entry_payload["text"] = body.get("text")
+                else:
+                    keys = body.get("keys") if isinstance(body.get("keys"), list) else [body.get("keys")]
+                    entry_payload["keys"] = [_normalize_key_token(key) for key in keys]
+                entry = store.enqueue_delivery(target["tracker_id"], entry_payload)
+                LOG.info("accepted remote pane input audit=%s", _pane_input_audit_fields(body, target, result="queued"))
+                return self._json(202, {"ok": True, "queued": True, "pane_input_id": entry["pane_input_id"], "request_id": entry["request_id"], "target_agent_id": target["agent_id"], "target_name": target["name"], "target_tracker": target["hostname"]})
+
             if parts == ["messages"]:
                 if not body.get("message") and not body.get("attachments"):
                     return self._json(400, {"error": "invalid_request", "message": "message text or attachments are required"})
@@ -531,6 +718,7 @@ def make_handler(store=None, token=None, auth_required=None):
                     LOG.warning("message target tracker not active target_tracker_id=%s status=%s target_agent_id=%s", target["tracker_id"], tracker.get("status", "gone"), target["agent_id"])
                     return self._json(503, {"error": "tracker_offline", "message": "target tracker is stale or gone", "tracker_status": tracker.get("status", "gone")})
                 entry = store.enqueue_delivery(target["tracker_id"], {
+                    "delivery_type": "message",
                     "target_agent_id": target["agent_id"],
                     "sender_name": body.get("sender_agent_name", "unknown"),
                     "sender_agent_id": body.get("sender_agent_id"),

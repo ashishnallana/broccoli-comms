@@ -20,6 +20,11 @@ func (m *model) syncAdvancedTargetToSelection() {
 }
 
 func (m model) rowIndexForMessageTarget(msg tracker.Message) int {
+	for i, row := range m.rows {
+		if messageMatchesRowByID(msg, row) {
+			return i
+		}
+	}
 	sender := strings.TrimSpace(msg.Sender)
 	if sender == "" {
 		return -1
@@ -32,7 +37,7 @@ func (m model) rowIndexForMessageTarget(msg tracker.Message) int {
 		sender = strings.TrimSpace(strings.TrimPrefix(sender, "to "))
 	}
 	for i, row := range m.rows {
-		if senderMatchesRow(sender, row) || sender == row.Name || sender == rowTarget(row) {
+		if rowKeyMatchesSenderString(row, sender) {
 			return i
 		}
 	}

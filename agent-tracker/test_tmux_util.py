@@ -115,6 +115,33 @@ class TestTmuxUtil(unittest.TestCase):
         mock_run.assert_called_once_with(["display-message", "-p", "-t", "%0", "#{pane_in_mode}"])
 
     @mock.patch("tmux_util.subprocess.run")
+    def test_focus_pane_uses_explicit_socket_and_strips_inherited_tmux(self, run):
+        run.return_value = mock.Mock(returncode=0, stdout=b"")
+        with mock.patch.dict("os.environ", {"TMUX": "/tmp/default,1,0", "TMUX_PANE": "%9"}, clear=True):
+            self.assertTrue(tmux_util.focus_pane("%1", session="sess", socket_path="/tmp/private.sock"))
+
+        self.assertEqual(run.call_args_list[0].args[0], ["tmux", "-S", "/tmp/private.sock", "switch-client", "-t", "sess"])
+        self.assertEqual(run.call_args_list[1].args[0], ["tmux", "-S", "/tmp/private.sock", "select-window", "-t", "%1"])
+        self.assertEqual(run.call_args_list[2].args[0], ["tmux", "-S", "/tmp/private.sock", "select-pane", "-t", "%1"])
+        for call in run.call_args_list:
+            self.assertNotIn("TMUX", call.kwargs["env"])
+            self.assertNotIn("TMUX_PANE", call.kwargs["env"])
+
+    @mock.patch("tmux_util.subprocess.run")
+    def test_focus_pane_refuses_default_tmux_without_socket(self, run):
+        with mock.patch.dict("os.environ", {"TMUX": "/tmp/default,1,0", "TMUX_PANE": "%9"}, clear=True):
+            self.assertFalse(tmux_util.focus_pane("%1"))
+        run.assert_not_called()
+
+    @mock.patch("tmux_util.subprocess.run")
+    def test_focus_pane_uses_private_socket_from_env(self, run):
+        run.return_value = mock.Mock(returncode=0, stdout=b"")
+        with mock.patch.dict("os.environ", {"BROCCOLI_COMMS_TMUX_SOCKET": "/tmp/app.sock"}, clear=True):
+            self.assertTrue(tmux_util.focus_pane("%1"))
+        self.assertEqual(run.call_args_list[0].args[0], ["tmux", "-S", "/tmp/app.sock", "select-window", "-t", "%1"])
+        self.assertEqual(run.call_args_list[1].args[0], ["tmux", "-S", "/tmp/app.sock", "select-pane", "-t", "%1"])
+
+    @mock.patch("tmux_util.subprocess.run")
     def test_send_literal_text_uses_literal_flag_and_submit(self, run):
         run.return_value = mock.Mock(returncode=0, stdout=b"")
         tmux_util.send_literal_text("%1", "-C-c", socket_path="/tmp/tmux.sock")
