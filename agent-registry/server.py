@@ -880,9 +880,10 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
 
 
 def serve_forever():
+    host = os.environ.get("AGENT_REGISTRY_HOST", "0.0.0.0")
     port = int(os.environ.get("AGENT_REGISTRY_PORT", "8080"))
-    LOG.info("starting agent-registry bind=0.0.0.0 port=%s state_path=%s auth_required=%s", port, STATE_PATH, AUTH_REQUIRED)
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler()).serve_forever()
+    LOG.info("starting agent-registry bind=%s port=%s state_path=%s auth_required=%s", host, port, STATE_PATH, AUTH_REQUIRED)
+    ThreadingHTTPServer((host, port), make_handler()).serve_forever()
 
 
 if __name__ == "__main__":
