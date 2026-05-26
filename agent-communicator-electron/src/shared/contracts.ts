@@ -69,4 +69,5 @@ export interface CommunicatorRuntimeClient {
   sendMessage(target: TargetRef, body: string): Promise<SendResult>
   sendDirectText(target: TargetRef, text: string, submit: boolean): Promise<ActionResult>
   sendDirectKeys(target: TargetRef, keys: string[]): Promise<ActionResult>
+  sendPaneCapture(sourceName: string, targetName: string): Promise<ActionResult>
 }

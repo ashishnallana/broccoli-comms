@@ -72,4 +72,27 @@ export function registerMockIpcHandlers(): void {
       error: target.scope === 'local' ? undefined : 'remote-direct-disabled',
     }
   })
+  ipcMain.handle(IPC_CHANNELS.sendPaneCapture, async (_event, sourceName: string, targetName: string) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.sendPaneCapture(sourceName, targetName)
+
+    // Mock implementation
+    const messageText = `### Mock Pane Capture Snapshot from ${sourceName}\n` +
+      `- **Pane:** %0\n` +
+      `- **Session:** mock-session\n` +
+      `- **Copy Mode:** Inactive\n` +
+      `- **Captured At:** ${new Date().toISOString()}\n` +
+      `\n\`\`\`\n[mock pane history output for dev exploration]\n\`\`\`\n`
+    const message = {
+      id: `mock-pane-cap-${Date.now()}`,
+      conversationKey: sourceName,
+      direction: 'inbound' as const,
+      author: sourceName,
+      body: messageText,
+      createdAt: new Date().toISOString(),
+      deliveryState: 'received' as const,
+    }
+    mockMessages[sourceName] = [...(mockMessages[sourceName] ?? []), message]
+    return { ok: true, summary: `Mock snapshot successfully sent to ${targetName}` }
+  })
 }

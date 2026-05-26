@@ -1,6 +1,6 @@
 import { connect } from 'node:net'
 import { basename, join } from 'node:path'
-import type { AgentStatus, AgentSummary, Message, RuntimeStatus, SendResult, TargetRef } from '../shared/contracts'
+import type { ActionResult, AgentStatus, AgentSummary, Message, RuntimeStatus, SendResult, TargetRef } from '../shared/contracts'
 
 interface RpcResponse<T> {
   result?: T
@@ -260,6 +260,67 @@ export class LocalTrackerClient {
       return { ok: true, message }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  async sendPaneCapture(source: string, target: string): Promise<ActionResult> {
+    try {
+      await this.ensureMailbox()
+      const isRemote = source.includes('/')
+      let snapshot: any
+
+      if (isRemote) {
+        // Remote pane captures are requested via publish_tracker_event
+        const remoteHost = source.split('/', 1)[0]
+        const targetAgent = this.agentsByConversation.get(source)
+        const targetTrackerId = targetAgent?.tracker_id
+        if (!targetTrackerId) throw new Error(`Tracker ID not found for remote source ${source}`)
+
+        const requestPayload = {
+          request_id: `electron-req-${Date.now()}`,
+          source: source.split('/', 2)[1],
+          target: `${this.selfAgentName}`,
+          requester: this.selfAgentName,
+          format: 'markdown',
+          last: 25,
+          include_ansi: false,
+          note: 'Requested from Electron communicator',
+        }
+        await this.call('publish_tracker_event', {
+          target_tracker_id: targetTrackerId,
+          event_type: 'pane_capture_request',
+          payload: requestPayload,
+        })
+        return { ok: true, summary: `Remote pane capture request sent to ${remoteHost}` }
+      } else {
+        // Local pane captures: invoke capture_pane directly
+        snapshot = await this.call<any>('capture_pane', { agent_name: source, last_lines: 25, include_ansi: false })
+        if (!snapshot) throw new Error('Failed to capture pane snapshot')
+
+        const messageText = `### Pane Capture Snapshot from ${snapshot.agent_name || source}\n` +
+          `- **Pane:** ${snapshot.tmux_pane || 'unknown'}\n` +
+          `- **Session:** ${snapshot.session || 'unknown'}\n` +
+          `- **Copy Mode:** ${snapshot.copy_mode ? 'Active' : 'Inactive'}\n` +
+          `- **Captured At:** ${snapshot.captured_at}\n` +
+          `\n\`\`\`\n${snapshot.content || ''}\n\`\`\`\n`
+
+        const targetAgent = this.agentsByConversation.get(target)
+        const targetParams = targetAgent
+          ? targetAgent.agent_id
+            ? { agent_id: targetAgent.agent_id }
+            : { agent_name: targetAgent.name }
+          : { agent_name: target }
+
+        await this.call('send_message', {
+          ...targetParams,
+          sender_name: source,
+          sender_id: snapshot.agent_id,
+          message: messageText,
+        })
+        return { ok: true, summary: `Snapshot sent successfully to ${target}` }
+      }
+    } catch (error) {
+      return { ok: false, summary: '', error: error instanceof Error ? error.message : String(error) }
     }
   }
 

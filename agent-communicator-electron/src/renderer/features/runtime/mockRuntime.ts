@@ -55,4 +55,25 @@ export class MockRuntimeClient {
     }
     return { ok: true, summary: `Mock direct keys [${keys.join(', ')}] sent to ${target.address}.` }
   }
+
+  async sendPaneCapture(sourceName: string, targetName: string): Promise<ActionResult> {
+    await latency(180)
+    const messageText = `### Mock Pane Capture Snapshot from ${sourceName}\n` +
+      `- **Pane:** %0\n` +
+      `- **Session:** mock-session\n` +
+      `- **Copy Mode:** Inactive\n` +
+      `- **Captured At:** ${new Date().toISOString()}\n` +
+      `\n\`\`\`\n[mock pane history output for dev exploration]\n\`\`\`\n`
+    const message = {
+      id: nextMockId('pane-cap'),
+      conversationKey: sourceName,
+      direction: 'inbound' as const,
+      author: sourceName,
+      body: messageText,
+      createdAt: new Date().toISOString(),
+      deliveryState: 'received' as const,
+    }
+    this.messages[sourceName] = [...(this.messages[sourceName] ?? []), message]
+    return { ok: true, summary: `Mock snapshot successfully sent to ${targetName}` }
+  }
 }

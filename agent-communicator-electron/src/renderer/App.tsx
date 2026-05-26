@@ -182,13 +182,36 @@ export function App() {
         if (key === 'n' || key === 'p') {
           event.preventDefault()
           moveSelection(key === 'n' ? 1 : -1)
+          return
+        }
+        // 7. Ctrl+X to trigger Pane Capture
+        if (key === 'x') {
+          event.preventDefault()
+          capturePane()
+          return
         }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [moveSelection])
+  }, [moveSelection, selectedAgent, status])
+
+  async function capturePane() {
+    if (!selectedAgent) return
+    setComposerStatus(`Capturing pane snapshot for ${selectedAgent.displayName}...`)
+    const result = await runtime.sendPaneCapture(
+      selectedAgent.name,
+      status?.mode === 'tracker' ? 'agent-communicator' : selectedAgent.name,
+    )
+    if (result.ok) {
+      setComposerStatus(result.summary || `Pane snapshot for ${selectedAgent.displayName} delivered successfully!`)
+      const nextMessages = await runtime.listMessages(selectedAgent.conversationKey)
+      setMessages(nextMessages)
+    } else {
+      setComposerStatus(result.error ?? 'Failed to capture pane.')
+    }
+  }
 
   async function submit(body: string) {
     if (!selectedAgent) return
@@ -310,6 +333,7 @@ export function App() {
               messages={messages}
               detailsOpen={detailsOpen}
               onToggleDetails={() => setDetailsOpen((open) => !open)}
+              onCapturePane={capturePane}
             />
             <Composer agent={selectedAgent} mode={mode} status={composerStatus} onModeChange={updateMode} onSubmit={submit} />
           </div>

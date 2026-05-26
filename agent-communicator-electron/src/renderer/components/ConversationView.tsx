@@ -8,6 +8,7 @@ interface Props {
   messages: Message[]
   detailsOpen: boolean
   onToggleDetails: () => void
+  onCapturePane: () => void
 }
 
 function initials(name: string): string {
@@ -38,7 +39,7 @@ function formatDateLabel(dateStr: string): string {
   return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
 }
 
-export function ConversationView({ agent, messages, detailsOpen, onToggleDetails }: Props) {
+export function ConversationView({ agent, messages, detailsOpen, onToggleDetails, onCapturePane }: Props) {
   const sortedMessages = sortMessages(messages)
   const timelineRef = useRef<HTMLDivElement>(null)
   const [focusedId, setFocusedId] = useState<string | undefined>()
@@ -147,6 +148,16 @@ export function ConversationView({ agent, messages, detailsOpen, onToggleDetails
         </div>
         <div className="chan-head-spacer"></div>
         <div className="chan-head-actions">
+          <button
+            className="icon-btn"
+            title="Capture Pane (Ctrl+X)"
+            onClick={onCapturePane}
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <path d="M2 5h3l1.5-2h3L11 5h3v9H2V5z" strokeLinejoin="round" />
+              <circle cx="8" cy="9.5" r="2.5" />
+            </svg>
+          </button>
           <button
             className={`icon-btn toggle-details ${detailsOpen ? 'active' : ''}`}
             title="Toggle agent details"

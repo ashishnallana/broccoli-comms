@@ -11,6 +11,8 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.sendDirectText, target, text, submit),
   sendDirectKeys: (target: TargetRef, keys: string[]): Promise<ActionResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.sendDirectKeys, target, keys),
+  sendPaneCapture: (sourceName: string, targetName: string): Promise<ActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.sendPaneCapture, sourceName, targetName),
 }
 
 contextBridge.exposeInMainWorld('broccoliCommsMock', api)
