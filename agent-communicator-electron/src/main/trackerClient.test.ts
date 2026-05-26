@@ -253,6 +253,54 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
       },
     )
   })
+
+  it('captures a local pane snapshot and delivers it to the communicator inbox successfully', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    await withFakeTracker(
+      (method, params) => {
+        calls.push({ method, params })
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local' },
+            alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local' },
+          }
+        }
+        if (method === 'capture_pane') {
+          expect(params).toMatchObject({ agent_name: 'alpha', last_lines: 25, include_ansi: false })
+          return {
+            agent_name: 'alpha',
+            agent_id: 'alpha-id',
+            tmux_pane: '%1',
+            session: 'broccoli',
+            copy_mode: false,
+            captured_at: '2026-05-25T13:40:00.000Z',
+            content: 'visible pane content',
+          }
+        }
+        if (method === 'send_message') {
+          expect(params).toMatchObject({
+            agent_name: 'desktop',
+            sender_name: 'alpha',
+            sender_id: 'alpha-id',
+          })
+          expect(params.message).toContain('visible pane content')
+          expect(params.message).toContain('### Pane Capture Snapshot from alpha')
+          return true
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        await client.listAgents()
+        const result = await client.sendPaneCapture('alpha', 'desktop')
+        expect(result.ok).toBe(true)
+        expect(result.summary).toContain('Snapshot sent successfully')
+
+        expect(calls.map((c) => c.method)).toEqual(['ensure_mailbox', 'list', 'capture_pane', 'send_message'])
+      },
+    )
+  })
 })
 
 describe('tracker Simple View mapping', () => {
