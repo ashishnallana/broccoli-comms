@@ -16,6 +16,11 @@ interface MailboxIdentity {
   uuid?: string
 }
 
+interface TrackerInfo {
+  hostname?: string
+  tracker_id?: string
+}
+
 interface TrackerAgent {
   name?: string
   agent_id?: string
@@ -397,7 +402,7 @@ export class LocalTrackerClient {
         const targetTrackerId = targetAgent?.tracker_id
         if (!targetTrackerId) throw new Error(`Tracker ID not found for remote source ${cleanSource}`)
 
-        const localHost = process.env.AGENT_TRACKER_HOSTNAME || hostname()
+        const localHost = await this.resolveTrackerHostname()
         const qualifiedTarget = `${localHost}/${this.selfAgentName}`
 
         const requestPayload = {
@@ -568,6 +573,16 @@ export class LocalTrackerClient {
       reset: response.reset,
       gap: response.gap
     }
+  }
+
+  private async resolveTrackerHostname(): Promise<string> {
+    try {
+      const info = await this.call<TrackerInfo>('tracker_info', {}, 1500)
+      if (info.hostname) return info.hostname
+    } catch {
+      // Older trackers did not expose tracker_info; fall back to environment/OS hostname.
+    }
+    return process.env.AGENT_TRACKER_HOSTNAME || hostname()
   }
 
   private async ensureMailbox(): Promise<MailboxIdentity> {

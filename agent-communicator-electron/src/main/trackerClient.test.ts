@@ -314,14 +314,14 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
             'zephyrus/reviewer': { agent_id: 'rev-id', name: 'zephyrus/reviewer', scope: 'remote', target_address: 'zephyrus/reviewer', tracker_id: 'track-z' },
           }
         }
+        if (method === 'tracker_info') return { hostname: 'local-generated-host', tracker_id: 'local-track' }
         if (method === 'publish_tracker_event') {
-          const localHost = process.env.AGENT_TRACKER_HOSTNAME || require('node:os').hostname()
           expect(params).toMatchObject({
             target_tracker_id: 'track-z',
             event_type: 'pane_capture_request',
             payload: {
               source: 'reviewer',
-              target: `${localHost}/desktop`,
+              target: 'local-generated-host/desktop',
               requester: 'desktop',
             },
           })
@@ -336,7 +336,7 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
         expect(result.ok).toBe(true)
         expect(result.summary).toContain('Remote pane capture request sent to zephyrus')
 
-        expect(calls.map((c) => c.method)).toEqual(['ensure_mailbox', 'list', 'publish_tracker_event'])
+        expect(calls.map((c) => c.method)).toEqual(['ensure_mailbox', 'list', 'tracker_info', 'publish_tracker_event'])
       },
     )
   })

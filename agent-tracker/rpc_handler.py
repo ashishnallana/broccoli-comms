@@ -1161,6 +1161,15 @@ def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
     return state.wait_events(since=cursor, timeout=timeout, filters=filters, client_id=client_id, watch_list=watch_list)
 
 
+def handle_tracker_info(params: dict) -> dict:
+    """Returns this tracker's registry identity."""
+    return {
+        "hostname": registry_client.HOSTNAME,
+        "tracker_id": registry_client.TRACKER_ID,
+        "http_port": registry_client.HTTP_PORT,
+    }
+
+
 def handle_whoami(params: dict, caller_pid: int = None) -> dict:
     """Returns information about the calling agent."""
     agent_name = _identify_agent(params, caller_pid)
@@ -1310,6 +1319,7 @@ dispatcher = {
     "get_group_timeline": handle_get_group_timeline,
     "update_watchlist": handle_update_watchlist,
     "wait_events": handle_wait_events,
+    "tracker_info": handle_tracker_info,
     "whoami": handle_whoami,
     "unregister": handle_unregister,
     "publish_tracker_event": handle_publish_tracker_event,
