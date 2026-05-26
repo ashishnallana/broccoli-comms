@@ -69,7 +69,7 @@ let
         ${pkgs.python3}/bin/python3 - <<'PY' > "$suffix_file"
 import random
 import string
-print(''.join(random.choice(string.ascii_lowercase) for _ in range(3)))
+print("".join(random.choice(string.ascii_lowercase) for _ in range(3)))
 PY
       fi
       suffix="$(tr -cd 'a-z' < "$suffix_file" | cut -c1-3)"
@@ -77,7 +77,7 @@ PY
         suffix="$(${pkgs.python3}/bin/python3 - <<'PY'
 import random
 import string
-print(''.join(random.choice(string.ascii_lowercase) for _ in range(3)))
+print("".join(random.choice(string.ascii_lowercase) for _ in range(3)))
 PY
 )"
         printf '%s\n' "$suffix" > "$suffix_file"
