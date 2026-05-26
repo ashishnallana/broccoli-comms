@@ -25,6 +25,7 @@ interface TrackerAgent {
   scope?: string
   target_address?: string
   tracker_id?: string
+  registry_name?: string
 }
 
 interface TrackerMessage {
@@ -95,7 +96,13 @@ function projectFromCwd(cwd: string): string {
 export function trackerAgentToSummary(name: string, agent: TrackerAgent): AgentSummary | undefined {
   const isRemote = agent.scope === 'remote'
   const displayName = agent.name || name
-  const conversationKey = isRemote ? `remote:${agent.target_address || name}` : localConversationKey(agent, displayName)
+
+  let address = agent.target_address || displayName
+  if (isRemote && agent.registry_name && !address.includes(':')) {
+    address = `${agent.registry_name}:${address}`
+  }
+
+  const conversationKey = isRemote ? `remote:${address}` : localConversationKey(agent, displayName)
   const cwd = agent.cwd || ''
   return {
     id: conversationKey,
@@ -105,7 +112,7 @@ export function trackerAgentToSummary(name: string, agent: TrackerAgent): AgentS
     status: normalizeStatus(agent),
     cwd,
     project: isRemote ? agent.tracker_id || 'remote tracker' : projectFromCwd(cwd),
-    address: agent.target_address || displayName,
+    address,
     unread: 0,
     lastActiveAt: new Date().toISOString(),
     conversationKey,

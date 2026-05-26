@@ -396,12 +396,35 @@ describe('tracker Simple View mapping', () => {
     })
   })
 
-  it('maps remote tracker rows successfully', () => {
-    expect(trackerAgentToSummary('host/alpha', { scope: 'remote', target_address: 'host/alpha', tracker_id: 'reg-a' })).toMatchObject({
-      id: 'remote:host/alpha',
+  it('maps remote tracker rows successfully and prefixes registry name', () => {
+    expect(
+      trackerAgentToSummary('host/alpha', {
+        scope: 'remote',
+        target_address: 'host/alpha',
+        tracker_id: 'reg-a',
+        registry_name: 'local',
+      })
+    ).toMatchObject({
+      id: 'remote:local:host/alpha',
       scope: 'remote',
       project: 'reg-a',
-      address: 'host/alpha'
+      address: 'local:host/alpha',
+    })
+  })
+
+  it('does not double-prefix already-qualified remote addresses', () => {
+    expect(
+      trackerAgentToSummary('host/alpha', {
+        scope: 'remote',
+        target_address: 'local:host/alpha',
+        tracker_id: 'reg-a',
+        registry_name: 'local',
+      })
+    ).toMatchObject({
+      id: 'remote:local:host/alpha',
+      scope: 'remote',
+      project: 'reg-a',
+      address: 'local:host/alpha',
     })
   })
 
