@@ -3,6 +3,8 @@ import type { Message } from '../../shared/contracts'
 import { formatTime } from '../lib/time'
 import { avatarBg } from './AgentCard'
 import { marked } from 'marked'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/tokyo-night-dark.css'
 
 interface Props {
   message: Message
@@ -35,10 +37,16 @@ function inferKind(body: string): 'tool' | 'handoff' | 'commit' | 'error' | null
   return null
 }
 
-// Custom link renderer in marked to enforce target="_blank" and link color styling
+// Custom renderer inside marked
 const renderer = new marked.Renderer()
 renderer.link = (href: string, title: string | null | undefined, text: string): string => {
   return `<a href="${href}" title="${title || ''}" target="_blank" rel="noreferrer" style="color: var(--accent-blue); text-decoration: underline; cursor: pointer;">${text}</a>`
+}
+
+renderer.code = (code: string, language: string | undefined): string => {
+  const validLang = language && hljs.getLanguage(language) ? language : 'plaintext'
+  const highlighted = hljs.highlight(code, { language: validLang }).value
+  return `<pre style="background: var(--surface-soft); border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 10px 12px; overflow-x: auto; font-size: 12.5px; font-family: var(--mono); margin: 8px 0;"><code class="hljs ${validLang}">${highlighted}</code></pre>`
 }
 
 function renderMarkdown(text: string): ReactNode {
