@@ -37,6 +37,7 @@ interface TrackerMessage {
   delivered?: boolean
   read?: boolean
   message_id?: string
+  recipient?: string
 }
 
 interface ReadInboxResult {
@@ -232,7 +233,7 @@ export class LocalTrackerClient {
       .filter((agent): agent is AgentSummary => Boolean(agent))
   }
 
-  async listMessages(conversationKey: string): Promise<Message[]> {
+  async listMessages(conversationKey: string, inboxOwnerName?: string): Promise<Message[]> {
     
     if (!this.agentsByConversation.has(conversationKey)) {
       await this.listAgents()
@@ -245,16 +246,21 @@ export class LocalTrackerClient {
       const senderFilter = selectedAgent.agent_id || selectedAgent.uuid
         ? { sender_agent_id: selectedAgent.agent_id || selectedAgent.uuid }
         : { sender_name: selectedAgent.name }
-      const result = await this.call<ReadInboxResult>('get_inbox', {
-        agent_name: this.selfAgentName,
-        clear: false,
-        last_n: 100,
-        mark_read: false,
-        ...senderFilter,
-      })
+        
+      const inboxQueryParams = inboxOwnerName && selectedAgent.scope === 'local'
+        ? { agent_name: inboxOwnerName, clear: false, last_n: 100, mark_read: false }
+        : { agent_name: this.selfAgentName, clear: false, last_n: 100, mark_read: false, ...senderFilter }
+
+      const result = await this.call<ReadInboxResult>('get_inbox', inboxQueryParams)
       const inbound = (result.messages || [])
-        .filter((message) => messageMatchesConversation(message, selectedAgent))
-        .map((message) => trackerMessageToMessage(conversationKey, message, 'you', this.selfAgentName))
+        .filter((message) => {
+          if (inboxOwnerName && selectedAgent.scope === 'local') return true
+          return messageMatchesConversation(message, selectedAgent)
+        })
+        .map((message) => {
+          const recipientName = inboxOwnerName && selectedAgent.scope === 'local' ? selectedAgent.name || 'local-agent' : message.recipient || 'you'
+          return trackerMessageToMessage(conversationKey, message, recipientName, this.selfAgentName)
+        })
       return mergeConversationMessages(inbound, sent)
     } catch (error) {
       return mergeConversationMessages(

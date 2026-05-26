@@ -1,5 +1,6 @@
 import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error, urllib.request, uuid, shlex
 import state
+import rpc_handler
 
 LOG = logging.getLogger("agent-tracker.registry")
 
@@ -706,6 +707,21 @@ def _event_loop(client=None):
                 payload = event.get("payload") or {}
                 LOG.info("publishing remote_agent_event locally: %s", payload)
                 state.publish_event("remote_agent_event", payload)
+                
+                inbound_payload = {
+                    "sender": payload.get("sender"),
+                    "timestamp": payload.get("timestamp"),
+                    "message": payload.get("message"),
+                    "message_id": payload.get("message_id"),
+                    "recipient": payload.get("target_agent_name"),
+                    "read": False
+                }
+                try:
+                    mailbox_name = os.environ.get("BROCCOLI_COMMS_ELECTRON_AGENT_NAME", "agent-communicator")
+                    rpc_handler.deliver_local_message(mailbox_name, inbound_payload)
+                    LOG.info("persisted remote watched message into mailbox inbox %s", mailbox_name)
+                except Exception as e:
+                    LOG.warning("failed to persist remote watched event: %s", e)
             elif event.get("event_type") == "spin_request":
                 payload = event.get("payload") or {}
                 config_name = payload.get("config_name")

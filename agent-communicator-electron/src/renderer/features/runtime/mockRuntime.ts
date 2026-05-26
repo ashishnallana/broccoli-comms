@@ -20,7 +20,7 @@ export class MockRuntimeClient {
     return clone(this.agents)
   }
 
-  async listMessages(conversationKey: string): Promise<Message[]> {
+  async listMessages(conversationKey: string, _inboxOwnerName?: string): Promise<Message[]> {
     await latency()
     return clone(this.messages[conversationKey] ?? [])
   }

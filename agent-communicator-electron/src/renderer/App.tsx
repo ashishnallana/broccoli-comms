@@ -319,7 +319,7 @@ export function App() {
         memberIds.map(async (memberId) => {
           const activeMember = agents.find((a) => a.id === memberId)
           if (activeMember) {
-            messagesMap[memberId] = await runtime.listMessages(activeMember.conversationKey)
+            messagesMap[memberId] = await runtime.listMessages(activeMember.conversationKey, activeMember.name)
           }
         })
       )
