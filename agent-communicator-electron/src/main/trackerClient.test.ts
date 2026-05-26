@@ -218,6 +218,41 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
       },
     )
   })
+
+  it('falls back to standard register RPC when ensure_mailbox method is not found on older daemons', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    await withFakeTracker(
+      (method, params) => {
+        calls.push({ method, params })
+        if (method === 'ensure_mailbox') {
+          throw new Error('Method not found: ensure_mailbox')
+        }
+        if (method === 'register') {
+          return { success: true }
+        }
+        if (method === 'list') {
+          return {}
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        const agents = await client.listAgents()
+        expect(agents).toEqual([])
+
+        expect(calls[0]).toMatchObject({ method: 'ensure_mailbox', params: { agent_name: 'desktop' } })
+        expect(calls[1]).toMatchObject({
+          method: 'register',
+          params: {
+            session: 'mailbox',
+            name: 'desktop',
+            agent_type: 'agent-communicator-ui',
+            agent_id: '00000000-0000-5000-8000-000000000001',
+          },
+        })
+      },
+    )
+  })
 })
 
 describe('tracker Simple View mapping', () => {

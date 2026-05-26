@@ -272,10 +272,31 @@ export class LocalTrackerClient {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (!message.includes('Method not found')) throw error
-      // Compatibility with already-running trackers from before ensure_mailbox:
-      // continue so manually/pre-existing agent-communicator identities still work.
-      this.mailboxReady = true
-      return { name: this.selfAgentName }
+      
+      // Fallback: call standard 'register' RPC to auto-register the communicator identity
+      try {
+        const mailboxId = '00000000-0000-5000-8000-000000000001'
+        await this.call('register', {
+          session: 'mailbox',
+          tmux_pane: 'none',
+          wrapper_pid: 0,
+          tmux_socket: 'none',
+          name: this.selfAgentName,
+          agent_type: 'agent-communicator-ui',
+          agent_cmd: 'agent-communicator-electron',
+          agent_id: mailboxId,
+          uuid: mailboxId,
+          no_notify_with_send_keys: true,
+          no_registry: true,
+          cwd: '/tmp',
+        })
+        this.mailboxReady = true
+        return { name: this.selfAgentName, agent_id: mailboxId, uuid: mailboxId }
+      } catch (regError) {
+        // If even standard register fails, log and degrade gracefully
+        this.mailboxReady = true
+        return { name: this.selfAgentName }
+      }
     }
   }
 
