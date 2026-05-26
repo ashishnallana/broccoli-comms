@@ -133,5 +133,40 @@ class TestState(unittest.TestCase):
         self.assertNotIn("client1", state.active_watchlists)
         self.assertIn("client2", state.active_watchlists)
 
+    def test_group_timeline_persistence_and_deduplication(self):
+        import shutil, tempfile
+        temp_cache = tempfile.mkdtemp()
+        orig_dir = state.GROUP_TIMELINE_DIR
+        state.GROUP_TIMELINE_DIR = temp_cache
+        try:
+            group_id = "host:local:my-test-machine"
+            payload_1 = {
+                "message_id": "msg-1",
+                "sender": "agent-1",
+                "recipient": "agent-2",
+                "timestamp": "2026-05-26T23:45:00Z",
+                "message": "hello local"
+            }
+            payload_2 = {
+                "message_id": "msg-2",
+                "sender": "agent-2",
+                "recipient": "agent-1",
+                "timestamp": "2026-05-26T23:46:00Z",
+                "message": "reply"
+            }
+            
+            state.append_to_group_timeline(group_id, payload_1)
+            state.append_to_group_timeline(group_id, payload_2)
+            state.append_to_group_timeline(group_id, payload_1)
+            
+            entries = state.read_group_timeline(group_id)
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0]["message_id"], "msg-1")
+            self.assertEqual(entries[1]["message_id"], "msg-2")
+            
+        finally:
+            state.GROUP_TIMELINE_DIR = orig_dir
+            shutil.rmtree(temp_cache)
+
 if __name__ == '__main__':
     unittest.main()

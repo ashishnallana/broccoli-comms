@@ -4,6 +4,7 @@ import uuid
 import logging
 import subprocess
 import os
+import hashlib
 import json
 import tmux_util
 
@@ -11,6 +12,7 @@ CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/
 SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET", os.path.join(CACHE_DIR, "agent-tracker.sock"))
 LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
 INBOX_DIR = os.path.join(CACHE_DIR, "inboxes")
+GROUP_TIMELINE_DIR = os.path.join(CACHE_DIR, "group_timelines")
 PANE_INPUT_DEDUPE_PATH = os.path.join(CACHE_DIR, "pane-input-dedupe.json")
 PANE_INPUT_DEDUPE_MAX = int(os.environ.get("AGENT_PANE_INPUT_DEDUPE_MAX", "1000"))
 
@@ -448,3 +450,69 @@ def get_local_configs_for_registry() -> list[dict]:
     except Exception:
         pass
     return configs
+
+
+def _get_group_timeline_path(group_id: str) -> str:
+    group_hash = hashlib.md5(group_id.encode("utf-8")).hexdigest()
+    return os.path.join(GROUP_TIMELINE_DIR, f"{group_hash}.jsonl")
+
+
+def append_to_group_timeline(group_id: str, message_payload: dict) -> None:
+    msg_id = message_payload.get("message_id")
+    if not msg_id:
+        return
+
+    os.makedirs(GROUP_TIMELINE_DIR, exist_ok=True)
+    timeline_path = _get_group_timeline_path(group_id)
+
+    exists = False
+    if os.path.exists(timeline_path):
+        try:
+            with open(timeline_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("message_id") == msg_id:
+                            exists = True
+                            break
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logging.warning("failed to read group timeline for deduplication: %s", e)
+
+    if exists:
+        return
+
+    try:
+        with open(timeline_path, "a") as f:
+            f.write(json.dumps(message_payload) + "\n")
+    except Exception as e:
+        logging.warning("failed to append to group timeline %s: %s", timeline_path, e)
+
+
+def read_group_timeline(group_id: str, last_n: int = 200) -> list[dict]:
+    timeline_path = _get_group_timeline_path(group_id)
+    if not os.path.exists(timeline_path):
+        return []
+
+    entries = []
+    try:
+        with open(timeline_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    entries.append(entry)
+                except json.JSONDecodeError:
+                    continue
+    except Exception as e:
+        logging.warning("failed to read group timeline %s: %s", timeline_path, e)
+        return []
+
+    entries.sort(key=lambda e: e.get("timestamp", ""))
+    return entries[-last_n:]

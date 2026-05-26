@@ -1474,6 +1474,46 @@ class TestRpcHandler(unittest.TestCase):
             rpc_handler.REMOTE_BROAD_WATCH_ENABLED = old_broad
 
 
+    def test_handle_get_group_timeline(self):
+        import tempfile, shutil
+        temp_cache = tempfile.mkdtemp()
+        orig_dir = state.GROUP_TIMELINE_DIR
+        state.GROUP_TIMELINE_DIR = temp_cache
+        try:
+            group_id = "host:local:test-rpc-machine"
+            payload = {
+                "message_id": "msg-100",
+                "sender": "sender-1",
+                "recipient": "recipient-1",
+                "timestamp": "2026-05-26T23:48:00Z",
+                "message": "hello rpc dispatch"
+            }
+            state.append_to_group_timeline(group_id, payload)
+            
+            res = rpc_handler.handle_get_group_timeline({
+                "group_id": group_id,
+                "last_n": 10
+            })
+            
+            self.assertIn("messages", res)
+            self.assertEqual(len(res["messages"]), 1)
+            self.assertEqual(res["messages"][0]["message_id"], "msg-100")
+            
+            with self.assertRaises(ValueError) as ctx:
+                rpc_handler.handle_get_group_timeline({})
+            self.assertIn("group_id is required", str(ctx.exception))
+            
+            with self.assertRaises(ValueError) as ctx:
+                rpc_handler.handle_get_group_timeline({
+                    "group_id": 123
+                })
+            self.assertIn("group_id must be a string", str(ctx.exception))
+            
+        finally:
+            state.GROUP_TIMELINE_DIR = orig_dir
+            shutil.rmtree(temp_cache)
+
+
 if __name__ == "__main__":
     unittest.main()
 

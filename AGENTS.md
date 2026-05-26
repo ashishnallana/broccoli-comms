@@ -2,7 +2,7 @@
 
 ## Overview
 - **Workspace ID**: `7473ae6d-06a8-444d-8a9f-c50788f3f465`
-- **Last Updated**: `2026-05-26T22:48:00Z`
+- **Last Updated**: `2026-05-26T23:45:00Z`
 - **Goal**: Implement dynamic Hostname-based Group Channels and render the active Group Members list in the rightmost details pane when a group channel is active.
 - **Links**: [README.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/README.md)
 
@@ -10,7 +10,7 @@
 | Agent ID | Agent Name | Role / Purpose | Process Info | Status | Last Active |
 |---|---|---|---|---|---|
 | b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Idle | 2026-05-26T17:15:00Z |
-| ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 | Idle | 2026-05-26T22:48:00Z |
+| ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 | Idle | 2026-05-26T23:45:00Z |
 
 ## Task Allocation & Progress
 | Task ID | Description | Assigned Agent ID | Status | Priority | Dependencies | Notes / Artifacts |
@@ -20,6 +20,7 @@
 | task-03 | Implement Phase A, B, C Push-Only wait_events, remote leases, & auth gates | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-02 | Upgraded rpc_handler.py & server.py |
 | task-04 | Dispatch Auto-Create Hostname Groups & Group Members Sidebar | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-03 | send-message delivered |
 | task-05 | Implement Hostname Groups & Group Members Sidebar list in React | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-04 | Automatically derive hostname groups and render members list |
+| task-06 | Implement Local Group Timeline Caching & RPC in Daemon | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-05 | Formulated group_timelines persistent caching directories & get_group_timeline RPC |
 
 ## Active Blockers & Dependencies
 | Blocked Agent ID | Blocked Task ID | Blocking Task ID | Blocking Agent ID | Reason |

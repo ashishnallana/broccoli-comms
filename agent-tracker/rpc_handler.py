@@ -983,6 +983,26 @@ def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
     )
 
 
+def handle_get_group_timeline(params: dict) -> dict:
+    """Handles get_group_timeline RPC call by reading directly from the group's cached timeline file."""
+    group_id = params.get("group_id")
+    last_n = params.get("last_n", 200)
+
+    if not group_id:
+        raise ValueError("group_id is required")
+    if not isinstance(group_id, str):
+        raise ValueError("group_id must be a string")
+
+    if last_n is not None:
+        try:
+            last_n = int(last_n)
+        except ValueError:
+            raise ValueError("last_n must be an integer")
+
+    messages = state.read_group_timeline(group_id, last_n)
+    return {"messages": messages}
+
+
 def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
     """Best-effort cursored, lease-bound event long-poll or legacy filters-based poll."""
     try:
@@ -1197,6 +1217,7 @@ dispatcher = {
     "send_message": handle_send_message,
     "send_input": handle_send_input,
     "get_inbox": handle_get_inbox,
+    "get_group_timeline": handle_get_group_timeline,
     "wait_events": handle_wait_events,
     "whoami": handle_whoami,
     "unregister": handle_unregister,
