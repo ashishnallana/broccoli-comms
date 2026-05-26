@@ -381,8 +381,17 @@ export function App() {
     if (status?.mode !== 'tracker') return
 
     const unsubscribe = window.broccoliCommsMock?.onTrackerEvents(async (events) => {
-      const hasMessages = events.some((e) => e.event_type === 'message_delivered' || e.event_type === 'remote_agent_event')
-      const hasAgents = events.some((e) => e.event_type === 'agent_registered' || e.event_type === 'agent_unregistered')
+      const trackerEventType = (event: any) => event.event_type ?? event.type
+
+      const hasMessages = events.some((event) => {
+        const type = trackerEventType(event)
+        return type === 'message_delivered' || type === 'remote_agent_event' || type === 'message_notified'
+      })
+
+      const hasAgents = events.some((event) => {
+        const type = trackerEventType(event)
+        return type === 'agent_registered' || type === 'agent_unregistered'
+      })
 
       if (hasAgents) {
         const nextAgents = await runtime.listAgents()
@@ -554,9 +563,14 @@ export function App() {
       status?.mode === 'tracker' ? 'agent-communicator' : selectedAgent.conversationKey,
     )
     if (result.ok) {
-      setComposerStatus(result.summary || `Pane snapshot for ${selectedAgent.displayName} delivered successfully!`)
-      const nextMessages = await runtime.listMessages(selectedAgent.conversationKey)
-      setMessages(nextMessages)
+      const isRemote = selectedAgent.scope === 'remote'
+      if (isRemote) {
+        setComposerStatus(`Remote pane capture requested; waiting for snapshot...`)
+      } else {
+        setComposerStatus(result.summary || `Pane snapshot for ${selectedAgent.displayName} delivered successfully!`)
+        const nextMessages = await runtime.listMessages(selectedAgent.conversationKey)
+        setMessages(nextMessages)
+      }
     } else {
       setComposerStatus(result.error ?? 'Failed to capture pane.')
     }

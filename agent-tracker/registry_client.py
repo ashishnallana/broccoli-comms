@@ -722,6 +722,33 @@ def _event_loop(client=None):
                     LOG.info("persisted remote watched message into mailbox inbox %s", mailbox_name)
                 except Exception as e:
                     LOG.warning("failed to persist remote watched event: %s", e)
+            elif event.get("event_type") == "watch_group_request":
+                payload = event.get("payload") or {}
+                LOG.info("received delegated watch_group_request: %s", payload)
+                watch_id = payload.get("watch_id")
+                group_id = payload.get("group_id")
+                members = payload.get("members", [])
+                lease_seconds = payload.get("lease_seconds", 120)
+                include_body = payload.get("include_body", True)
+                reply_to_tracker_id = payload.get("reply_to_tracker_id")
+                
+                if watch_id and group_id:
+                    state.update_group_watch(
+                        watch_id, group_id, members, lease_seconds, include_body,
+                        reply_to_tracker_id=reply_to_tracker_id
+                    )
+            elif event.get("event_type") == "group_message_observed":
+                payload = event.get("payload") or {}
+                LOG.info("received remote group_message_observed event: %s", payload)
+                group_id = payload.get("group_id")
+                message_payload = payload.get("message")
+                if group_id and message_payload:
+                    state.append_to_group_timeline(group_id, message_payload)
+                    state.publish_event("message_delivered", {
+                        "message_id": message_payload.get("message_id"),
+                        "target_agent_name": f"group-update-{group_id}",
+                        "sender": message_payload.get("sender")
+                    })
             elif event.get("event_type") == "spin_request":
                 payload = event.get("payload") or {}
                 config_name = payload.get("config_name")

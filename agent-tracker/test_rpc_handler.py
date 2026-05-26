@@ -1514,6 +1514,98 @@ class TestRpcHandler(unittest.TestCase):
             shutil.rmtree(temp_cache)
 
 
+    def test_handle_update_watchlist_group_mode(self):
+        state.active_group_watches = {}
+        params = {
+            "watch_id": "my-client-group-watch",
+            "mode": "group",
+            "group_id": "host:local:test-group-channel",
+            "members": ["local-host/agent-1", "local-host/agent-2"],
+            "lease_seconds": 60
+        }
+        res = rpc_handler.handle_update_watchlist(params)
+        self.assertTrue(res)
+        
+        self.assertIn("my-client-group-watch", state.active_group_watches)
+        watch = state.active_group_watches["my-client-group-watch"]
+        self.assertEqual(watch["group_id"], "host:local:test-group-channel")
+        self.assertEqual(watch["members"], {"local-host/agent-1", "local-host/agent-2"})
+        
+        with self.assertRaises(ValueError) as ctx:
+            rpc_handler.handle_update_watchlist({})
+        self.assertIn("watch_id is required", str(ctx.exception))
+        
+        with self.assertRaises(ValueError) as ctx:
+            rpc_handler.handle_update_watchlist({
+                "watch_id": "my-id",
+                "mode": "group"
+            })
+        self.assertIn("group_id is required for group watch mode", str(ctx.exception))
+
+
+    @mock.patch("registry_client.fetch_trackers")
+    @mock.patch("registry_client.publish_tracker_event")
+    def test_remote_delegated_group_watch_roundtrip(self, publish_event, fetch_trackers):
+        state.active_group_watches = {}
+        
+        fetch_trackers.return_value = (200, {
+            "trackers": [
+                {"hostname": "host2", "tracker_id": "remote-tracker-id-123"}
+            ]
+        })
+        
+        params = {
+            "watch_id": "mac-electron-active-group",
+            "mode": "group",
+            "group_id": "host:local:tanmayvijay.c.googlers.com",
+            "members": ["local-host/agent-1", "host2/remote-agent-2"],
+            "lease_seconds": 60
+        }
+        
+        res = rpc_handler.handle_update_watchlist(params)
+        self.assertTrue(res)
+        
+        import time
+        time.sleep(0.05)
+        
+        publish_event.assert_called_once_with(
+            "remote-tracker-id-123",
+            "watch_group_request",
+            {
+                "watch_id": "mac-electron-active-group",
+                "group_id": "host:local:tanmayvijay.c.googlers.com",
+                "members": ["local-host/agent-1", "host2/remote-agent-2"],
+                "include_body": True,
+                "lease_seconds": 60.0,
+                "reply_to_tracker_id": registry_client.TRACKER_ID
+            }
+        )
+        
+        import tempfile, shutil
+        temp_cache = tempfile.mkdtemp()
+        orig_dir = state.GROUP_TIMELINE_DIR
+        state.GROUP_TIMELINE_DIR = temp_cache
+        try:
+            group_id = "host:local:tanmayvijay.c.googlers.com"
+            obs_payload = {
+                "message_id": "msg-abc-123",
+                "sender": "remote-agent-2",
+                "recipient": "agent-1",
+                "timestamp": "2026-05-26T23:48:00Z",
+                "message": "hello registry roundtrip"
+            }
+            
+            state.append_to_group_timeline(group_id, obs_payload)
+            
+            entries = state.read_group_timeline(group_id)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["message_id"], "msg-abc-123")
+            
+        finally:
+            state.GROUP_TIMELINE_DIR = orig_dir
+            shutil.rmtree(temp_cache)
+
+
 if __name__ == "__main__":
     unittest.main()
 

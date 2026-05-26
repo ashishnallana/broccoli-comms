@@ -28,6 +28,9 @@ MAX_EVENTS = 500
 active_watchlists = {}  # client_id -> {"expires_at": float, "watch_list": set}
 watchlist_lock = threading.Lock()
 
+active_group_watches = {}  # watch_id -> {"expires_at": float, "group_id": str, "members": set, "include_body": bool}
+group_watches_lock = threading.Lock()
+
 TRANSIENT_COMMS = {
     "ps", "grep", "pgrep", "ls", "cat", "sleep", "which", "sh", "bash", "zsh",
     "fish", "tmux", "home-manager", "nix", "env"
@@ -516,3 +519,67 @@ def read_group_timeline(group_id: str, last_n: int = 200) -> list[dict]:
 
     entries.sort(key=lambda e: e.get("timestamp", ""))
     return entries[-last_n:]
+
+
+def update_group_watch(watch_id: str, group_id: str, members: list[str], lease_seconds: float, include_body: bool = True, reply_to_tracker_id: str | None = None) -> None:
+    with group_watches_lock:
+        active_group_watches[watch_id] = {
+            "expires_at": time.time() + lease_seconds,
+            "group_id": group_id,
+            "members": set(members),
+            "include_body": include_body,
+            "reply_to_tracker_id": reply_to_tracker_id
+        }
+
+
+def sweep_expired_group_watches() -> None:
+    now = time.time()
+    with group_watches_lock:
+        expired = [wid for wid, watch in active_group_watches.items() if watch.get("expires_at", 0) < now]
+        for wid in expired:
+            del active_group_watches[wid]
+            logging.info("swept expired group watch lease watch_id=%s", wid)
+
+
+def _member_matches(member_address: str, logical_name: str) -> bool:
+    if "/" in member_address:
+        return member_address.split("/")[-1] == logical_name
+    return member_address == logical_name
+
+
+def record_to_matching_group_timelines(sender: str, recipient: str, msg_obj: dict) -> None:
+    sweep_expired_group_watches()
+    with group_watches_lock:
+        for watch_id, watch in active_group_watches.items():
+            members = watch.get("members", set())
+            has_sender = any(_member_matches(m, sender) for m in members)
+            has_recipient = any(_member_matches(m, recipient) for m in members)
+            
+            if has_sender and has_recipient:
+                group_id = watch["group_id"]
+                
+                timeline_payload = {
+                    "message_id": msg_obj.get("message_id"),
+                    "sender": sender,
+                    "sender_agent_id": msg_obj.get("sender_agent_id"),
+                    "sender_tracker_id": msg_obj.get("sender_tracker_id"),
+                    "recipient": recipient,
+                    "recipient_agent_id": get_agent_id_by_name(recipient) or msg_obj.get("recipient_agent_id"),
+                    "timestamp": msg_obj.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "message": msg_obj.get("message") if watch.get("include_body", True) else "[Observed Body Encrypted/Omitted]"
+                }
+                
+                append_to_group_timeline(group_id, timeline_payload)
+                logging.info("observed message message_id=%s recorded to group timeline group_id=%s", msg_obj.get("message_id"), group_id)
+                
+                reply_tid = watch.get("reply_to_tracker_id")
+                if reply_tid:
+                    try:
+                        import registry_client
+                        registry_client.publish_tracker_event(reply_tid, "group_message_observed", {
+                            "group_id": group_id,
+                            "message": timeline_payload
+                        })
+                        logging.info("emitted group_message_observed back to requester tracker %s", reply_tid)
+                    except Exception as re:
+                        logging.warning("failed to propagate delegated group_message_observed: %s", re)

@@ -168,5 +168,52 @@ class TestState(unittest.TestCase):
             state.GROUP_TIMELINE_DIR = orig_dir
             shutil.rmtree(temp_cache)
 
+    def test_group_watch_lease_captures_and_sweep(self):
+        state.active_group_watches = {}
+        group_id = "host:local:my-test-group"
+        members = ["local-host/agent-1", "local-host/agent-2"]
+        
+        state.update_group_watch("client1", group_id, members, 0.1)
+        self.assertIn("client1", state.active_group_watches)
+        
+        import tempfile, shutil
+        temp_cache = tempfile.mkdtemp()
+        orig_dir = state.GROUP_TIMELINE_DIR
+        state.GROUP_TIMELINE_DIR = temp_cache
+        try:
+            msg_obj = {
+                "message_id": "p2p-1",
+                "sender": "agent-1",
+                "recipient": "agent-2",
+                "timestamp": "2026-05-26T23:45:00Z",
+                "message": "direct hello"
+            }
+            state.record_to_matching_group_timelines("agent-1", "agent-2", msg_obj)
+            
+            entries = state.read_group_timeline(group_id)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["message_id"], "p2p-1")
+            
+            import time
+            time.sleep(0.15)
+            state.sweep_expired_group_watches()
+            self.assertNotIn("client1", state.active_group_watches)
+            
+            msg_obj_2 = {
+                "message_id": "p2p-2",
+                "sender": "agent-1",
+                "recipient": "agent-2",
+                "timestamp": "2026-05-26T23:46:00Z",
+                "message": "direct hello again"
+            }
+            state.record_to_matching_group_timelines("agent-1", "agent-2", msg_obj_2)
+            
+            entries_after = state.read_group_timeline(group_id)
+            self.assertEqual(len(entries_after), 1)
+            
+        finally:
+            state.GROUP_TIMELINE_DIR = orig_dir
+            shutil.rmtree(temp_cache)
+
 if __name__ == '__main__':
     unittest.main()

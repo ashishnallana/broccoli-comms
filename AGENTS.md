@@ -2,15 +2,15 @@
 
 ## Overview
 - **Workspace ID**: `7473ae6d-06a8-444d-8a9f-c50788f3f465`
-- **Last Updated**: `2026-05-26T23:45:00Z`
-- **Goal**: Implement dynamic Hostname-based Group Channels and render the active Group Members list in the rightmost details pane when a group channel is active.
+- **Last Updated**: `2026-05-26T23:48:00Z`
+- **Goal**: Implement persistent local group timeline caches in the tracker daemon and connect them to the Electron React desktop UI.
 - **Links**: [README.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/README.md)
 
 ## Active Agents
 | Agent ID | Agent Name | Role / Purpose | Process Info | Status | Last Active |
 |---|---|---|---|---|---|
-| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Idle | 2026-05-26T17:15:00Z |
-| ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 | Idle | 2026-05-26T23:45:00Z |
+| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Idle | 2026-05-26T18:15:00Z |
+| ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 | Idle | 2026-05-26T23:48:00Z |
 
 ## Task Allocation & Progress
 | Task ID | Description | Assigned Agent ID | Status | Priority | Dependencies | Notes / Artifacts |
@@ -18,9 +18,9 @@
 | task-01 | Refine and finalize v2 Design and Phased Implementation Plan | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | | [Plan](file:///usr/local/google/home/tanmayvijay/.gemini/jetski/brain/7473ae6d-06a8-444d-8a9f-c50788f3f465/implementation_plan_push_events.md) |
 | task-02 | Dispatch Phase A, B, C Coding instructions | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-01 | send-message delivered |
 | task-03 | Implement Phase A, B, C Push-Only wait_events, remote leases, & auth gates | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-02 | Upgraded rpc_handler.py & server.py |
-| task-04 | Dispatch Auto-Create Hostname Groups & Group Members Sidebar | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-03 | send-message delivered |
-| task-05 | Implement Hostname Groups & Group Members Sidebar list in React | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-04 | Automatically derive hostname groups and render members list |
-| task-06 | Implement Local Group Timeline Caching & RPC in Daemon | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-05 | Formulated group_timelines persistent caching directories & get_group_timeline RPC |
+| task-04 | Dispatch Group Cache deconstructed Milestone Plan | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-03 | send-message delivered |
+| task-05 | Implement Milestone 1: Local Daemon Group Cache & get_group_timeline RPC | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-04 | Upgraded state.py & rpc_handler.py |
+| task-06 | Implement Milestone 2: Active & Remote Delegated Group Watch Leases | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-05 | Implemented update_watchlist RPC and remote watch group requests roundtrips |
 
 ## Active Blockers & Dependencies
 | Blocked Agent ID | Blocked Task ID | Blocking Task ID | Blocking Agent ID | Reason |
@@ -29,7 +29,7 @@
 
 ## Decisions & Design Notes Log
 - **2026-05-26T17:12:00Z** [tanmayvijay]: DECISION: Approved auto-creating Hostname-based Group Channels to dynamically group agents registered on the same machine.
-- **2026-05-26T17:15:00Z** [tanmayvijay]: DECISION: Approved rendering the active Group Members list in the rightmost details sidebar when a group channel is active.
+- **2026-05-26T18:10:00Z** [tanmayvijay]: DECISION: Approved deconstructed 3-Milestone plan for persistent daemon group timeline caches.
 
 ## Running the Electron App
 
@@ -121,3 +121,4 @@ Verify that the mailbox is globally addressable and connected:
 - Refined v2 Push Updates Design: [push_updates_design_proposal_v2.md](file:///usr/local/google/home/tanmayvijay/.gemini/jetski/brain/7473ae6d-06a8-444d-8a9f-c50788f3f465/push_updates_design_proposal_v2.md)
 - Detailed Phased Implementation Plan: [implementation_plan_push_events.md](file:///usr/local/google/home/tanmayvijay/.gemini/jetski/brain/7473ae6d-06a8-444d-8a9f-c50788f3f465/implementation_plan_push_events.md)
 - Zero-Knowledge VPS Managed Registry Design: [managed_registry_security_design.md](file:///usr/local/google/home/tanmayvijay/.gemini/jetski/brain/7473ae6d-06a8-444d-8a9f-c50788f3f465/managed_registry_security_design.md)
+- Deconstructed Group Cache Plan: [group_cache_implementation_plan.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/group_cache_implementation_plan.md)
