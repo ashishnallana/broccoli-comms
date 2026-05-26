@@ -519,10 +519,31 @@ export class LocalTrackerClient {
         name: session,
         env,
       })
-      return { ok: true, summary: `Agent spun successfully as: ${resolvedName} in session: ${session}` }
+      const ready = await this.waitForRegisteredAgent(resolvedName)
+      return {
+        ok: true,
+        summary: ready
+          ? `Agent spun successfully as: ${resolvedName} in session: ${session}`
+          : `Agent ${resolvedName} is starting in session: ${session}; it will become interactive once registration completes.`,
+      }
     } catch (error) {
       return { ok: false, summary: '', error: error instanceof Error ? error.message : String(error) }
     }
+  }
+
+  private async waitForRegisteredAgent(agentName: string, timeoutMs = 10000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      try {
+        const agents = await this.call<Record<string, TrackerAgent>>('list', { agent_name: this.selfAgentName }, 1500)
+        const agent = agents[agentName]
+        if (agent?.agent_id && agent.status !== 'spawning') return true
+      } catch {
+        // Keep polling until the startup deadline.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    return false
   }
 
   async sendDirectText(target: TargetRef, text: string, submit: boolean): Promise<ActionResult> {
