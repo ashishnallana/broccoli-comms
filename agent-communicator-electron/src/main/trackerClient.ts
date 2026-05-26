@@ -340,7 +340,7 @@ export class LocalTrackerClient {
         await this.call('register', {
           session: 'mailbox',
           tmux_pane: 'none',
-          wrapper_pid: 0,
+          wrapper_pid: 9999,
           tmux_socket: 'none',
           name: this.selfAgentName,
           agent_type: 'agent-communicator-ui',
