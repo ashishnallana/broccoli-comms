@@ -492,4 +492,96 @@ describe('tracker Simple View mapping', () => {
     )
     expect(merged.map((message) => message.id)).toEqual(['out-1', 'in-1'])
   })
+
+  it('listMessages() passes optional inboxOwnerName through socket call params', async () => {
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'get_inbox') {
+          expect(params).toEqual({
+            agent_name: 'custom-inbox-owner',
+            clear: false,
+            last_n: 100,
+            mark_read: false
+          })
+          return { messages: [] }
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        ;(client as any).agentsByConversation.set('local:alpha-id', { name: 'alpha', scope: 'local' })
+        const messages = await client.listMessages('local:alpha-id', 'custom-inbox-owner')
+        expect(messages).toEqual([])
+      }
+    )
+  })
+
+  it('listGroupMessages() calls get_group_timeline and maps sender and recipient keys', async () => {
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'get_group_timeline') {
+          expect(params).toEqual({ group_id: 'host:local:group1', last_n: 200 })
+          return {
+            messages: [
+              {
+                message_id: 'g-msg-1',
+                sender: 'agent-1',
+                recipient: 'agent-2',
+                message: 'hello group',
+                timestamp: '2026-05-25T14:00:00.000Z'
+              }
+            ]
+          }
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        const messages = await client.listGroupMessages('host:local:group1')
+        expect(messages.length).toBe(1)
+        expect(messages[0]).toMatchObject({
+          id: 'g-msg-1',
+          conversationKey: 'host:local:group1',
+          direction: 'inbound',
+          author: 'agent-1',
+          recipient: 'agent-2',
+          body: 'hello group'
+        })
+      }
+    )
+  })
+
+  it('updateWatchlist() group mode dispatches update_watchlist RPC to daemon', async () => {
+    const calls: string[] = []
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'update_watchlist') {
+          calls.push(method)
+          expect(params).toEqual({
+            watch_id: 'electron-active-group',
+            mode: 'group',
+            group_id: 'host:local:group1',
+            members: ['local-host/agent-1', 'local-host/agent-2'],
+            lease_seconds: 120,
+            include_body: true
+          })
+          return true
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        await client.updateWatchlist({
+          mode: 'group',
+          groupId: 'host:local:group1',
+          members: ['local-host/agent-1', 'local-host/agent-2']
+        })
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(calls).toEqual(['update_watchlist'])
+      }
+    )
+  })
 })

@@ -26,9 +26,9 @@ export function registerMockIpcHandlers(): void {
     const tracker = trackerClient()
     return tracker ? tracker.listAgents() : mockAgents
   })
-  ipcMain.handle(IPC_CHANNELS.listMessages, async (_event, conversationKey: string) => {
+  ipcMain.handle(IPC_CHANNELS.listMessages, async (_event, conversationKey: string, inboxOwnerName?: string) => {
     const tracker = trackerClient()
-    return tracker ? tracker.listMessages(conversationKey) : (mockMessages[conversationKey] ?? [])
+    return tracker ? tracker.listMessages(conversationKey, inboxOwnerName) : (mockMessages[conversationKey] ?? [])
   })
   ipcMain.handle(IPC_CHANNELS.sendMessage, async (_event, target: TargetRef, body: string) => {
     const tracker = trackerClient()

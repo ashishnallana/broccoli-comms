@@ -334,7 +334,11 @@ export function App() {
     if (currentAgent.id.startsWith('group:') || currentAgent.id.startsWith('host:')) {
       try {
         const nextMessages = await runtime.listGroupMessages(currentAgent.id)
-        setMessages(nextMessages)
+        if (nextMessages.length > 0) {
+          setMessages(nextMessages)
+        } else {
+          throw new Error('Empty timeline cache')
+        }
       } catch (e) {
         console.warn('listGroupMessages failed, falling back to manual per-member inbox aggregation:', e)
         const memberIds = getGroupMembers(currentAgent.id)
@@ -356,16 +360,27 @@ export function App() {
     }
   }, [runtime, selectedId, agents, compileGroupTimeline, getGroupMembers])
 
-  // Watchlist Synchronizer: automatically update daemon watchlist on active channel change
+  // Watchlist Synchronizer: automatically update daemon watchlist on active channel change and periodically renew group leases
   useEffect(() => {
     if (!selectedAgent) return
-    if (selectedAgent.id.startsWith('group:') || selectedAgent.id.startsWith('host:')) {
+    
+    const isGroup = selectedAgent.id.startsWith('group:') || selectedAgent.id.startsWith('host:')
+    if (isGroup) {
       const members = getGroupMembers(selectedAgent.id)
-      runtime.updateWatchlist({
-        mode: 'group',
-        groupId: selectedAgent.id,
-        members
-      })
+      const renewLease = () => {
+        runtime.updateWatchlist({
+          mode: 'group',
+          groupId: selectedAgent.id,
+          members
+        })
+      }
+      
+      renewLease()
+      
+      const timer = window.setInterval(renewLease, 45 * 1000)
+      return () => {
+        window.clearInterval(timer)
+      }
     } else if (selectedAgent.id.startsWith('mailbox:')) {
       runtime.updateWatchlist([])
     } else {
