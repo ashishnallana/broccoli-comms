@@ -6,11 +6,18 @@ import { MessageBubble } from './MessageBubble'
 interface Props {
   agent: AgentSummary
   messages: Message[]
+  detailsOpen: boolean
+  onToggleDetails: () => void
 }
 
-export function ConversationView({ agent, messages }: Props) {
+function initials(name: string): string {
+  const parts = name.split(/[-_\s]+/).filter(Boolean)
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+  return name.slice(0, 2).toUpperCase()
+}
+
+export function ConversationView({ agent, messages, detailsOpen, onToggleDetails }: Props) {
   const sortedMessages = sortMessages(messages)
-  const offline = agent.status === 'offline'
   const timelineRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -19,40 +26,41 @@ export function ConversationView({ agent, messages }: Props) {
   }, [agent.conversationKey, sortedMessages.length])
 
   return (
-    <section className={`conversation-view ${offline ? 'with-offline-banner' : ''}`}>
-      <header className="conversation-header">
-        <div>
-          <span className="eyebrow">{agent.scope} conversation</span>
-          <h1>{agent.displayName}</h1>
-          <p>
-            <span className={`status-badge ${agent.status}`}>{agent.status}</span>
-            <span>{agent.cwd}</span>
-          </p>
+    <>
+      <div className="conv-head">
+        <div className="conv-head-left">
+          <div className="conv-head-avatar">{initials(agent.displayName)}</div>
+          <div className="conv-head-text">
+            <h1>{agent.displayName}</h1>
+            <div className="conv-meta">
+              <span className="conv-meta-status">
+                <span className={`status-dot ${agent.status}`} /> {agent.status}
+              </span>
+              <span className="meta-sep">·</span>
+              <span>{agent.project}</span>
+              <span className="meta-sep">·</span>
+              <span className="mono">{agent.address}</span>
+            </div>
+          </div>
         </div>
-        <div className="header-actions">
-          <button>Mark read</button>
-          <button>Copy target</button>
-          <button className="danger" disabled={!agent.canDirectControl}>
-            Mock focus
+        <div className="conv-actions">
+          <button className="btn">Mark read</button>
+          <button className={`btn icon-only toggle-details ${detailsOpen ? 'active' : ''}`} title="Toggle agent details" onClick={onToggleDetails}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <rect x="2" y="3" width="12" height="10" rx="1.5" />
+              <line x1="10" y1="3" x2="10" y2="13" />
+            </svg>
           </button>
         </div>
-      </header>
-      {offline ? (
-        <div className="offline-banner">
-          <strong>Offline fixture state</strong>
-          <span>This mock agent is unavailable; direct pane controls stay locked and messages remain local-only.</span>
-        </div>
-      ) : null}
-      <div className="timeline" ref={timelineRef}>
+      </div>
+
+      <div className="conv-scroll" ref={timelineRef}>
         {sortedMessages.length === 0 ? (
-          <div className="timeline-empty">
-            <strong>No mock messages yet.</strong>
-            <span>Use the composer to add a local outbound fixture message.</span>
-          </div>
+          <div className="empty-card timeline-empty">No messages yet. Use the composer to send a normal inbox message.</div>
         ) : (
           sortedMessages.map((message) => <MessageBubble key={message.id} message={message} />)
         )}
       </div>
-    </section>
+    </>
   )
 }

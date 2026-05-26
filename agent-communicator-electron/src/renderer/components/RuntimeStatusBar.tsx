@@ -1,35 +1,93 @@
-import type { RuntimeStatus } from '../../shared/contracts'
+import { useEffect, useState } from 'react'
+import type { RuntimeHealth, RuntimeStatus } from '../../shared/contracts'
 import { healthLabel } from '../lib/format'
-import { formatTime } from '../lib/time'
 
 interface Props {
   status: RuntimeStatus | null
 }
 
+function dotClass(health: RuntimeHealth | undefined): string {
+  if (health === 'healthy') return 'healthy'
+  if (health === 'degraded') return 'warn'
+  if (health === 'offline') return 'error'
+  return 'muted'
+}
+
 export function RuntimeStatusBar({ status }: Props) {
-  if (!status) return <div className="runtime-card skeleton">Loading mock runtime…</div>
+  const [open, setOpen] = useState(false)
+  const [watchdog, setWatchdog] = useState(131)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setWatchdog((current) => (current <= 0 ? 131 : current - 1))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const runtimeHealth = status?.health ?? 'offline'
+  const trackerHealth = status?.tracker ?? 'offline'
+  const registryHealth = status?.registry ?? 'offline'
+  const tmuxHealth = status?.tmux ?? 'offline'
+  const mode = status?.mode ?? 'mock'
 
   return (
-    <div className="runtime-card">
-      <div className="runtime-heading">
-        <div>
-          <div className="eyebrow">Runtime</div>
-          <strong>{status.label}</strong>
+    <footer className="statusbar">
+      <div className="sb-item clickable" title="Runtime status" onClick={() => setOpen((value) => !value)}>
+        <span className={`sb-dot ${dotClass(runtimeHealth)} ${runtimeHealth !== 'offline' ? 'sb-pulse' : ''}`} />
+        <span className="sb-label">Runtime</span>
+        <span className={`sb-value ${dotClass(runtimeHealth)}`}>{status ? healthLabel(runtimeHealth) : 'loading'}</span>
+
+        <div className={`sb-popover ${open ? 'open' : ''}`} onClick={(event) => event.stopPropagation()}>
+          <div className="sb-popover-title">Runtime status</div>
+          <div className="sb-popover-row">
+            <span className="sb-popover-key"><span className={`sb-dot ${dotClass(trackerHealth)}`} /> Tracker socket</span>
+            <span className={`sb-popover-val ${dotClass(trackerHealth)}`}>{healthLabel(trackerHealth)}</span>
+          </div>
+          <div className="sb-popover-row">
+            <span className="sb-popover-key"><span className={`sb-dot ${dotClass(registryHealth)}`} /> Registry</span>
+            <span className={`sb-popover-val ${dotClass(registryHealth)}`}>{healthLabel(registryHealth)}</span>
+          </div>
+          <div className="sb-popover-row">
+            <span className="sb-popover-key"><span className={`sb-dot ${dotClass(tmuxHealth)}`} /> tmux server</span>
+            <span className={`sb-popover-val ${dotClass(tmuxHealth)}`}>{healthLabel(tmuxHealth)}</span>
+          </div>
+          <div className="sb-popover-row">
+            <span className="sb-popover-key"><span className="sb-dot healthy" /> Inbox identity</span>
+            <span className="sb-popover-val">agent-communicator</span>
+          </div>
+          <div className="sb-popover-hint">
+            {status?.notes?.[0] ?? 'Renderer stays isolated; main process owns tracker IPC.'}
+          </div>
         </div>
-        <span className="mock-pill">dev mock</span>
       </div>
-      <div className="runtime-chips">
-        <span className={`chip ${status.health}`}>runtime {healthLabel(status.health)}</span>
-        <span className={`chip ${status.tracker}`}>tracker {healthLabel(status.tracker)}</span>
-        <span className={`chip ${status.registry}`}>registry {healthLabel(status.registry)}</span>
-        <span className={`chip ${status.tmux}`}>tmux {healthLabel(status.tmux)}</span>
+
+      <div className="sb-divider" />
+      <div className="sb-item" title="Local agent-tracker socket">
+        <span className="sb-label">Tracker</span>
+        <span className="sb-value">{healthLabel(trackerHealth)}</span>
       </div>
-      <div className="runtime-footnote">Updated {formatTime(status.updatedAt)} from local fixtures.</div>
-      <ul className="runtime-notes">
-        {status.notes.map((note) => (
-          <li key={note}>{note}</li>
-        ))}
-      </ul>
-    </div>
+      <div className="sb-item" title="tmux server status">
+        <span className="sb-label">tmux</span>
+        <span className={`sb-value ${dotClass(tmuxHealth)}`}>{healthLabel(tmuxHealth)}</span>
+      </div>
+      <div className="sb-item" title="Remote registry">
+        <span className="sb-label">Registry</span>
+        <span className={`sb-value ${dotClass(registryHealth)}`}>{healthLabel(registryHealth)}</span>
+      </div>
+      <div className="sb-divider" />
+      <div className="sb-item" title="Watchdog timer">
+        <span className="sb-label">Watchdog</span>
+        <span className="sb-value">{watchdog}s · 4/∞</span>
+      </div>
+      <div className="sb-spacer" />
+      <div className="sb-item" title="Active view">
+        <span className="sb-value">{status?.label ?? 'Loading runtime'}</span>
+      </div>
+      <div className="sb-divider" />
+      <div className="sb-item" title="Runtime mode">
+        <span className="sb-dot muted" />
+        <span className="sb-value muted">{mode === 'tracker' ? 'Tracker simple' : 'Dev mock'}</span>
+      </div>
+    </footer>
   )
 }

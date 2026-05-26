@@ -5,9 +5,9 @@ export function composerPlaceholder(mode: ComposerMode): string {
     case 'message':
       return 'Type a normal inbox message…'
     case 'directText':
-      return 'Mock direct text to a local pane…'
+      return 'Direct Text is locked in tracker simple view…'
     case 'directKeys':
-      return 'Enter symbolic keys, e.g. C-c Enter…'
+      return 'Direct Keys is locked in tracker simple view…'
   }
 }
 
@@ -20,16 +20,16 @@ export function composerActionLabel(mode: ComposerMode): string {
 export function defaultComposerStatus(mode: ComposerMode): string {
   switch (mode) {
     case 'message':
-      return 'Message mode: normal mock inbox delivery.'
+      return 'Message mode: normal inbox delivery.'
     case 'directText':
-      return 'Direct Text: local-only mock pane control. No message history is created.'
+      return 'Direct Text is locked in tracker simple view.'
     case 'directKeys':
-      return 'Direct Keys: local-only symbolic key sequence. No message history is created.'
+      return 'Direct Keys is locked in tracker simple view.'
   }
 }
 
 export function directModeWarning(mode: ComposerMode): string | undefined {
-  if (mode === 'directText') return 'Warning: Direct Text simulates writing text into a local agent pane. It is not an inbox message.'
-  if (mode === 'directKeys') return 'Warning: Direct Keys simulates pane key presses. Use symbolic keys such as C-c or Enter.'
+  if (mode === 'directText') return 'Direct Text is locked; no pane text is sent from this UI.'
+  if (mode === 'directKeys') return 'Direct Keys is locked; no pane key sequence is sent from this UI.'
   return undefined
 }

@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentSummary, ComposerMode, Message, RuntimeStatus } from '../shared/contracts'
 import { AgentList } from './components/AgentList'
 import { AppShell } from './components/AppShell'
 import { Composer } from './components/Composer'
 import { ConversationView } from './components/ConversationView'
 import { EmptyState } from './components/EmptyState'
-import { Sidebar } from './components/Sidebar'
 import { targetForAgent } from './features/agents/agentStore'
 import { defaultComposerStatus } from './features/composer/composerActions'
 import { optimisticMessage } from './features/conversations/conversationStore'
@@ -20,6 +19,9 @@ export function App() {
   const [mode, setMode] = useState<ComposerMode>('message')
   const [composerStatus, setComposerStatus] = useState(defaultComposerStatus('message'))
   const [loading, setLoading] = useState(true)
+  const [detailsOpen, setDetailsOpen] = useState(true)
+  const [visibleAgents, setVisibleAgents] = useState<AgentSummary[]>([])
+  const [agentFilterActive, setAgentFilterActive] = useState(false)
   const directStatusResetTimer = useRef<number | undefined>(undefined)
   const modeRef = useRef<ComposerMode>(mode)
   const selectedIdRef = useRef<string | undefined>(selectedId)
@@ -81,9 +83,9 @@ export function App() {
   }, [runtime, selectedAgent])
 
   useEffect(() => {
-    if (selectedAgent && mode !== 'message' && !selectedAgent.canDirectControl) {
+    if (selectedAgent && mode !== 'message') {
       setMode('message')
-      setComposerStatus('Direct pane control is disabled for remote mock agents; reset to Message mode.')
+      setComposerStatus('Direct pane control is locked; reset to Message mode.')
     }
   }, [mode, selectedAgent])
 
@@ -101,76 +103,107 @@ export function App() {
     )
   }
 
+  const updateVisibleAgents = useCallback((nextVisibleAgents: AgentSummary[], filterActive: boolean) => {
+    setVisibleAgents(nextVisibleAgents)
+    setAgentFilterActive(filterActive)
+  }, [])
+
+  function moveSelection(delta: 1 | -1) {
+    const navigationAgents = agentFilterActive ? visibleAgents : agents
+    if (navigationAgents.length === 0) return
+    const currentIndex = navigationAgents.findIndex((agent) => agent.id === selectedId)
+    const fallbackIndex = delta > 0 ? 0 : navigationAgents.length - 1
+    const nextIndex = currentIndex === -1 ? fallbackIndex : (currentIndex + delta + navigationAgents.length) % navigationAgents.length
+    selectAgent(navigationAgents[nextIndex])
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
+      const key = event.key.toLowerCase()
+      if (key !== 'n' && key !== 'p') return
+      event.preventDefault()
+      moveSelection(key === 'n' ? 1 : -1)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [agentFilterActive, agents, selectedId, visibleAgents])
+
   async function submit(body: string) {
     if (!selectedAgent) return
-    if (mode !== 'message' && !selectedAgent.canDirectControl) {
+    if (mode !== 'message') {
       setMode('message')
-      setComposerStatus('Direct pane control is disabled for remote mock agents; reset to Message mode.')
+      setComposerStatus('Direct pane control is locked; reset to Message mode.')
       return
     }
     const target = targetForAgent(selectedAgent)
-    if (mode === 'message') {
-      const pending = optimisticMessage(selectedAgent.conversationKey, body)
-      setMessages((current) => [...current, pending])
-      setComposerStatus('Sending mock message…')
+    const pending = optimisticMessage(selectedAgent.conversationKey, body)
+    setMessages((current) => [...current, pending])
+    setComposerStatus(status?.mode === 'tracker' ? 'Sending tracker message…' : 'Sending mock message…')
 
-      const result = await runtime.sendMessage(target, body)
-      if (result.ok && result.message) {
-        window.setTimeout(() => {
-          setMessages((current) =>
-            current.map((message) => (message.id === pending.id ? { ...result.message!, deliveryState: 'delivered' } : message)),
-          )
-          setComposerStatus('Mock message delivered.')
-        }, 650)
-      } else {
+    const result = await runtime.sendMessage(target, body)
+    if (result.ok && result.message) {
+      window.setTimeout(() => {
         setMessages((current) =>
-          current.map((message) =>
-            message.id === pending.id ? { ...message, deliveryState: 'failed', body: `${message.body}\n\n${result.error ?? 'Mock message failed.'}` } : message,
-          ),
+          current.map((message) => (message.id === pending.id ? { ...result.message!, deliveryState: 'delivered' } : message)),
         )
-        setComposerStatus(result.error ?? 'Mock message failed.')
-      }
-      return
+        setComposerStatus(status?.mode === 'tracker' ? 'Tracker message delivered.' : 'Mock message delivered.')
+      }, 650)
+    } else {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === pending.id ? { ...message, deliveryState: 'failed', body: `${message.body}\n\n${result.error ?? 'Message failed.'}` } : message,
+        ),
+      )
+      setComposerStatus(result.error ?? 'Message failed.')
     }
-
-    const result =
-      mode === 'directText'
-        ? await runtime.sendDirectText(target, body, true)
-        : await runtime.sendDirectKeys(target, body.split(/\s+/).filter(Boolean))
-    clearDirectStatusReset()
-    setComposerStatus(result.summary)
-    const actionMode = mode
-    const actionAgentId = selectedAgent.id
-    directStatusResetTimer.current = window.setTimeout(() => {
-      if (selectedIdRef.current === actionAgentId && modeRef.current === actionMode) {
-        setComposerStatus(defaultComposerStatus(actionMode))
-      }
-      directStatusResetTimer.current = undefined
-    }, 2600)
   }
 
   const details = selectedAgent ? (
-    <div className="details-card">
-      <h2>Agent details</h2>
-      <dl>
-        <dt>Scope</dt>
-        <dd>{selectedAgent.scope}</dd>
-        <dt>Status</dt>
-        <dd>{selectedAgent.status}</dd>
-        <dt>Unread</dt>
-        <dd>{selectedAgent.unread}</dd>
-        <dt>CWD</dt>
-        <dd>{selectedAgent.cwd}</dd>
-        <dt>Address</dt>
-        <dd>{selectedAgent.address}</dd>
-        <dt>Tags</dt>
-        <dd>{selectedAgent.tags.join(', ')}</dd>
-        <dt>Direct control</dt>
-        <dd>{selectedAgent.canDirectControl ? 'Local mock enabled' : 'Disabled for remote mock agents'}</dd>
+    <>
+      <dl className="detail-list">
+        <div className="detail-row">
+          <dt className="detail-key">Scope</dt>
+          <dd className="detail-val">{selectedAgent.scope}</dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">Status</dt>
+          <dd className="detail-val">{selectedAgent.status}</dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">Unread</dt>
+          <dd className="detail-val">{selectedAgent.unread}</dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">Address</dt>
+          <dd className="detail-val"><code>{selectedAgent.address}</code></dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">CWD</dt>
+          <dd className="detail-val"><code>{selectedAgent.cwd}</code></dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">Tags</dt>
+          <dd className="detail-val">{selectedAgent.tags.join(', ')}</dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">Direct control</dt>
+          <dd className="detail-val">Locked / not implemented</dd>
+        </div>
       </dl>
-      <div className="warning-card">Direct Text and Direct Keys are explicit mock-only pane-control modes.</div>
-      <div className="mock-boundary-card">
-        <h3>{status?.mode === 'tracker' ? 'Tracker Simple View' : 'Mock boundary'}</h3>
+
+      <div className="detail-actions">
+        <button className="btn">Mark read</button>
+        <button className="btn">Copy target</button>
+        <button className="btn">Open CWD</button>
+        <button className="btn">View logs</button>
+      </div>
+
+      <div className="info-note"><strong>Direct Text</strong> and <strong>Direct Keys</strong> remain locked in this tracker-focused UI.</div>
+
+      <div className="info-card">
+        <div className="info-card-title">{status?.mode === 'tracker' ? 'Tracker Simple View' : 'Mock boundary'}</div>
         <ul>
           {status?.mode === 'tracker' ? (
             <>
@@ -189,19 +222,26 @@ export function App() {
           )}
         </ul>
       </div>
-    </div>
+    </>
   ) : null
 
   return (
     <AppShell
-      sidebar={<Sidebar status={status} />}
-      agents={<AgentList agents={agents} selectedId={selectedId} onSelect={selectAgent} />}
+      status={status}
+      detailsOpen={detailsOpen}
+      onCloseDetails={() => setDetailsOpen(false)}
+      agents={<AgentList agents={agents} selectedId={selectedId} onSelect={selectAgent} onVisibleAgentsChange={updateVisibleAgents} />}
       main={
         loading ? (
           <EmptyState />
         ) : selectedAgent ? (
           <div className="conversation-shell">
-            <ConversationView agent={selectedAgent} messages={messages} />
+            <ConversationView
+              agent={selectedAgent}
+              messages={messages}
+              detailsOpen={detailsOpen}
+              onToggleDetails={() => setDetailsOpen((open) => !open)}
+            />
             <Composer
               agent={selectedAgent}
               mode={mode}

@@ -6,16 +6,16 @@ interface Props {
 }
 
 export function MessageBubble({ message }: Props) {
+  const kind = message.direction === 'outbound' ? 'you' : message.direction === 'inbound' ? 'agent' : 'system'
+
   return (
-    <article className={`message ${message.direction} ${message.deliveryState}`}>
-      <div className="bubble">
-        <div className="message-author">
-          <span>{message.author}</span>
-          <span className={`delivery-state ${message.deliveryState}`}>{message.deliveryState}</span>
-        </div>
-        <p>{message.body}</p>
-        <footer>{formatTime(message.createdAt)}</footer>
+    <article className={`msg ${kind} ${message.deliveryState}`}>
+      <div className="msg-head">
+        <span className="msg-from">{message.direction === 'outbound' ? 'you' : message.author}</span>
+        <span className={`msg-flag ${message.deliveryState}`}>{message.deliveryState}</span>
       </div>
+      <div className="msg-body">{message.body}</div>
+      <div className="msg-time">{formatTime(message.createdAt)}</div>
     </article>
   )
 }

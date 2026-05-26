@@ -7,26 +7,26 @@ interface Props {
 }
 
 const modes: Array<{ value: ComposerMode; label: string; hint: string; direct?: boolean }> = [
-  { value: 'message', label: 'Message', hint: 'Inbox' },
-  { value: 'directText', label: 'Direct Text', hint: 'Pane text', direct: true },
-  { value: 'directKeys', label: 'Direct Keys', hint: 'Pane keys', direct: true },
+  { value: 'message', label: 'Message', hint: 'INBOX' },
+  { value: 'directText', label: 'Direct Text', hint: 'LOCKED', direct: true },
+  { value: 'directKeys', label: 'Direct Keys', hint: 'LOCKED', direct: true },
 ]
 
-export function ActionModePicker({ mode, agent, onModeChange }: Props) {
+export function ActionModePicker({ mode, onModeChange }: Props) {
   return (
-    <div className="mode-picker" role="group" aria-label="Composer mode">
+    <div className="tab-group" role="group" aria-label="Composer mode">
       {modes.map((item) => {
-        const disabled = item.direct && !agent.canDirectControl
+        const disabled = Boolean(item.direct)
         return (
           <button
             key={item.value}
-            className={`${mode === item.value ? 'active' : ''} ${item.direct ? 'direct' : ''}`}
+            className={`tab ${mode === item.value ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
             disabled={disabled}
-            title={disabled ? 'Remote direct pane control is disabled in this mock' : item.hint}
+            title={disabled ? 'Direct pane control is locked in tracker simple view' : item.hint}
             onClick={() => onModeChange(item.value)}
           >
-            <span>{item.label}</span>
-            <small>{disabled ? 'locked' : item.hint}</small>
+            {item.label}
+            <span className="tab-sub">{item.hint}</span>
           </button>
         )
       })}

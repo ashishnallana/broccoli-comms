@@ -1,5 +1,4 @@
 import type { AgentSummary } from '../../shared/contracts'
-import { statusGlyph } from '../lib/format'
 import { relativeTime } from '../lib/time'
 
 interface Props {
@@ -8,31 +7,32 @@ interface Props {
   onSelect: () => void
 }
 
+function initials(name: string): string {
+  const parts = name.split(/[-_\s]+/).filter(Boolean)
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+  return name.slice(0, 2).toUpperCase()
+}
+
+function stateClass(agent: AgentSummary): string {
+  if (agent.unread > 0) return 'has-unread'
+  if (agent.status === 'offline') return 'has-status status-error'
+  if (agent.status === 'waiting' || agent.status === 'busy') return 'has-status status-warn'
+  if (agent.status === 'idle') return 'has-status'
+  return ''
+}
+
 export function AgentCard({ agent, selected, onSelect }: Props) {
   return (
-    <button className={`agent-card ${agent.status} ${selected ? 'selected' : ''}`} aria-pressed={selected} onClick={onSelect}>
-      <div className={`avatar ${agent.scope}`}>{agent.displayName.slice(0, 1).toUpperCase()}</div>
+    <button className={`agent-card ${selected ? 'active' : ''} ${stateClass(agent)}`} aria-pressed={selected} onClick={onSelect}>
+      <div className="agent-avatar">{initials(agent.displayName)}</div>
       <div className="agent-main">
-        <div className="agent-title">
-          <strong>{agent.displayName}</strong>
-          <span className={`scope-pill ${agent.scope}`}>{agent.scope}</span>
+        <div className="agent-name-row">
+          <span className="agent-name">{agent.displayName}</span>
+          <span className="agent-time">{relativeTime(agent.lastActiveAt).replace(' ago', '')}</span>
         </div>
-        <div className="agent-meta">
-          <span className={`status-badge ${agent.status}`}>
-            <span className={`status-dot ${agent.status}`}>{statusGlyph(agent.status)}</span>
-            {agent.status}
-          </span>
-          <span>{agent.project}</span>
-          <span>{relativeTime(agent.lastActiveAt)}</span>
+        <div className="agent-project">
+          <span className="proj-host">{agent.project || agent.scope}</span> · {agent.cwd || agent.address}
         </div>
-        <div className="agent-cwd">{agent.cwd}</div>
-        <div className="agent-address">{agent.address}</div>
-      </div>
-      <div className="agent-card-side">
-        {agent.unread > 0 ? <span className="unread">{agent.unread}</span> : <span className="read-indicator">read</span>}
-        <span className={`direct-pill ${agent.canDirectControl ? 'enabled' : 'locked'}`}>
-          {agent.canDirectControl ? 'direct' : 'locked'}
-        </span>
       </div>
     </button>
   )
