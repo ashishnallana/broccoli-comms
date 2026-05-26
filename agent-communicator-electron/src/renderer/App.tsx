@@ -10,6 +10,20 @@ import { defaultComposerStatus } from './features/composer/composerActions'
 import { optimisticMessage } from './features/conversations/conversationStore'
 import { createRuntimeClient } from './features/runtime/runtimeClient'
 
+export interface GroupChannel {
+  id: string
+  name: string
+  memberIds: string[]
+}
+
+const DEFAULT_GROUPS: Record<string, GroupChannel> = {
+  'group:dev-team': {
+    id: 'group:dev-team',
+    name: 'dev-team',
+    memberIds: []
+  }
+}
+
 export function App() {
   const runtime = useMemo(() => createRuntimeClient(), [])
   const [status, setStatus] = useState<RuntimeStatus | null>(null)
@@ -20,6 +34,22 @@ export function App() {
   const [composerStatus, setComposerStatus] = useState(defaultComposerStatus('message'))
   const [loading, setLoading] = useState(true)
   const [securityWarning, setSecurityWarning] = useState<string | null>(null)
+  const [groups, setGroups] = useState<Record<string, GroupChannel>>(() => {
+    try {
+      const stored = localStorage.getItem('agent-communicator-groups')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Object.keys(parsed).length > 0) return parsed
+      }
+    } catch {}
+    return DEFAULT_GROUPS
+  })
+  const [contextMenu, setContextMenu] = useState<{
+    visible: boolean
+    x: number
+    y: number
+    agentId: string
+  } | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(true)
   const [visibleAgents, setVisibleAgents] = useState<AgentSummary[]>([])
   const [agentFilterActive, setAgentFilterActive] = useState(false)
@@ -56,6 +86,26 @@ export function App() {
     return () => clearDirectStatusReset()
   }, [])
 
+  // Map GroupChannel records into React sidebar AgentSummary items
+  const groupToAgentSummary = useCallback((group: GroupChannel): AgentSummary => {
+    const displayName = `Group: #${group.name}`
+    return {
+      id: group.id,
+      name: group.name,
+      displayName,
+      scope: 'local',
+      status: 'idle',
+      cwd: `/work/groups/${group.name}`,
+      project: 'Group Channel',
+      address: `#${group.name}`,
+      unread: 0,
+      lastActiveAt: new Date().toISOString(),
+      conversationKey: group.id,
+      canDirectControl: false,
+      tags: ['group', 'local'],
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -66,24 +116,8 @@ export function App() {
       ])
       if (cancelled) return
       
-      // Inject client-side Mock Group Channel
-      const injectedGroupChannel: AgentSummary = {
-        id: 'group:dev-team',
-        name: 'dev-team',
-        displayName: 'Dev Team Channel (#dev-team)',
-        scope: 'local',
-        status: 'idle',
-        cwd: '/work/dev-team',
-        project: 'Group Channel',
-        address: '#dev-team',
-        unread: 0,
-        lastActiveAt: new Date().toISOString(),
-        conversationKey: 'group:dev-team',
-        canDirectControl: false,
-        tags: ['group', 'local'],
-      }
-      
-      const mergedAgents = [injectedGroupChannel, ...agentList]
+      const groupSummaries = Object.values(groups).map(groupToAgentSummary)
+      const mergedAgents = [...groupSummaries, ...agentList]
       
       setStatus(runtimeStatus)
       setAgents(mergedAgents)
@@ -95,7 +129,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [runtime])
+  }, [runtime, groups, groupToAgentSummary])
 
   // Client-side chronological group timeline aggregator
   const compileGroupTimeline = useCallback((groupMessagesMap: Record<string, Message[]>, memberIds: string[]): Message[] => {
@@ -116,6 +150,75 @@ export function App() {
     return allMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
   }, [])
 
+  const getGroupMembers = useCallback((groupId: string): string[] => {
+    const group = groups[groupId]
+    if (!group) return []
+    if (groupId === 'group:dev-team' && group.memberIds.length === 0) {
+      return agents.filter((a) => a.id !== groupId && !a.id.startsWith('group:') && a.scope === 'local').map((a) => a.id)
+    }
+    return group.memberIds
+  }, [groups, agents])
+
+  const createGroup = useCallback((name: string) => {
+    const cleanName = name.trim().replace(/[^A-Za-z0-9_-]/g, '_')
+    if (!cleanName) return
+    const gId = `group:${cleanName}`
+    setGroups((current) => {
+      if (current[gId]) return current
+      return {
+        ...current,
+        [gId]: {
+          id: gId,
+          name: cleanName,
+          memberIds: []
+        }
+      }
+    })
+  }, [])
+
+  const addAgentToGroup = useCallback((agentId: string, groupId: string) => {
+    setGroups((current) => {
+      const group = current[groupId]
+      if (!group) return current
+      if (group.memberIds.includes(agentId)) return current
+      return {
+        ...current,
+        [groupId]: {
+          ...group,
+          memberIds: [...group.memberIds, agentId]
+        }
+      }
+    })
+  }, [])
+
+  const removeAgentFromGroup = useCallback((agentId: string, groupId: string) => {
+    setGroups((current) => {
+      const group = current[groupId]
+      if (!group) return current
+      return {
+        ...current,
+        [groupId]: {
+          ...group,
+          memberIds: group.memberIds.filter((id) => id !== agentId)
+        }
+      }
+    })
+  }, [])
+
+  // Persist groups to localStorage on membership changes
+  useEffect(() => {
+    localStorage.setItem('agent-communicator-groups', JSON.stringify(groups))
+  }, [groups])
+
+  // Global click listener to dismiss custom context menu on clicks
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      setContextMenu(null)
+    }
+    window.addEventListener('click', handleGlobalClick)
+    return () => window.removeEventListener('click', handleGlobalClick)
+  }, [])
+
   const reloadActiveMessages = useCallback(async () => {
     if (!selectedId) {
       setMessages([])
@@ -125,7 +228,7 @@ export function App() {
     if (!currentAgent) return
 
     if (currentAgent.id.startsWith('group:')) {
-      const memberIds = agents.filter((a) => a.id !== currentAgent.id).map((a) => a.id)
+      const memberIds = getGroupMembers(currentAgent.id)
       const messagesMap: Record<string, Message[]> = {}
       await Promise.all(
         memberIds.map(async (memberId) => {
@@ -141,15 +244,15 @@ export function App() {
       const nextMessages = await runtime.listMessages(currentAgent.conversationKey)
       setMessages(nextMessages)
     }
-  }, [runtime, selectedId, agents, compileGroupTimeline])
+  }, [runtime, selectedId, agents, compileGroupTimeline, getGroupMembers])
 
   // Watchlist Synchronizer: automatically update daemon watchlist on active channel change
   useEffect(() => {
     if (!selectedAgent) return
     let watchlist: string[] = []
     if (selectedAgent.id.startsWith('group:')) {
-      watchlist = agents.filter((a) => a.id !== selectedAgent.id).map((a) => {
-        return a.id.startsWith('local:') ? a.id.slice('local:'.length) : a.id
+      watchlist = getGroupMembers(selectedAgent.id).map((aId) => {
+        return aId.startsWith('local:') ? aId.slice('local:'.length) : aId
       })
     } else {
       const stableId = selectedAgent.id.startsWith('local:')
@@ -160,7 +263,7 @@ export function App() {
       watchlist = [stableId]
     }
     runtime.updateWatchlist(watchlist)
-  }, [selectedAgent, agents, runtime])
+  }, [selectedAgent, agents, runtime, getGroupMembers])
 
   // Trigger initial messages load and sync on active selectedAgent changes
   useEffect(() => {
@@ -532,52 +635,151 @@ export function App() {
     </>
   ) : null
 
-  return (
-    <AppShell
-      status={status}
-      detailsOpen={detailsOpen}
-      onCloseDetails={() => setDetailsOpen(false)}
-      shortcutsOpen={shortcutsOpen}
-      onOpenShortcuts={() => setShortcutsOpen(true)}
-      onCloseShortcuts={() => setShortcutsOpen(false)}
-      paletteOpen={paletteOpen}
-      onOpenPalette={() => setPaletteOpen(true)}
-      onClosePalette={() => setPaletteOpen(false)}
-      agentsRaw={agents}
-      onSelectAgent={selectAgent}
-      launchModalOpen={launchModalOpen}
-      onCloseLaunchModal={() => setLaunchModalOpen(false)}
-      onLaunchAgent={launchAgent}
-      onBrowseDirectory={browseDirectory}
-      savedAgents={savedAgents}
-      agents={
-        <AgentList
-          agents={agents}
-          selectedId={selectedId}
-          onSelect={selectAgent}
-          onVisibleAgentsChange={updateVisibleAgents}
-          onOpenLaunch={() => setLaunchModalOpen(true)}
-        />
-      }
-      main={
-        loading ? (
-          <EmptyState />
-        ) : selectedAgent ? (
-          <div className="conversation-shell">
-            <ConversationView
-              agent={selectedAgent}
-              messages={messages}
-              detailsOpen={detailsOpen}
-              onToggleDetails={() => setDetailsOpen((open) => !open)}
-              onCapturePane={capturePane}
-            />
-            <Composer agent={selectedAgent} mode={mode} status={composerStatus} onModeChange={updateMode} onSubmit={submit} />
-          </div>
-        ) : (
-          <EmptyState />
+  const handleAgentContextMenu = useCallback((e: React.MouseEvent, agentId: string) => {
+    e.preventDefault()
+    if (agentId.startsWith('group:')) return
+    setContextMenu({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      agentId
+    })
+  }, [])
+
+  const contextMenuElement = contextMenu ? (
+    <div
+      className="custom-context-menu"
+      style={{
+        position: 'absolute',
+        top: `${contextMenu.y}px`,
+        left: `${contextMenu.x}px`,
+        zIndex: 1000,
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-dark)',
+        borderRadius: '6px',
+        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)',
+        padding: '4px 0',
+        minWidth: '160px'
+      }}
+    >
+      <div className="menu-section-title" style={{ padding: '4px 12px', fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Add to group</div>
+      {Object.entries(groups).map(([gId, group]) => {
+        const alreadyMember = group.memberIds.includes(contextMenu.agentId)
+        if (alreadyMember) return null
+        return (
+          <button
+            key={gId}
+            className="menu-item"
+            onClick={(event) => {
+              event.stopPropagation()
+              addAgentToGroup(contextMenu.agentId, gId)
+              setContextMenu(null)
+            }}
+            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: '12px', color: 'var(--text-light)', background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            + #{group.name}
+          </button>
         )
-      }
-      details={details}
-    />
+      })}
+      <button
+        className="menu-item"
+        onClick={(event) => {
+          event.stopPropagation()
+          const name = window.prompt('Enter new group channel name:')
+          if (name) {
+            const gId = `group:${name.trim()}`
+            createGroup(name)
+            addAgentToGroup(contextMenu.agentId, gId)
+          }
+          setContextMenu(null)
+        }}
+        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: '12px', color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', borderTop: '1px solid var(--border-light)' }}
+      >
+        [+] Create New Group...
+      </button>
+
+      {Object.entries(groups).some(([_, g]) => g.memberIds.includes(contextMenu.agentId)) && (
+        <>
+          <div className="menu-section-title" style={{ padding: '6px 12px 4px', fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', borderTop: '1px solid var(--border-light)' }}>Remove from group</div>
+          {Object.entries(groups).map(([gId, group]) => {
+            const isMember = group.memberIds.includes(contextMenu.agentId)
+            if (!isMember) return null
+            return (
+              <button
+                key={gId}
+                className="menu-item"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  removeAgentFromGroup(contextMenu.agentId, gId)
+                  setContextMenu(null)
+                }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: '12px', color: 'var(--accent-red)', background: 'none', border: 'none', cursor: 'pointer' }}
+              >
+                - #{group.name}
+              </button>
+            )
+          })}
+        </>
+      )}
+    </div>
+  ) : null
+
+  return (
+    <>
+      <AppShell
+        status={status}
+        detailsOpen={detailsOpen}
+        onCloseDetails={() => setDetailsOpen(false)}
+        shortcutsOpen={shortcutsOpen}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+        onCloseShortcuts={() => setShortcutsOpen(false)}
+        paletteOpen={paletteOpen}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onClosePalette={() => setPaletteOpen(false)}
+        agentsRaw={agents}
+        onSelectAgent={selectAgent}
+        launchModalOpen={launchModalOpen}
+        onCloseLaunchModal={() => setLaunchModalOpen(false)}
+        onLaunchAgent={launchAgent}
+        onBrowseDirectory={browseDirectory}
+        savedAgents={savedAgents}
+        agents={
+          <AgentList
+            agents={agents}
+            selectedId={selectedId}
+            onSelect={selectAgent}
+            onVisibleAgentsChange={updateVisibleAgents}
+            onOpenLaunch={() => setLaunchModalOpen(true)}
+            onAgentContextMenu={handleAgentContextMenu}
+          />
+        }
+        main={
+          loading ? (
+            <EmptyState />
+          ) : selectedAgent ? (
+            <div className="conversation-shell">
+              <ConversationView
+                agent={selectedAgent}
+                messages={messages}
+                detailsOpen={detailsOpen}
+                onToggleDetails={() => setDetailsOpen((open) => !open)}
+                onCapturePane={capturePane}
+              />
+              {selectedAgent.id.startsWith('group:') ? (
+                <div className="read-only-group-banner" style={{ padding: '16px 24px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border-light)', color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center' }}>
+                  Group channels are read-only. Select an individual agent card in the sidebar to send direct DMs or execute direct control input.
+                </div>
+              ) : (
+                <Composer agent={selectedAgent} mode={mode} status={composerStatus} onModeChange={updateMode} onSubmit={submit} />
+              )}
+            </div>
+          ) : (
+            <EmptyState />
+          )
+        }
+        details={details}
+      />
+      {contextMenuElement}
+    </>
   )
 }

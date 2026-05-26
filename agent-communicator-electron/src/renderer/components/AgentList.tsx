@@ -9,11 +9,12 @@ interface Props {
   onSelect: (agent: AgentSummary) => void
   onVisibleAgentsChange?: (agents: AgentSummary[], filterActive: boolean) => void
   onOpenLaunch: () => void
+  onAgentContextMenu?: (e: React.MouseEvent, agentId: string) => void
 }
 
 const scopes: AgentScope[] = ['local', 'remote']
 
-export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch }: Props) {
+export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch, onAgentContextMenu }: Props) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filterActive = normalizedQuery.length > 0
@@ -95,7 +96,7 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange,
                 <div className="empty-card">No {scope} agents match filters.</div>
               ) : (
                 grouped[scope].map((agent) => (
-                  <AgentCard key={agent.id} agent={agent} selected={agent.id === selectedId} onSelect={() => onSelect(agent)} />
+                  <AgentCard key={agent.id} agent={agent} selected={agent.id === selectedId} onSelect={() => onSelect(agent)} onContextMenu={onAgentContextMenu} />
                 ))
               )}
             </div>

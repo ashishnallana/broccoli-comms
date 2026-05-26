@@ -4,6 +4,7 @@ interface Props {
   agent: AgentSummary
   selected: boolean
   onSelect: () => void
+  onContextMenu?: (e: React.MouseEvent, agentId: string) => void
 }
 
 function initials(name: string): string {
@@ -36,9 +37,14 @@ export function avatarBg(name: string): string {
   return colors[index]
 }
 
-export function AgentCard({ agent, selected, onSelect }: Props) {
+export function AgentCard({ agent, selected, onSelect, onContextMenu }: Props) {
   return (
-    <button className={`channel ${selected ? 'active' : ''}`} aria-pressed={selected} onClick={onSelect}>
+    <button
+      className={`channel ${selected ? 'active' : ''}`}
+      aria-pressed={selected}
+      onClick={onSelect}
+      onContextMenu={(e) => onContextMenu?.(e, agent.id)}
+    >
       <span className="agent-avatar-sm" style={{ background: avatarBg(agent.displayName) }}>
         {initials(agent.displayName)}
       </span>
