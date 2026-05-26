@@ -627,8 +627,8 @@ class TestHttpAndRegistry(unittest.TestCase):
             
             # Enqueue a message delivery for target agent2 on target t2. This should trigger event fanout!
             msg_payload = {
-                "sender_tracker_id": "t3",
-                "sender_agent_name": "agent3",
+                "sender_tracker_id": "t1",
+                "sender_agent_name": "agent1",
                 "target_agent_id": "a2",
                 "message": "hello remote world"
             }
@@ -641,7 +641,7 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.assertEqual(len(events["events"]), 1)
             event = events["events"][0]
             self.assertEqual(event["event_type"], "remote_agent_event")
-            self.assertEqual(event["payload"]["sender"], "agent3")
+            self.assertEqual(event["payload"]["sender"], "agent1")
             self.assertEqual(event["payload"]["message"], "hello remote world")
             self.assertEqual(event["payload"]["target_agent_name"], "host2/agent2")
             
@@ -652,6 +652,69 @@ class TestHttpAndRegistry(unittest.TestCase):
                 
             # Verify cleared
             self.assertNotIn(("t1", "client_win_1"), store.remote_watch_leases.get("t2", {}))
+
+    def test_registry_broad_watch_policy_denial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            
+            source = {"tracker_id": "t1", "hostname": "host1", "address": "127.0.0.1", "http_port": 19875, "agents": []}
+            store.put_tracker(source)
+            
+            server, base = start(registry_server.make_handler(store, token="secret", remote_pane_input_enabled=False))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            
+            old_allowed = registry_server.AGENT_REGISTRY_BROAD_WATCH_ALLOWED
+            try:
+                registry_server.AGENT_REGISTRY_BROAD_WATCH_ALLOWED = False
+                
+                lease_payload = {
+                    "client_id": "client_win_1",
+                    "watch_targets": ["host2/agent2"],
+                    "scope": "broad",
+                    "lease_seconds": 10.0
+                }
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    post(f"{base}/trackers/t1/watch-leases", lease_payload, token="secret")
+                self.assertEqual(ctx.exception.code, 403)
+                self.assertNotIn("t2", store.remote_watch_leases)
+            finally:
+                registry_server.AGENT_REGISTRY_BROAD_WATCH_ALLOWED = old_allowed
+
+    def test_registry_narrow_watchlist_blocks_passive_broad_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            
+            source = {"tracker_id": "t1", "hostname": "host1", "address": "127.0.0.1", "http_port": 19875, "agents": []}
+            target = {"tracker_id": "t2", "hostname": "host2", "address": "127.0.0.1", "http_port": 19876, "agents": [{"agent_id": "a2", "name": "agent2", "aliases": [], "status": "idle"}]}
+            store.put_tracker(source)
+            store.put_tracker(target)
+            
+            server, base = start(registry_server.make_handler(store, token="secret"))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            
+            lease_payload = {
+                "client_id": "client_win_1",
+                "watch_targets": ["host2/agent2"],
+                "scope": "narrow",
+                "lease_seconds": 10.0
+            }
+            code, body = post(f"{base}/trackers/t1/watch-leases", lease_payload, token="secret")
+            self.assertEqual(code, 200)
+            
+            msg_payload = {
+                "sender_tracker_id": "t3",
+                "sender_agent_name": "agent3",
+                "target_agent_id": "a2",
+                "message": "passive observation text"
+            }
+            code, body = post(f"{base}/messages", msg_payload, token="secret")
+            self.assertEqual(code, 202)
+            
+            code, events = get(f"{base}/trackers/t1/events?wait=0", token="secret")
+            self.assertEqual(code, 200)
+            self.assertEqual(events["events"], [])
 
 
 if __name__ == "__main__":

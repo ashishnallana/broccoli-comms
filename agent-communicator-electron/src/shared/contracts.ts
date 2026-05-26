@@ -84,5 +84,6 @@ export interface CommunicatorRuntimeClient {
   waitEvents(clientId: string, cursor: number, watchlist: string[], leaseSeconds: number): Promise<{ events: any[]; lastSeq: number; reset?: boolean; gap?: boolean }>
   updateWatchlist(watchlist: string[]): void
   onTrackerResetRequired(callback: () => void): () => void
+  onTrackerWatchDenied(callback: (errorMsg: string) => void): () => void
   onTrackerEvents(callback: (events: any[]) => void): () => void
 }

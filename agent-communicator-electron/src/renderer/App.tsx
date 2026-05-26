@@ -19,6 +19,7 @@ export function App() {
   const [mode, setMode] = useState<ComposerMode>('message')
   const [composerStatus, setComposerStatus] = useState(defaultComposerStatus('message'))
   const [loading, setLoading] = useState(true)
+  const [securityWarning, setSecurityWarning] = useState<string | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(true)
   const [visibleAgents, setVisibleAgents] = useState<AgentSummary[]>([])
   const [agentFilterActive, setAgentFilterActive] = useState(false)
@@ -48,6 +49,7 @@ export function App() {
 
   useEffect(() => {
     selectedIdRef.current = selectedId
+    setSecurityWarning(null)
   }, [selectedId])
 
   useEffect(() => {
@@ -231,6 +233,18 @@ export function App() {
       if (unsubscribeReset) unsubscribeReset()
     }
   }, [runtime, status, reloadActiveMessages])
+
+  useEffect(() => {
+    if (status?.mode !== 'tracker') return
+
+    const unsubscribeDenied = window.broccoliCommsMock?.onTrackerWatchDenied((errorMsg) => {
+      setSecurityWarning(errorMsg)
+    })
+
+    return () => {
+      if (unsubscribeDenied) unsubscribeDenied()
+    }
+  }, [status])
 
 
 
@@ -485,6 +499,15 @@ export function App() {
       <div className="info-note">
         <strong>Direct Control Unlocked!</strong> Switch composer tab modes to <strong>Direct Text</strong> or <strong>Direct Keys</strong> to inject command text and custom Unix keystrokes.
       </div>
+
+      {securityWarning && (
+        <div className="info-note warning" style={{ borderLeftColor: 'var(--accent-red)', background: 'rgba(239, 68, 68, 0.06)' }}>
+          <strong style={{ color: 'var(--accent-red)' }}>Observation Scope Degraded:</strong> {securityWarning}
+          <div style={{ fontSize: '11px', marginTop: '4px', opacity: 0.8 }}>
+            Broad passive remote DMs are denied. Gracefully fell back to narrow requester-visible local timelines.
+          </div>
+        </div>
+      )}
 
       <div className="info-card">
         <div className="info-card-title">{status?.mode === 'tracker' ? 'Tracker Simple View' : 'Mock boundary'}</div>

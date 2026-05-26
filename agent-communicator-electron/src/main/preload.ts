@@ -27,6 +27,13 @@ const api = {
       ipcRenderer.removeListener('tracker-reset-required', subscription)
     }
   },
+  onTrackerWatchDenied: (callback: (errorMsg: string) => void) => {
+    const subscription = (_event: any, errorMsg: string) => callback(errorMsg)
+    ipcRenderer.on('tracker-watch-denied', subscription)
+    return () => {
+      ipcRenderer.removeListener('tracker-watch-denied', subscription)
+    }
+  },
   onTrackerEvents: (callback: (events: any[]) => void) => {
     const subscription = (_event: any, events: any[]) => callback(events)
     ipcRenderer.on(IPC_CHANNELS.onTrackerEvents, subscription)

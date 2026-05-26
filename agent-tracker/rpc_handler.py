@@ -18,6 +18,7 @@ from contextlib import contextmanager
 
 BUFFER_SIZE = 4096
 LOCAL_HOSTNAME = os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
+REMOTE_BROAD_WATCH_ENABLED = os.environ.get("AGENT_TRACKER_BROAD_WATCH_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 DEFAULT_CAPTURE_PANE_LINES = 25
 
 
@@ -995,12 +996,19 @@ def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
     client_id = params.get("client_id")
     watch_list = params.get("watch_list")
     lease_seconds = params.get("lease_seconds")
+    scope = params.get("scope", "narrow")
     
     if client_id:
         if not isinstance(client_id, str):
             raise ValueError("client_id must be a string")
         if watch_list is not None and not isinstance(watch_list, list):
             raise ValueError("watch_list must be a list of strings")
+        if not isinstance(scope, str) or scope not in {"narrow", "broad"}:
+            raise ValueError("scope must be narrow or broad")
+            
+        if scope == "broad" and not REMOTE_BROAD_WATCH_ENABLED:
+            raise ValueError("Broad passive remote observation is disabled on this tracker")
+
         if lease_seconds is not None:
             try:
                 lease_seconds = float(lease_seconds)
@@ -1016,7 +1024,7 @@ def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
         remote_watchlist = [item for item in (watch_list or []) if "/" in item]
         if remote_watchlist:
             try:
-                registry_client.set_remote_watch_leases(client_id, remote_watchlist, lease_seconds)
+                registry_client.set_remote_watch_leases(client_id, remote_watchlist, lease_seconds, scope=scope)
             except Exception as e:
                 logging.warning(f"Failed to delegate remote watch lease to registry: {e}")
         else:

@@ -1452,6 +1452,27 @@ class TestRpcHandler(unittest.TestCase):
         finally:
             state.MAX_EVENTS = old_max
 
+    def test_wait_events_broad_watch_local_rejection(self):
+        old_broad = rpc_handler.REMOTE_BROAD_WATCH_ENABLED
+        try:
+            # Enforce broad watch is disabled
+            rpc_handler.REMOTE_BROAD_WATCH_ENABLED = False
+            
+            params = {
+                "client_id": "client_win_1",
+                "cursor": 0,
+                "watch_list": ["host2/agent2"],
+                "scope": "broad",
+                "lease_seconds": 10.0,
+                "timeout": 0
+            }
+            # Should raise ValueError due to local config gate rejection
+            with self.assertRaises(ValueError) as ctx:
+                rpc_handler.handle_wait_events(params)
+            self.assertIn("Broad passive remote observation is disabled", str(ctx.exception))
+        finally:
+            rpc_handler.REMOTE_BROAD_WATCH_ENABLED = old_broad
+
 
 if __name__ == "__main__":
     unittest.main()

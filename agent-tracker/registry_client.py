@@ -94,11 +94,13 @@ class RegistryClient:
     def fetch_trackers(self):
         return self.request("GET", "/trackers")
 
-    def set_remote_watch_leases(self, client_id: str, watch_targets: list[str], lease_seconds: float) -> int:
+    def set_remote_watch_leases(self, client_id: str, watch_targets: list[str], lease_seconds: float, scope: str = "narrow") -> int:
         status, _ = self.request("POST", f"/trackers/{self.tracker_id}/watch-leases", {
             "client_id": client_id,
             "watch_targets": watch_targets,
             "lease_seconds": lease_seconds,
+            "scope": scope,
+            "token": self.token,
         })
         return status or 500
 
@@ -168,11 +170,11 @@ def ack_event(event_id):
     return None if client is None else client.ack_event(event_id)
 
 
-def set_remote_watch_leases(client_id: str, watch_targets: list[str], lease_seconds: float):
+def set_remote_watch_leases(client_id: str, watch_targets: list[str], lease_seconds: float, scope: str = "narrow"):
     client = _default_client()
     if client is None:
         return 500
-    return client.set_remote_watch_leases(client_id, watch_targets, lease_seconds)
+    return client.set_remote_watch_leases(client_id, watch_targets, lease_seconds, scope=scope)
 
 
 def clear_remote_watch_leases(client_id: str):

@@ -2,15 +2,15 @@
 
 ## Overview
 - **Workspace ID**: `7473ae6d-06a8-444d-8a9f-c50788f3f465`
-- **Last Updated**: `2026-05-26T21:39:00Z`
+- **Last Updated**: `2026-05-26T21:42:00Z`
 - **Goal**: Implement the refined Decoupled, Lease-Based Push message Updates & client-side Group Channels aggregation system.
 - **Links**: [README.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/README.md)
 
 ## Active Agents
 | Agent ID | Agent Name | Role / Purpose | Process Info | Status | Last Active |
 |---|---|---|---|---|---|
-| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Idle | 2026-05-26T16:04:00Z |
-| ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 | Idle | 2026-05-26T21:39:00Z |
+| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Idle | 2026-05-26T16:11:00Z |
+| ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 | Idle | 2026-05-26T21:46:00Z |
 
 ## Task Allocation & Progress
 | Task ID | Description | Assigned Agent ID | Status | Priority | Dependencies | Notes / Artifacts |
@@ -18,8 +18,8 @@
 | task-01 | Refine and finalize v2 Design and Phased Implementation Plan | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | | [Plan](file:///usr/local/google/home/tanmayvijay/.gemini/jetski/brain/7473ae6d-06a8-444d-8a9f-c50788f3f465/implementation_plan_push_events.md) |
 | task-02 | Dispatch Phase A Coding instructions to coding-agent | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-01 | send-message delivered |
 | task-03 | Dispatch Phase B Coding instructions to coding-agent | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-02 | send-message delivered |
-| task-04 | Implement Phase B: Lease-Bound Remote Watch Delegation | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-03 | Completed completely and verified with full test suite |
-| task-05 | Implement Phase C: Authorization Gates for Broader remote observations | ef242aad-c44f-4498-9d6d-47ba7986e93d | Pending | P0 | task-04 | coding task pending |
+| task-04 | Implement Phase B: Lease-Bound Remote Watch Delegation | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-03 | Upgraded server.py & test_http_registry.py |
+| task-05 | Implement Phase C: Authorization Gates for Broader remote observations | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-04 | Enforced scope validation, audit logs, and UI degraded states |
 
 ## Active Blockers & Dependencies
 | Blocked Agent ID | Blocked Task ID | Blocking Task ID | Blocking Agent ID | Reason |
@@ -27,7 +27,7 @@
 | None | | | | |
 
 ## Decisions & Design Notes Log
-- **2026-05-26T16:04:00Z** [tanmayvijay]: DECISION: Approved launching Phase B (Lease-Bound Remote Watch Delegation) inside coding-agent session pane %4.
+- **2026-05-26T16:11:00Z** [tanmayvijay]: DECISION: Approved launching Phase C (Authorization Gates for Broader Remote Observations) inside coding-agent session pane %4.
 
 ## Running the Electron App
 

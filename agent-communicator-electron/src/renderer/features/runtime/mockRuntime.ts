@@ -118,6 +118,10 @@ export class MockRuntimeClient {
     return () => {}
   }
 
+  onTrackerWatchDenied(_callback: (errorMsg: string) => void): () => void {
+    return () => {}
+  }
+
   onTrackerEvents(_callback: (events: any[]) => void): () => void {
     return () => {}
   }

@@ -165,6 +165,9 @@ export async function startTrackerEventLoop(webContents: Electron.WebContents) {
         since = 0
         webContents.send('tracker-reset-required')
       }
+      if (msg.includes('Broad passive remote observation is disabled') || msg.includes('unauthorized_scope') || msg.includes('unauthorized')) {
+        webContents.send('tracker-watch-denied', msg)
+      }
       await new Promise((resolve) => setTimeout(resolve, 3000))
     }
   }

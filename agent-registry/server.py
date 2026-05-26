@@ -17,6 +17,7 @@ LOG = logging.getLogger("agent-registry")
 
 TOKEN = os.environ.get("AGENT_REGISTRY_TOKEN", "")
 AUTH_REQUIRED = os.environ.get("AGENT_REGISTRY_AUTH", "true").lower() not in ("0", "false", "no")
+AGENT_REGISTRY_BROAD_WATCH_ALLOWED = os.environ.get("AGENT_REGISTRY_BROAD_WATCH_ALLOWED", "false").lower() in {"1", "true", "yes", "on"}
 MAX_BODY_BYTES = int(os.environ.get("AGENT_MAX_DELIVERY_BYTES", "5242880"))
 STALE = int(os.environ.get("TRACKER_STALE_SECONDS", "60"))
 GONE = int(os.environ.get("TRACKER_GONE_SECONDS", "180"))
@@ -121,7 +122,7 @@ class Store:
                 for key, lease in list(leases.items()):
                     if lease["expires_at"] < now:
                         leases.pop(key)
-                        LOG.info("sweep: purged expired remote watch lease for client %s on target_tid=%s", key[1], target_tid)
+                        LOG.info("AUDIT: Purged expired remote watch lease for client %s on target_tid=%s", key[1], target_tid)
                 if not leases:
                     self.remote_watch_leases.pop(target_tid, None)
 
@@ -159,7 +160,7 @@ class Store:
                 return tid
         return None
 
-    def put_watch_lease(self, source_tracker_id: str, client_id: str, watch_targets: list[str], lease_seconds: float) -> None:
+    def put_watch_lease(self, source_tracker_id: str, client_id: str, watch_targets: list[str], lease_seconds: float, scope: str = "narrow") -> None:
         """Registers or replaces a lease-bound remote watch lease atomically."""
         now = time.time()
         expires_at = now + lease_seconds
@@ -183,9 +184,10 @@ class Store:
                 self.remote_watch_leases[target_tid][(source_tracker_id, client_id)] = {
                     "expires_at": expires_at,
                     "source_tracker_id": source_tracker_id,
-                    "watch_targets": set(watch_targets)
+                    "watch_targets": set(watch_targets),
+                    "scope": scope
                 }
-            LOG.info("put_watch_lease: source_tracker_id=%s client_id=%s lease_seconds=%.1fs targets=%s", source_tracker_id, client_id, lease_seconds, watch_targets)
+            LOG.info("AUDIT: Registered remote watch lease: source_tracker_id=%s client_id=%s scope=%s lease_seconds=%.1fs targets=%s", source_tracker_id, client_id, scope, lease_seconds, watch_targets)
 
     def clear_watch_leases(self, source_tracker_id: str, client_id: str) -> None:
         """Atomically clears all remote watch leases for a given client."""
@@ -194,7 +196,7 @@ class Store:
                 key = (source_tracker_id, client_id)
                 if key in leases:
                     leases.pop(key)
-                    LOG.info("clear_watch_leases: cleared remote watch lease for source_tracker_id=%s client_id=%s on target_tid=%s", source_tracker_id, client_id, target_tid)
+                    LOG.info("AUDIT: Cleared remote watch lease for source_tracker_id=%s client_id=%s on target_tid=%s", source_tracker_id, client_id, target_tid)
 
     def list_agents(self):
         with self.lock:
@@ -395,6 +397,21 @@ def _fanout_remote_message_delivered(store, target_tracker_id, target_agent, msg
             if lease["expires_at"] < now:
                 continue
             
+            scope = lease.get("scope", "narrow")
+            is_broad = True
+            
+            if msg_payload.get("sender_tracker_id") == source_tracker_id:
+                is_broad = False
+            elif target_agent.get("tracker_id") == source_tracker_id:
+                is_broad = False
+                
+            if scope == "narrow" and is_broad:
+                continue
+                
+            if scope == "broad" and is_broad and not AGENT_REGISTRY_BROAD_WATCH_ALLOWED:
+                LOG.warning("AUDIT: Fanout blocked unauthorized passive observation event from %s to watcher t_id=%s", target_agent["hostname"], source_tracker_id)
+                continue
+
             match = False
             for wt in lease["watch_targets"]:
                 if "/" in wt:
@@ -413,6 +430,7 @@ def _fanout_remote_message_delivered(store, target_tracker_id, target_agent, msg
                     "timestamp": msg_payload.get("sent_at"),
                 }
                 store.enqueue_tracker_event(source_tracker_id, "remote_agent_event", "registry", event_payload)
+                LOG.info("AUDIT: Fanned out remote watch event to source_tracker_id=%s client_id=%s (scope=%s, is_broad=%s)", source_tracker_id, client_id, scope, is_broad)
 
 
 def _validate_attachments(body):
@@ -670,7 +688,16 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 except ValueError:
                     return self._json(400, {"error": "invalid_request", "message": "lease_seconds must be a number"})
                 
-                store.put_watch_lease(tracker_id, body["client_id"], watch_targets, lease_seconds)
+                scope = body.get("scope", "narrow")
+                if scope not in {"narrow", "broad"}:
+                    return self._json(400, {"error": "invalid_request", "message": "scope must be narrow or broad"})
+                
+                # Security policy check: reject unauthorized broad passive observation
+                if scope == "broad" and not AGENT_REGISTRY_BROAD_WATCH_ALLOWED:
+                    LOG.warning("AUDIT: Denied unauthorized broad watch lease request: tracker_id=%s client_id=%s targets=%s", tracker_id, body["client_id"], watch_targets)
+                    return self._json(403, {"error": "unauthorized_scope", "message": "Broad passive remote observation is disabled on this registry"})
+                
+                store.put_watch_lease(tracker_id, body["client_id"], watch_targets, lease_seconds, scope=scope)
                 return self._json(200, {"ok": True})
 
             if len(parts) == 3 and parts[0] == "trackers" and parts[2] in {"heartbeat", "agent-update"}:
