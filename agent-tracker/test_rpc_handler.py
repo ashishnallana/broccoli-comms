@@ -465,6 +465,132 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    @mock.patch("tmux_util.focus_pane")
+    @mock.patch("registry_client.publish_tracker_event")
+    def test_remote_message_focus_enabled_uses_registered_socket(self, _publish_tracker_event, focus_pane):
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "/tmp/private.sock",
+                "session": "sess",
+                "status": "idle",
+                "no_notify_with_send_keys": True,
+            })
+            with mock.patch.dict(os.environ, {"BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES": "1"}, clear=True):
+                rpc_handler.deliver_local_message("receiver", {
+                    "sender": "sender-agent (via host)",
+                    "timestamp": "now",
+                    "message": "hello",
+                    "read": False,
+                    "message_id": "focus-msg-1",
+                    "sender_agent_id": "sender-id",
+                    "sender_tracker_id": "tracker-1",
+                })
+            focus_pane.assert_called_once_with("%1", session="sess", socket_path="/tmp/private.sock")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.focus_pane")
+    @mock.patch("registry_client.publish_tracker_event")
+    def test_remote_message_focus_disabled_by_default(self, _publish_tracker_event, focus_pane):
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "/tmp/private.sock",
+                "session": "sess",
+                "status": "idle",
+                "no_notify_with_send_keys": True,
+            })
+            with mock.patch.dict(os.environ, {}, clear=True):
+                rpc_handler.deliver_local_message("receiver", {
+                    "sender": "sender-agent (via host)",
+                    "timestamp": "now",
+                    "message": "hello",
+                    "read": False,
+                    "message_id": "focus-msg-disabled",
+                    "sender_agent_id": "sender-id",
+                    "sender_tracker_id": "tracker-1",
+                })
+            focus_pane.assert_not_called()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.focus_pane", side_effect=RuntimeError("focus failed"))
+    @mock.patch("registry_client.publish_tracker_event")
+    def test_remote_message_focus_failure_does_not_fail_delivery(self, _publish_tracker_event, focus_pane):
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "/tmp/private.sock",
+                "session": "sess",
+                "status": "idle",
+                "no_notify_with_send_keys": True,
+            })
+            with mock.patch.dict(os.environ, {"BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES": "true"}, clear=True):
+                self.assertEqual(rpc_handler.deliver_local_message("receiver", {
+                    "sender": "sender-agent (via host)",
+                    "timestamp": "now",
+                    "message": "hello",
+                    "read": False,
+                    "message_id": "focus-msg-fail",
+                    "sender_agent_id": "sender-id",
+                    "sender_tracker_id": "tracker-1",
+                }), "receiver")
+            focus_pane.assert_called_once_with("%1", session="sess", socket_path="/tmp/private.sock")
+            with open(inbox_path, "r") as f:
+                self.assertTrue(any(json.loads(line).get("message_id") == "focus-msg-fail" for line in f if line.strip()))
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.focus_pane")
+    @mock.patch("registry_client.publish_tracker_event")
+    def test_local_message_never_triggers_remote_focus(self, _publish_tracker_event, focus_pane):
+        inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("receiver", {
+                "agent_id": "receiver-id",
+                "uuid": "receiver-id",
+                "tmux_pane": "%1",
+                "tmux_socket": "/tmp/private.sock",
+                "session": "sess",
+                "status": "idle",
+                "no_notify_with_send_keys": True,
+            })
+            with mock.patch.dict(os.environ, {"BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES": "1"}, clear=True):
+                rpc_handler.deliver_local_message("receiver", {
+                    "sender": "local-sender",
+                    "timestamp": "now",
+                    "message": "hello",
+                    "read": False,
+                    "message_id": "focus-local-msg",
+                    "sender_agent_id": "sender-id",
+                    "sender_tracker_id": registry_client.TRACKER_ID,
+                })
+            focus_pane.assert_not_called()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
     def test_wait_events_timeout_returns_empty_best_effort_response(self):
         result = rpc_handler.handle_wait_events({"since": 0, "timeout": 0})
         self.assertEqual(result["events"], [])
@@ -546,6 +672,47 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    def test_ensure_mailbox_creates_local_no_notify_identity(self):
+        result = rpc_handler.handle_ensure_mailbox({"agent_name": "agent-communicator"})
+        self.assertEqual(result["name"], "agent-communicator")
+        info = state.get_agent("agent-communicator")
+        self.assertEqual(info.get("agent_id"), result["agent_id"])
+        self.assertTrue(info.get("is_mailbox"))
+        self.assertTrue(info.get("no_notify_with_send_keys"))
+        self.assertTrue(info.get("no_registry"))
+        self.assertEqual(info.get("agent_type"), "agent-communicator-ui")
+        self.assertIsNone(info.get("session"))
+        self.assertIsNone(info.get("tmux_pane"))
+        self.assertIsNone(info.get("tmux_socket"))
+        self.assertIsNone(info.get("wrapper_pid"))
+        self.assertIsNone(info.get("pid"))
+
+    def test_ensure_mailbox_clears_existing_pane_metadata_and_blocks_direct_input(self):
+        state.set_agent("agent-communicator", {
+            "agent_id": "ui-id",
+            "uuid": "ui-id",
+            "session": "old-session",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "wrapper_pid": 123,
+            "pid": 456,
+        })
+        rpc_handler.handle_ensure_mailbox({"agent_name": "agent-communicator"})
+        info = state.get_agent("agent-communicator")
+        self.assertIsNone(info.get("session"))
+        self.assertIsNone(info.get("tmux_pane"))
+        self.assertIsNone(info.get("tmux_socket"))
+        self.assertIsNone(info.get("wrapper_pid"))
+        self.assertIsNone(info.get("pid"))
+        with self.assertRaisesRegex(RuntimeError, "no registered tmux pane"):
+            rpc_handler.handle_send_input({"agent_name": "agent-communicator", "input_type": "text", "text": "unsafe"})
+
+    def test_ensure_mailbox_rejects_remote_names(self):
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_ensure_mailbox({"agent_name": "host/agent-communicator"})
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_ensure_mailbox({"agent_name": "registry:host/agent-communicator"})
+
     @mock.patch("state.publish_event")
     def test_get_inbox_publishes_message_read_event_once(self, publish_event):
         inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
@@ -567,6 +734,49 @@ class TestRpcHandler(unittest.TestCase):
             publish_event.reset_mock()
             rpc_handler.handle_get_inbox({"agent_name": "agent1"})
             publish_event.assert_not_called()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("state.publish_event")
+    def test_get_inbox_mark_read_false_does_not_mark_or_publish(self, publish_event):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            with open(inbox_path, "w") as f:
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "hi", "read": False, "message_id": "m1"}) + "\n")
+
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "mark_read": False, "last_n": 100})
+            self.assertEqual(result["mode"], "last_n")
+            self.assertEqual(len(result["messages"]), 1)
+            publish_event.assert_not_called()
+
+            with open(inbox_path, "r") as f:
+                stored = [json.loads(line) for line in f if line.strip()]
+            self.assertFalse(stored[0]["read"])
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("state.publish_event")
+    def test_get_inbox_sender_filter_marks_only_matching_messages(self, publish_event):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            with open(inbox_path, "w") as f:
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "a", "read": False, "message_id": "m1"}) + "\n")
+                f.write(json.dumps({"sender": "beta", "sender_agent_id": "beta-id", "message": "b", "read": False, "message_id": "m2"}) + "\n")
+
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "sender_agent_id": "alpha-id"})
+            self.assertEqual([m["message_id"] for m in result["messages"]], ["m1"])
+
+            with open(inbox_path, "r") as f:
+                stored = [json.loads(line) for line in f if line.strip()]
+            self.assertTrue(stored[0]["read"])
+            self.assertFalse(stored[1]["read"])
+            publish_event.assert_called_once()
         finally:
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
@@ -1119,6 +1329,40 @@ class TestRpcHandler(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             rpc_handler.handle_send_input({"target_address": "remote-host/agent1", "input_type": "text", "text": "hello"})
         self.assertIn("remote direct pane input is disabled", str(ctx.exception))
+
+    @mock.patch.object(registry_client, "send_remote_pane_input", return_value=(202, {"pane_input_id": "pi-1", "request_id": "req-1"}))
+    def test_send_input_remote_target_address_routes_when_enabled(self, send_remote):
+        state.set_agent("sender", {"agent_id": "sender-id", "status": "idle"})
+        with mock.patch.dict(os.environ, {"AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED": "1"}, clear=True):
+            result = rpc_handler.handle_send_input({
+                "sender_name": "sender",
+                "target_address": "remote-host/agent1",
+                "input_type": "text",
+                "text": "hello",
+                "pane_input_id": "pi-1",
+                "request_id": "req-1",
+            })
+        self.assertEqual(result, {"success": True, "queued": True, "mode": "text", "pane_input_id": "pi-1", "request_id": "req-1"})
+        send_remote.assert_called_once_with(
+            "sender", "sender-id", registry_client.TRACKER_ID, "remote-host", "agent1", "text",
+            text="hello", keys=None, submit=True, pane_input_id="pi-1", request_id="req-1"
+        )
+
+    @mock.patch.object(registry_client, "send_remote_pane_input_to_registry", return_value=(202, {"pane_input_id": "pi-2", "request_id": "req-2"}))
+    def test_send_input_remote_registry_qualified_routes_keys(self, send_remote):
+        with mock.patch.dict(os.environ, {"AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED": "1"}, clear=True):
+            result = rpc_handler.handle_send_input({
+                "target_address": "work:remote-host/agent1",
+                "input_type": "keys",
+                "keys": ["ctrl-c", "enter"],
+                "pane_input_id": "pi-2",
+                "request_id": "req-2",
+            })
+        self.assertTrue(result["success"])
+        send_remote.assert_called_once_with(
+            "work", "cli-user", None, registry_client.TRACKER_ID, "remote-host", "agent1", "keys",
+            text=None, keys=["C-c", "Enter"], submit=True, pane_input_id="pi-2", request_id="req-2"
+        )
 
     def test_send_input_invalid_params(self):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})

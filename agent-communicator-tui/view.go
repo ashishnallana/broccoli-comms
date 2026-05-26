@@ -124,15 +124,21 @@ func (m model) composerBox(width int) string {
 }
 
 func (m model) footer(width int) string {
+	directScope := "local only"
+	if m.runtime.RemoteDirectInputEnabled {
+		directScope = "local+remote enabled"
+	}
 	lines := []string{
 		"c-t view · tab section · c-n/p agent · c-a read · c-o prompts · c-h hide · c-f save · c-s save agent",
-		"↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · c-q quit · c-x debug capture",
+		fmt.Sprintf("↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · /msg message · /text, /key pane control (%s) · c-q quit · c-x debug capture", directScope),
 	}
 	if status := m.runtimeStatusLine(); status != "" {
 		lines = append([]string{status}, lines...)
 	}
 	if m.paneCaptureStatus != "" {
 		lines = []string{m.paneCaptureStatus}
+	} else if m.directInputStatus != "" {
+		lines = []string{m.directInputStatus}
 	} else if m.err != nil {
 		lines = append([]string{}, lines...)
 		lines = append(lines, m.err.Error())
@@ -143,7 +149,10 @@ func (m model) footer(width int) string {
 		}
 	}
 	text := strings.Join(lines, "\n")
-	if m.err != nil {
+	if m.directInputStatus != "" && m.directInputStatusErr {
+		return lipgloss.NewStyle().Foreground(palette.Red).Render(text)
+	}
+	if m.err != nil && m.directInputStatus == "" {
 		return lipgloss.NewStyle().Foreground(palette.Red).Render(text)
 	}
 	return mutedStyle.Render(text)
@@ -160,7 +169,11 @@ func (m model) runtimeStatusLine() string {
 	if m.agentListStale || m.err != nil {
 		state = "tracker unavailable"
 	}
-	details := []string{"Broccoli Comms runtime", state, fmt.Sprintf("agents %d", len(m.rows))}
+	remoteDirect := "remote pane input off"
+	if m.runtime.RemoteDirectInputEnabled {
+		remoteDirect = "remote pane input on"
+	}
+	details := []string{"Broccoli Comms runtime", state, fmt.Sprintf("agents %d", len(m.rows)), remoteDirect}
 	if m.runtime.TrackerSocket != "" {
 		details = append(details, "socket "+filepath.Base(m.runtime.TrackerSocket))
 	}

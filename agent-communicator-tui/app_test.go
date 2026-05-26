@@ -14,15 +14,20 @@ import (
 )
 
 type fakeLocal struct {
-	agents     map[string]tracker.Agent
-	inbox      []tracker.Message
-	lastLimit  int
-	sentTo     string
-	sentBody   string
-	sentSender string
-	sentID     string
-	sendErr    error
-	events     tracker.WaitEventsResult
+	agents       map[string]tracker.Agent
+	inbox        []tracker.Message
+	lastLimit    int
+	sentTo       string
+	sentBody     string
+	sentSender   string
+	sentID       string
+	sendErr      error
+	directText   string
+	directSubmit bool
+	directKeys   []string
+	directTarget string
+	directErr    error
+	events       tracker.WaitEventsResult
 }
 
 func (f *fakeLocal) List(context.Context) (map[string]tracker.Agent, error) { return f.agents, nil }
@@ -41,6 +46,14 @@ func (f *fakeLocal) SendMessageFrom(_ context.Context, sender, target, body stri
 func (f *fakeLocal) SendMessageWithID(_ context.Context, sender, target, body, id string, _ []tracker.Attachment) error {
 	f.sentSender, f.sentTo, f.sentBody, f.sentID = sender, target, body, id
 	return f.sendErr
+}
+func (f *fakeLocal) SendText(_ context.Context, target, text string, submit bool) error {
+	f.directTarget, f.directText, f.directSubmit = target, text, submit
+	return f.directErr
+}
+func (f *fakeLocal) SendKeys(_ context.Context, target string, keys []string) error {
+	f.directTarget, f.directKeys = target, append([]string(nil), keys...)
+	return f.directErr
 }
 func (f *fakeLocal) WaitEvents(context.Context, tracker.WaitOptions) (tracker.WaitEventsResult, error) {
 	return f.events, nil
@@ -74,8 +87,9 @@ func TestRuntimeInfoFromEnvDetectsBroccoliRuntime(t *testing.T) {
 	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "/tmp/broccoli-runtime")
 	t.Setenv("AGENT_TRACKER_SOCKET", "")
 	t.Setenv("BROCCOLI_COMMS_TMUX_SOCKET", "/tmp/broccoli-runtime/tmux.sock")
+	t.Setenv("BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED", "1")
 	info := runtimeInfoFromEnv()
-	if !info.AppRuntime || info.TrackerSocket != "/tmp/broccoli-runtime/agent-tracker.sock" || info.TmuxSocket != "/tmp/broccoli-runtime/tmux.sock" {
+	if !info.AppRuntime || info.TrackerSocket != "/tmp/broccoli-runtime/agent-tracker.sock" || info.TmuxSocket != "/tmp/broccoli-runtime/tmux.sock" || !info.RemoteDirectInputEnabled {
 		t.Fatalf("runtimeInfoFromEnv() = %+v", info)
 	}
 }
@@ -258,6 +272,161 @@ func TestRemoteSendUsesHostQualifiedName(t *testing.T) {
 	}
 	if local.sentTo != "tanmayvijay.c.googlers.com/agent" || local.sentBody != "hello\n\n(PS: Reply in markdown format.)" {
 		t.Fatalf("sent target/body = %q/%q", local.sentTo, local.sentBody)
+	}
+}
+
+func TestSlashMsgSendsNormalMessageWithoutCommandPrefix(t *testing.T) {
+	local := &fakeLocal{}
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/msg hello")})
+	m = updated.(model)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	msg := cmd()
+	if sent, ok := msg.(messageSent); !ok || sent.Err != nil {
+		t.Fatalf("send msg = %#v", msg)
+	}
+	if local.sentBody != "hello\n\n(PS: Reply in markdown format.)" || local.directText != "" {
+		t.Fatalf("sentBody=%q directText=%q", local.sentBody, local.directText)
+	}
+}
+
+func TestSlashTextSendsDirectPaneInputWithoutOutbox(t *testing.T) {
+	local := &fakeLocal{}
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local, sentMessages: map[string][]tracker.Message{}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/text hello")})
+	m = updated.(model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if string(m.composer) != "" || cmd == nil {
+		t.Fatalf("composer=%q cmd=%v", string(m.composer), cmd)
+	}
+	m, _ = mustUpdate(m, cmd())
+	if local.directTarget != "alpha" || local.directText != "hello" || !local.directSubmit {
+		t.Fatalf("direct target/text/submit = %q/%q/%v", local.directTarget, local.directText, local.directSubmit)
+	}
+	if local.sentBody != "" || len(m.outbox) != 0 || len(m.sentMessages["alpha"]) != 0 {
+		t.Fatalf("normal send/outbox changed: sentBody=%q outbox=%+v sent=%+v", local.sentBody, m.outbox, m.sentMessages)
+	}
+	if !strings.Contains(m.directInputStatus, "Pane text sent") {
+		t.Fatalf("directInputStatus = %q", m.directInputStatus)
+	}
+}
+
+func TestSlashTextNoSubmitPreservesSubmitFalse(t *testing.T) {
+	local := &fakeLocal{}
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/text --no-submit draft")})
+	m = updated.(model)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = cmd()
+	if local.directText != "draft" || local.directSubmit {
+		t.Fatalf("direct text/submit = %q/%v", local.directText, local.directSubmit)
+	}
+}
+
+func TestSlashKeySendsDirectKeys(t *testing.T) {
+	local := &fakeLocal{}
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/key C-c Enter")})
+	m = updated.(model)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = cmd()
+	if local.directTarget != "alpha" || strings.Join(local.directKeys, ",") != "C-c,Enter" {
+		t.Fatalf("direct target/keys = %q/%+v", local.directTarget, local.directKeys)
+	}
+}
+
+func TestDirectInputFailureRestoresComposerAndDoesNotAppendOutbox(t *testing.T) {
+	local := &fakeLocal{directErr: errors.New("boom")}
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local, sentMessages: map[string][]tracker.Message{}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/text hello")})
+	m = updated.(model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m, _ = mustUpdate(m, cmd())
+	if string(m.composer) != "/text hello" || len(m.outbox) != 0 || len(m.sentMessages["alpha"]) != 0 {
+		t.Fatalf("composer=%q outbox=%+v sent=%+v", string(m.composer), m.outbox, m.sentMessages)
+	}
+	if m.err != nil || !m.directInputStatusErr || !strings.Contains(m.directInputStatus, "Pane control failed") {
+		t.Fatalf("err=%v status=%q statusErr=%v", m.err, m.directInputStatus, m.directInputStatusErr)
+	}
+}
+
+func TestDirectInputFailureStatusClearsWithoutClearingUnrelatedError(t *testing.T) {
+	unrelated := errors.New("pre-existing")
+	m := model{err: unrelated, directInputStatus: "Pane control failed for alpha: boom", directInputStatusErr: true}
+	updated, _ := m.Update(clearDirectInputStatusTick{})
+	m = updated.(model)
+	if m.directInputStatus != "" || m.directInputStatusErr {
+		t.Fatalf("status=%q statusErr=%v", m.directInputStatus, m.directInputStatusErr)
+	}
+	if m.err != unrelated {
+		t.Fatalf("err = %v, want preserved unrelated error", m.err)
+	}
+}
+
+func TestRemoteDirectInputRejectedBeforeDispatch(t *testing.T) {
+	local := &fakeLocal{}
+	row := agentRow{Name: "host/alpha", Scope: "remote", TargetAddress: "host/alpha"}
+	m := model{rows: []agentRow{row}, local: local}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/key C-c")})
+	m = updated.(model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m, _ = mustUpdate(m, cmd())
+	if local.directTarget != "" || string(m.composer) != "/key C-c" || !m.directInputStatusErr {
+		t.Fatalf("directTarget=%q composer=%q statusErr=%v", local.directTarget, string(m.composer), m.directInputStatusErr)
+	}
+	if !strings.Contains(m.directInputStatus, "remote direct pane input is disabled") {
+		t.Fatalf("directInputStatus = %q", m.directInputStatus)
+	}
+}
+
+func TestRemoteDirectInputEnabledDispatchesExactTargetAddress(t *testing.T) {
+	local := &fakeLocal{}
+	row := agentRow{Name: "r1/alpha", Scope: "remote", TargetAddress: "registry-1:host.example/alpha"}
+	m := model{rows: []agentRow{row}, local: local, runtime: runtimeInfo{RemoteDirectInputEnabled: true}, sentMessages: map[string][]tracker.Message{}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/text remote hello")})
+	m = updated.(model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m, _ = mustUpdate(m, cmd())
+	if local.directTarget != "registry-1:host.example/alpha" || local.directText != "remote hello" || !local.directSubmit {
+		t.Fatalf("remote direct target/text/submit = %q/%q/%v", local.directTarget, local.directText, local.directSubmit)
+	}
+	if string(m.composer) != "" || len(m.outbox) != 0 || len(m.sentMessages[conversationKey(row)]) != 0 {
+		t.Fatalf("composer=%q outbox=%+v sent=%+v", string(m.composer), m.outbox, m.sentMessages)
+	}
+	if m.directInputStatusErr || !strings.Contains(m.directInputStatus, "Pane text sent") || !strings.Contains(m.directInputStatus, "r1/alpha") {
+		t.Fatalf("directInputStatus=%q err=%v", m.directInputStatus, m.directInputStatusErr)
+	}
+}
+
+func TestRemoteDirectInputEnabledFailureRestoresComposer(t *testing.T) {
+	local := &fakeLocal{directErr: errors.New("registry disabled")}
+	row := agentRow{Name: "r1/alpha", Scope: "remote", TargetAddress: "registry-1:host.example/alpha"}
+	m := model{rows: []agentRow{row}, local: local, runtime: runtimeInfo{RemoteDirectInputEnabled: true}, sentMessages: map[string][]tracker.Message{}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/key C-c")})
+	m = updated.(model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m, _ = mustUpdate(m, cmd())
+	if local.directTarget != "registry-1:host.example/alpha" || strings.Join(local.directKeys, ",") != "C-c" {
+		t.Fatalf("remote direct target/keys = %q/%+v", local.directTarget, local.directKeys)
+	}
+	if string(m.composer) != "/key C-c" || !m.directInputStatusErr || !strings.Contains(m.directInputStatus, "registry disabled") {
+		t.Fatalf("composer=%q status=%q statusErr=%v", string(m.composer), m.directInputStatus, m.directInputStatusErr)
+	}
+}
+
+func TestFooterLabelsRemoteDirectInputCapability(t *testing.T) {
+	disabled := model{width: 200}.footer(200)
+	if !strings.Contains(disabled, "pane control (local only)") {
+		t.Fatalf("disabled footer = %q", disabled)
+	}
+	enabled := model{width: 200, runtime: runtimeInfo{RemoteDirectInputEnabled: true}}.footer(200)
+	if !strings.Contains(enabled, "pane control (local+remote enabled)") {
+		t.Fatalf("enabled footer = %q", enabled)
 	}
 }
 

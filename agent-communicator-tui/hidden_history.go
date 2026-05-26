@@ -37,7 +37,7 @@ func (m *model) applyInitialHiddenForNoHistory() {
 func (m model) rowHasOutbound(row agentRow) bool {
 	key := conversationKey(row)
 	for _, rec := range m.outbox {
-		if rec.TargetAddress == key {
+		if outboxRecordMatchesRow(rec, row) {
 			return true
 		}
 	}
@@ -45,6 +45,9 @@ func (m model) rowHasOutbound(row agentRow) bool {
 }
 
 func rowHistoryKey(row agentRow) string {
+	if key := conversationKey(row); key != "" && key != rowTarget(row) {
+		return key
+	}
 	if row.Scope == "remote" {
 		return strings.TrimSpace(row.AgentName + "\x00" + row.Hostname)
 	}
@@ -63,6 +66,9 @@ func readInboxConversationKeys() map[string]bool {
 		var msg tracker.Message
 		if json.Unmarshal(scanner.Bytes(), &msg) != nil {
 			continue
+		}
+		for _, key := range messageRowIDKeys(msg) {
+			keys[key] = true
 		}
 		sender := strings.TrimSpace(msg.Sender)
 		if sender == "" {

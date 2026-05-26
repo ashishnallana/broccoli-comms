@@ -1,4 +1,4 @@
-import fcntl, json, logging, os, socket, threading, time, urllib.error, urllib.request, uuid, shlex
+import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error, urllib.request, uuid, shlex
 import state
 
 LOG = logging.getLogger("agent-tracker.registry")
@@ -10,6 +10,8 @@ HTTP_PORT = int(os.environ.get("AGENT_TRACKER_HTTP_PORT", "19876"))
 HEARTBEAT_INTERVAL = int(os.environ.get("AGENT_REGISTRY_HEARTBEAT_SECONDS", "30"))
 DELIVERY_WAIT_SECONDS = int(os.environ.get("AGENT_REGISTRY_DELIVERY_WAIT_SECONDS", "25"))
 DELIVERY_TARGET_GRACE_SECONDS = int(os.environ.get("AGENT_REGISTRY_DELIVERY_TARGET_GRACE_SECONDS", "60"))
+REMOTE_PANE_INPUT_MAX_TEXT_BYTES = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES", "4096"))
+REMOTE_PANE_INPUT_MAX_KEYS = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_KEYS", "16"))
 STATUS_PATH = os.path.join(state.CACHE_DIR, "registry-status.json")
 
 
@@ -82,6 +84,9 @@ class RegistryClient:
 
     def send_remote_message(self, sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None):
         return self.request("POST", "/messages", _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id))
+
+    def send_remote_pane_input(self, payload):
+        return self.request("POST", "/pane-inputs", payload)
 
     def fetch_agents(self):
         return self.request("GET", "/agents")
@@ -185,6 +190,65 @@ def _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, tar
     return payload
 
 
+def _env_truthy(name):
+    return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def remote_pane_input_send_enabled():
+    return _env_truthy("AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED")
+
+
+def remote_pane_input_receive_enabled():
+    return _env_truthy("AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_RECEIVE_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED")
+
+
+def _redacted_pane_input_audit(payload, result=None):
+    mode = (payload.get("input_type") or payload.get("mode") or "").lower()
+    fields = {
+        "pane_input_id": payload.get("pane_input_id"),
+        "request_id": payload.get("request_id"),
+        "sender_tracker_id": payload.get("sender_tracker_id"),
+        "target_agent_id": payload.get("target_agent_id"),
+        "target_agent_name": payload.get("target_agent_name"),
+        "target_hostname": payload.get("target_hostname"),
+        "mode": mode,
+        "result": result,
+    }
+    if mode == "text" and isinstance(payload.get("text"), str):
+        encoded = payload["text"].encode("utf-8")
+        fields["text_bytes"] = len(encoded)
+        fields["text_sha256"] = hashlib.sha256(encoded).hexdigest()[:16]
+    elif mode == "keys":
+        keys = payload.get("keys") if isinstance(payload.get("keys"), list) else [payload.get("keys")]
+        fields["key_count"] = len([k for k in keys if k is not None])
+    return fields
+
+
+def _remote_pane_input_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, input_type, text=None, keys=None, submit=True, pane_input_id=None, request_id=None):
+    pane_input_id = pane_input_id or request_id or str(uuid.uuid4())
+    request_id = request_id or pane_input_id
+    payload = {
+        "pane_input_id": pane_input_id,
+        "request_id": request_id,
+        "sender_agent_id": sender_agent_id,
+        "sender_agent_name": sender_name,
+        "sender_tracker_id": sender_tracker_id,
+        "input_type": input_type,
+        "submit": submit,
+    }
+    try:
+        uuid.UUID(target_name_or_id)
+        payload["target_agent_id"] = target_name_or_id
+    except (ValueError, TypeError):
+        payload["target_agent_name"] = target_name_or_id
+        payload["target_hostname"] = target_hostname
+    if input_type == "text":
+        payload["text"] = text
+    else:
+        payload["keys"] = keys
+    return payload
+
+
 def _client_has_hostname(client, hostname):
     status, body = client.fetch_agents()
     if status != 200:
@@ -210,6 +274,32 @@ def send_remote_message_to_registry(registry_name, sender_name, sender_agent_id,
     for client in load_registry_clients():
         if client.name == registry_name:
             return client.request("POST", "/messages", _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id))
+    return 404, {"message": f"registry not configured: {registry_name}"}
+
+
+def send_remote_pane_input(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, input_type, text=None, keys=None, submit=True, pane_input_id=None, request_id=None):
+    payload = _remote_pane_input_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, input_type, text, keys, submit, pane_input_id, request_id)
+    clients = load_registry_clients()
+    if clients:
+        if len(clients) == 1:
+            LOG.info("routing remote pane input audit=%s registry=%s", _redacted_pane_input_audit(payload, result="send"), clients[0].name)
+            return clients[0].send_remote_pane_input(payload)
+        matches = [client for client in clients if _client_has_hostname(client, target_hostname)]
+        if len(matches) > 1:
+            choices = ", ".join(f"{client.name}:{target_hostname}/{target_name_or_id}" for client in matches)
+            return 409, {"message": f"Ambiguous remote target; use one of: {choices}"}
+        client = matches[0] if matches else clients[0]
+        LOG.info("routing remote pane input audit=%s registry=%s", _redacted_pane_input_audit(payload, result="send"), client.name)
+        return client.send_remote_pane_input(payload)
+    return 404, {"message": "registry not configured"}
+
+
+def send_remote_pane_input_to_registry(registry_name, sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, input_type, text=None, keys=None, submit=True, pane_input_id=None, request_id=None):
+    payload = _remote_pane_input_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, input_type, text, keys, submit, pane_input_id, request_id)
+    for client in load_registry_clients():
+        if client.name == registry_name:
+            LOG.info("routing remote pane input audit=%s registry=%s", _redacted_pane_input_audit(payload, result="send"), client.name)
+            return client.send_remote_pane_input(payload)
     return 404, {"message": f"registry not configured: {registry_name}"}
 
 
@@ -615,6 +705,40 @@ def _event_loop(client=None):
                 LOG.warning("failed to ack tracker event event_id=%s status=%s", event.get("event_id"), ack)
 
 
+def _handle_pane_input_delivery(delivery):
+    request_id = delivery.get("request_id") or delivery.get("pane_input_id") or delivery.get("message_id")
+    pane_input_id = delivery.get("pane_input_id") or request_id
+    audit = _redacted_pane_input_audit(delivery)
+    audit["request_id"] = request_id
+    audit["pane_input_id"] = pane_input_id
+    if not request_id:
+        raise RuntimeError("remote pane input delivery missing request_id")
+    if state.pane_input_was_applied(request_id):
+        LOG.info("remote pane input duplicate recognized audit=%s", {**audit, "result": "duplicate"})
+        return "duplicate"
+    if not remote_pane_input_receive_enabled():
+        LOG.warning("remote pane input receive gate disabled audit=%s", {**audit, "result": "receiver_disabled"})
+        raise RuntimeError("remote direct pane input receive is disabled")
+
+    mode = (delivery.get("input_type") or delivery.get("mode") or "").lower()
+    params = {"agent_id": delivery.get("target_agent_id"), "input_type": mode}
+    if mode == "text":
+        params["text"] = delivery.get("text")
+        params["submit"] = delivery.get("submit", True)
+    elif mode == "keys":
+        params["keys"] = delivery.get("keys")
+    else:
+        raise RuntimeError("remote pane input delivery has invalid input_type")
+
+    from rpc_handler import handle_send_input
+    result = handle_send_input(params)
+    if not result or not result.get("success"):
+        raise RuntimeError("remote pane input injection did not report success")
+    state.mark_pane_input_applied(request_id, pane_input_id, delivery.get("target_agent_id"))
+    LOG.info("remote pane input injected audit=%s", {**audit, "result": "injected"})
+    return "injected"
+
+
 def _delivery_loop(client=None):
     missing_target_first_seen = {}
     tracker_id = TRACKER_ID if client is None else client.tracker_id
@@ -635,6 +759,15 @@ def _delivery_loop(client=None):
         from rpc_handler import deliver_local_message, DeliveryTargetNotFound, DeliveryValidationError
         for delivery in deliveries:
             try:
+                if delivery.get("delivery_type") == "pane_input":
+                    LOG.info("dispatching queued registry pane input audit=%s", _redacted_pane_input_audit(delivery, result="dispatch"))
+                    _handle_pane_input_delivery(delivery)
+                    ack_status = _ack(client, delivery["message_id"])
+                    if ack_status == 200:
+                        missing_target_first_seen.pop(delivery.get("message_id"), None)
+                        LOG.info("acked queued registry pane input message_id=%s pane_input_id=%s", delivery["message_id"], delivery.get("pane_input_id"))
+                    continue
+
                 LOG.info("delivering queued registry message message_id=%s sender_agent_id=%s sender_tracker_id=%s target_agent_id=%s", delivery.get("message_id"), delivery.get("sender_agent_id"), delivery.get("sender_tracker_id"), delivery.get("target_agent_id"))
                 deliver_local_message(
                     delivery["target_agent_id"],

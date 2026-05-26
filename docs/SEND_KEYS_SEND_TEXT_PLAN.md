@@ -13,7 +13,14 @@ Stable upstream references in `/home/tanmay/projects/nix/home-manager-core`:
   - `982a68f agent-tracker: add direct input CLI commands`
   - `98498c4 docs: add communicator direct input scope`
 
-Upstream Chunk 3 (`/pane-inputs` registry protocol and remote routing) was reported ready for review but not committed when this plan was written. Treat committed chunks as stable reference points and review any later upstream code before porting.
+The Broccoli Comms port is now implemented through the planned local, registry, and TUI chunks. Upstream references remain useful background, but the Broccoli implementation intentionally differs where needed for app-private tmux sockets and default-disabled remote pane control.
+
+Broccoli implementation status:
+
+- Local tracker RPC/tmux primitives, CLI `send-text`/`send-key`, stable communicator identity, local TUI direct-input actions, and optional remote-message focus are implemented and reviewer-approved.
+- Registry-routed remote pane input is implemented and reviewer-approved behind explicit sender/registry/receiver gates.
+- TUI remote direct input is implemented and reviewer-approved behind a runtime/env capability gate.
+- Electron/native frontend experiments are future work only and are not part of this tree's direct-input implementation.
 
 ## Goals
 
@@ -32,7 +39,7 @@ Direct input intentionally bypasses inbox files and inbox notifications.
 - Never fall back to the user's default tmux server for registered targets. If a target has no registered `tmux_socket` or that socket is unreachable, fail clearly instead of guessing.
 - Existing `send-message` behavior and registry `/messages` behavior must remain unchanged.
 - The runtime/API boundary should stay UI-agnostic so terminal TUI, future Electron/native UI, and CLI automation can share the same backend capability.
-- Remote direct input is powerful and must be disabled by default. Local-only Chunks A/B can proceed without remote enablement; Chunks C/D/F must not expose remote direct input until explicit config, request deduplication, audit, and guardrails are implemented and tested.
+- Remote direct input is powerful and is disabled by default. It is available only when explicitly enabled on sender, registry, and receiver; request deduplication, redacted audit, payload limits, and TUI capability gating are required guardrails.
 
 ## API shape
 
@@ -86,9 +93,26 @@ agent-tracker-ctl send-key TARGET KEY [KEY...]
 
 Keep bare targets local-only. Remote targets require host-qualified syntax, matching `send-message`.
 
+Examples:
+
+```sh
+# Local direct text, submitted with Enter
+agent-tracker-ctl send-text alice "hello"
+
+# Local direct text without Enter
+agent-tracker-ctl send-text --no-submit alice "draft prompt"
+
+# Local symbolic keys
+agent-tracker-ctl send-key alice C-c Enter
+
+# Remote direct text, only if sender + registry + receiver gates are enabled
+agent-tracker-ctl send-text host-a/alice "hello from the other machine"
+agent-tracker-ctl send-key registry-a:host-a/alice C-c Enter
+```
+
 ### Runtime/front-end contract
 
-Broccoli Comms should expose the capability through tracker CLI/RPC first. Later UI layers should treat it as an explicit action mode, not a replacement for `send-message`.
+Broccoli Comms exposes the capability through tracker CLI/RPC and the communicator TUI. UI layers treat direct input as an explicit action mode (`/text`, `/key`), not as a replacement for `send-message` or plain Enter. The TUI hides/rejects remote direct input unless its runtime capability gate is enabled.
 
 ## Registry protocol
 
@@ -107,6 +131,8 @@ Payload:
   "sender_tracker_id": "...",
   "target_hostname": "host-a",
   "target_agent_name": "alice",
+  "pane_input_id": "source-generated-id",
+  "request_id": "source-generated-id",
   "input_type": "text",
   "text": "hello",
   "submit": true
@@ -121,6 +147,8 @@ For keys:
   "sender_agent_id": "...",
   "sender_tracker_id": "...",
   "target_agent_id": "...",
+  "pane_input_id": "source-generated-id",
+  "request_id": "source-generated-id",
   "input_type": "keys",
   "keys": ["C-c"]
 }
@@ -167,11 +195,11 @@ Remote guardrails for the safety chunk:
 - remote direct input must default to disabled globally
 - require explicit enablement before `/pane-inputs` accepts requests or remote routing sends them
 - consider per-agent opt-out metadata, e.g. `no_remote_pane_input`
-- do not expose remote direct-input TUI affordances until guardrails and tests are in place
+- expose remote direct-input TUI affordances only when the runtime/env capability gate indicates the backend guardrails are enabled
 
 ## Implementation chunks
 
-### Chunk A: local tmux primitives and tracker RPC
+### Chunk A: local tmux primitives and tracker RPC — implemented
 
 Files likely touched:
 
@@ -197,7 +225,7 @@ Acceptance:
 - Direct input bypasses inbox files and message notifications.
 - Invalid payloads return JSON-RPC parameter errors.
 
-### Chunk B: CLI commands
+### Chunk B: CLI commands — implemented
 
 Files likely touched:
 
@@ -219,7 +247,7 @@ Acceptance:
 - `send-text --no-submit alice "draft"` sends `submit=false`.
 - `send-key alice ESC C-c Enter` calls `send_input` with normalized/requested keys.
 
-### Chunk C: registry protocol and remote routing
+### Chunk C: registry protocol and remote routing — implemented
 
 Files likely touched:
 
@@ -247,7 +275,7 @@ Acceptance:
 - Target-not-found, missing hostname, same-tracker, stale tracker, invalid payloads, over-limit payloads, and untrusted/unchecked sender identity cases are rejected or documented according to the auth model.
 - `/messages` tests continue passing unchanged.
 
-### Chunk D: remote delivery loop dispatch
+### Chunk D: remote delivery loop dispatch — implemented
 
 Files likely touched:
 
@@ -270,7 +298,7 @@ Acceptance:
 - Retries with the same request id do not duplicate keystrokes.
 - Successful injection acks exactly once.
 
-### Chunk E: Broccoli Comms runtime/docs/safety polish
+### Chunk E: Broccoli Comms runtime/docs/safety polish — implemented
 
 Files likely touched:
 
@@ -286,7 +314,17 @@ Tasks:
 - Document private-tmux-socket guarantees for app mode.
 - Add remote direct-input guardrails and config docs.
 - Add `doctor` checks or warnings if remote direct input is enabled without registry auth or without tracker-distinguishable auth.
-- Add flake check coverage for new unit tests.
+
+Implemented Broccoli Chunk 5 env gates:
+
+- Sender tracker: `AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED=1`, `BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED=1`, or umbrella `BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED=1`.
+- Receiver tracker: `AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED=1`, `BROCCOLI_COMMS_REMOTE_PANE_INPUT_RECEIVE_ENABLED=1`, or umbrella `BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED=1`.
+- Registry: `AGENT_REGISTRY_REMOTE_PANE_INPUT_ENABLED=1` or `BROCCOLI_COMMS_REMOTE_PANE_INPUT_REGISTRY_ENABLED=1`.
+- Limits: `AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES` (default 4096) and `AGENT_REMOTE_PANE_INPUT_MAX_KEYS` (default 16).
+
+The registry endpoint is `POST /pane-inputs`; it queues `delivery_type=pane_input` with string `pane_input_id`/`request_id` values. Destination trackers dedupe request IDs before injecting and ack only after successful injection or duplicate recognition. Pane input does not create inbox entries or normal message notifications, and audit logs include only metadata plus text length/hash.
+
+`broccoli-comms doctor` warns when remote direct input is enabled without registry auth/token assumptions in the environment.
 
 Acceptance:
 
@@ -294,7 +332,7 @@ Acceptance:
 - Remote direct input defaults and guardrails are explicit.
 - `nix flake check` covers local primitives, CLI parsing, and registry validation tests.
 
-### Chunk F: communicator TUI explicit action modes
+### Chunk F: communicator TUI explicit action modes — implemented
 
 Files likely touched:
 
@@ -314,7 +352,7 @@ Tasks:
 - Keep inbox send as default.
 - Preserve target addresses for local and remote rows.
 - Make dangerous remote direct-input action visually explicit.
-- Do not expose remote direct input in the TUI unless remote direct input is explicitly enabled and backend guardrails are present.
+- Expose remote direct input in the TUI only when remote direct input is explicitly enabled and backend guardrails are present.
 
 Acceptance:
 
@@ -350,10 +388,9 @@ Additional required tests:
 
 For remote chunks, add an end-to-end registry test using `~/projects/nix/test-vm` or an isolated local registry/tracker pair.
 
-## Open decisions before implementation
+## Remaining follow-up decisions
 
-1. Should local direct input be exposed in `broccoli-comms` top-level CLI, or only through `agent-tracker-ctl` and the TUI?
-2. What exact config key names should represent global/per-agent remote direct-input permissions?
-3. Should the first TUI slice support only local direct input, leaving remote UI affordances behind a later safety gate?
-4. Should direct input actions be recorded in a user-visible audit log in Broccoli Comms state?
-5. How should registry auth evolve so sender tracker identity can be derived instead of trusted from payload fields?
+1. Whether to add a top-level `broccoli-comms` convenience wrapper for direct input, or keep direct input behind `agent-tracker-ctl` and the TUI.
+2. Whether to add per-agent remote direct-input allow/deny settings in addition to the current global/env gates.
+3. Whether direct input actions should be recorded in a user-visible audit log in Broccoli Comms state.
+4. How registry auth should evolve so sender tracker identity can be derived cryptographically instead of trusted from payload fields.

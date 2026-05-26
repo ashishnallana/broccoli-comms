@@ -12,6 +12,7 @@ _spec.loader.exec_module(ctl)
 
 
 class TestAgentTrackerCtl(unittest.TestCase):
+    @mock.patch.dict(os.environ, {}, clear=True)
     def test_format_status_bar_shows_green_registry_indicator_when_connected(self):
         bar = ctl.format_status_bar(
             {"agent1": {"tmux_pane": "%1", "status": "idle"}},
@@ -22,6 +23,7 @@ class TestAgentTrackerCtl(unittest.TestCase):
         self.assertTrue(bar.startswith("#[fg=#2ac3de,bold]Active Agents:"))
         self.assertIn("#[align=right]#[range=user|agent-registries]#[fg=#9ece6a,bold]●#[norange]#[default]", bar)
 
+    @mock.patch.dict(os.environ, {}, clear=True)
     def test_format_status_bar_shows_red_registry_indicator_when_disconnected(self):
         bar = ctl.format_status_bar(
             {"agent1": {"tmux_pane": "%1", "status": "idle"}},
@@ -31,6 +33,7 @@ class TestAgentTrackerCtl(unittest.TestCase):
         self.assertTrue(bar.startswith("#[fg=#2ac3de,bold]Active Agents:"))
         self.assertIn("#[align=right]#[range=user|agent-registries]#[fg=#db4b4b,bold]●#[norange]#[default]", bar)
 
+    @mock.patch.dict(os.environ, {}, clear=True)
     def test_format_status_bar_shows_dot_for_each_registry(self):
         bar = ctl.format_status_bar(
             {"agent1": {"tmux_pane": "%1", "status": "idle"}},
@@ -234,6 +237,82 @@ class TestAgentTrackerCtl(unittest.TestCase):
         parser = ctl.build_parser()
         self.assertEqual(parser.parse_args(["capture-pane", "agent1"]).last, 42)
         self.assertEqual(parser.parse_args(["send-pane", "alice"]).last, 42)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_send_text_and_send_key_parser_registration(self):
+        parser = ctl.build_parser()
+
+        parsed = parser.parse_args(["send-text", "alice", "hello"])
+        self.assertEqual(parsed.subcommand, "send-text")
+        self.assertEqual(parsed.target, "alice")
+        self.assertEqual(parsed.text, ["hello"])
+        self.assertFalse(parsed.no_submit)
+
+        parsed = parser.parse_args(["send-text", "--no-submit", "alice", "draft text"])
+        self.assertTrue(parsed.no_submit)
+        self.assertEqual(parsed.text, ["draft text"])
+
+        parsed = parser.parse_args(["send-text", "alice", "-starts-with-dash"])
+        self.assertEqual(parsed.text, ["-starts-with-dash"])
+
+        parsed = parser.parse_args(["send-key", "alice", "C-c", "Enter"])
+        self.assertEqual(parsed.subcommand, "send-key")
+        self.assertEqual(parsed.target, "alice")
+        self.assertEqual(parsed.keys, ["C-c", "Enter"])
+
+    @mock.patch("ctl_commands.send_text.call_rpc")
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_send_text_calls_send_input_for_bare_name(self, mock_call_rpc):
+        from ctl_commands import send_text
+
+        mock_call_rpc.return_value = {"success": True}
+        args = mock.Mock(target="alice", text=["hello"], no_submit=False)
+
+        with mock.patch("builtins.print"):
+            send_text.handle(args)
+
+        mock_call_rpc.assert_called_once_with("send_input", {
+            "agent_name": "alice",
+            "input_type": "text",
+            "text": "hello",
+            "submit": True,
+        })
+
+    @mock.patch("ctl_commands.send_text.call_rpc")
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_send_text_no_submit_calls_send_input_for_uuid(self, mock_call_rpc):
+        from ctl_commands import send_text
+
+        agent_id = "123e4567-e89b-12d3-a456-426614174000"
+        mock_call_rpc.return_value = {"success": True}
+        args = mock.Mock(target=agent_id, text=["draft"], no_submit=True)
+
+        with mock.patch("builtins.print"):
+            send_text.handle(args)
+
+        mock_call_rpc.assert_called_once_with("send_input", {
+            "agent_id": agent_id,
+            "input_type": "text",
+            "text": "draft",
+            "submit": False,
+        })
+
+    @mock.patch("ctl_commands.send_key.call_rpc")
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_send_key_calls_send_input_for_remote_target_address(self, mock_call_rpc):
+        from ctl_commands import send_key
+
+        mock_call_rpc.return_value = {"success": True}
+        args = mock.Mock(target="registry:host-a/alice", keys=["C-c", "Enter"])
+
+        with mock.patch("builtins.print"):
+            send_key.handle(args)
+
+        mock_call_rpc.assert_called_once_with("send_input", {
+            "target_address": "registry:host-a/alice",
+            "input_type": "keys",
+            "keys": ["C-c", "Enter"],
+        })
 
     @mock.patch("ctl_commands.send_pane.call_rpc")
     @mock.patch.dict("os.environ", {}, clear=True)

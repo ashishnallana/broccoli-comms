@@ -139,6 +139,40 @@ Check objects include at least:
 
 Current checks cover executable availability, writable runtime/cache/config directories, configured agent command lookup where practical, and tracker/tmux socket reachability when the runtime is up.
 
+## Direct pane input capability
+
+Direct pane input is separate from inbox messaging. It controls a registered tmux pane directly and does not create inbox/outbox conversation history.
+
+Tracker CLI/RPC examples:
+
+```sh
+agent-tracker-ctl send-text alice "hello"
+agent-tracker-ctl send-text --no-submit alice "draft"
+agent-tracker-ctl send-key alice C-c Enter
+```
+
+Remote direct input uses the same `send_input` backend with a host-qualified `target_address`, but it is disabled by default and requires explicit gates:
+
+- sender tracker: `AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED=1`, `BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED=1`, or umbrella `BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED=1`
+- receiver tracker: `AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED=1`, `BROCCOLI_COMMS_REMOTE_PANE_INPUT_RECEIVE_ENABLED=1`, or umbrella `BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED=1`
+- registry: `AGENT_REGISTRY_REMOTE_PANE_INPUT_ENABLED=1` or `BROCCOLI_COMMS_REMOTE_PANE_INPUT_REGISTRY_ENABLED=1`
+
+Limits are controlled by `AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES` (default `4096`) and `AGENT_REMOTE_PANE_INPUT_MAX_KEYS` (default `16`). Remote pane input is queued through registry `POST /pane-inputs` as `delivery_type=pane_input` with source-generated `pane_input_id` and `request_id`; destination trackers dedupe request IDs before injection and ack only after successful injection or duplicate recognition.
+
+When launched via `broccoli-comms open` / `broccoli-comms ui`, the communicator TUI derives a runtime capability from the sender-side env gates. Remote `/text` and `/key` commands are rejected before dispatch while disabled. When enabled, the TUI sends the exact selected row `TargetAddress` to the tracker client and surfaces success/failure in the footer.
+
+`broccoli-comms doctor --json` includes advisory checks for remote pane input. If remote direct input is enabled while registry auth is disabled or no registry token is present in the environment, doctor reports warnings rather than silently treating it as safe.
+
+## Stable communicator conversation identity
+
+Communicator conversation state is keyed by stable IDs when available:
+
+- local rows use `local:<agent_id>`
+- remote rows use `remote:<tracker_id>:<agent_id>`
+- legacy rows/messages fall back to the visible target address/name
+
+Outbox records persist target agent/tracker IDs. Inbound messages carry sender agent/tracker IDs where available. This prevents conversation history from splitting on local renames and prevents same-named agents on different remote trackers from sharing a conversation.
+
 ## Related commands
 
 Managed agent config/window commands:

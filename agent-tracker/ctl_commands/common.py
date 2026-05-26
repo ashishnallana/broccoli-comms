@@ -169,6 +169,15 @@ def is_uuid(value: str | None) -> bool:
         return False
 
 
+def parse_target_params(target: str) -> dict:
+    """Return RPC target params using the same CLI target rules as send-message."""
+    if "/" in target:
+        return {"target_address": target}
+    if is_uuid(target):
+        return {"agent_id": target}
+    return {"agent_name": target}
+
+
 def _read_token_config(config: dict) -> str:
     if config.get("token"):
         return str(config.get("token"))

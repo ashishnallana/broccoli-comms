@@ -174,17 +174,49 @@ func (c *Client) SendMessageWithID(ctx context.Context, senderName, target, body
 	if messageID != "" {
 		params["message_id"] = messageID
 	}
-	if strings.Contains(target, "/") {
-		params["target_address"] = target
-	} else if isUUID(target) {
-		params["target_address"] = "local/" + target
-	} else {
-		params["agent_name"] = target
+	for key, value := range messageTargetParams(target) {
+		params[key] = value
 	}
 	if len(attachments) > 0 {
 		params["attachments"] = attachments
 	}
 	return c.call(ctx, "send_message", params, 10*time.Second, nil)
+}
+
+func (c *Client) SendText(ctx context.Context, target, text string, submit bool) error {
+	params := map[string]any{"input_type": "text", "text": text, "submit": submit}
+	for key, value := range directInputTargetParams(target) {
+		params[key] = value
+	}
+	return c.call(ctx, "send_input", params, 10*time.Second, nil)
+}
+
+func (c *Client) SendKeys(ctx context.Context, target string, keys []string) error {
+	params := map[string]any{"input_type": "keys", "keys": keys}
+	for key, value := range directInputTargetParams(target) {
+		params[key] = value
+	}
+	return c.call(ctx, "send_input", params, 10*time.Second, nil)
+}
+
+func messageTargetParams(target string) map[string]any {
+	if strings.Contains(target, "/") {
+		return map[string]any{"target_address": target}
+	}
+	if isUUID(target) {
+		return map[string]any{"target_address": "local/" + target}
+	}
+	return map[string]any{"agent_name": target}
+}
+
+func directInputTargetParams(target string) map[string]any {
+	if strings.Contains(target, "/") {
+		return map[string]any{"target_address": target}
+	}
+	if isUUID(target) {
+		return map[string]any{"agent_id": target}
+	}
+	return map[string]any{"agent_name": target}
 }
 
 func isUUID(value string) bool {

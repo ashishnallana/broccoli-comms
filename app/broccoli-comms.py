@@ -683,6 +683,34 @@ SHELL_BUILTINS = {
 SHELL_COMPLEX_TOKENS = ("|", "&", ";", "<", ">", "(", ")", "$", "`", "\\", "\n")
 
 
+def _env_enabled(name: str) -> bool:
+    return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def remote_pane_input_doctor_checks() -> list[dict]:
+    checks = []
+    send_enabled = _env_enabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED") or _env_enabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED") or _env_enabled("AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED")
+    receive_enabled = _env_enabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED") or _env_enabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_RECEIVE_ENABLED") or _env_enabled("AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED")
+    registry_enabled = _env_enabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_REGISTRY_ENABLED") or _env_enabled("AGENT_REGISTRY_REMOTE_PANE_INPUT_ENABLED")
+    any_enabled = send_enabled or receive_enabled or registry_enabled
+    if not any_enabled:
+        _doctor_check(checks, "remote pane input", "ok", "remote direct pane input is disabled by default")
+        return checks
+
+    enabled_roles = ",".join(role for role, enabled in (("send", send_enabled), ("receive", receive_enabled), ("registry", registry_enabled)) if enabled)
+    _doctor_check(checks, "remote pane input", "warning", "remote direct pane input is enabled; this bypasses inboxes and controls panes directly", enabled_roles=enabled_roles)
+
+    registry_auth_disabled = os.environ.get("AGENT_REGISTRY_AUTH", "true").lower() in {"0", "false", "no"}
+    registry_token = os.environ.get("AGENT_REGISTRY_TOKEN")
+    if registry_auth_disabled:
+        _doctor_check(checks, "remote pane input auth", "warning", "remote direct pane input is enabled while registry auth is disabled")
+    elif not registry_token:
+        _doctor_check(checks, "remote pane input auth", "warning", "remote direct pane input is enabled but AGENT_REGISTRY_TOKEN is not set in this environment")
+    else:
+        _doctor_check(checks, "remote pane input auth", "ok", "registry token is present for remote direct pane input")
+    return checks
+
+
 def configured_agent_command_checks() -> list[dict]:
     checks = []
     cfg = load_config()
@@ -744,6 +772,7 @@ def doctor_payload() -> dict:
         _doctor_check(checks, label, "ok" if ok else "error", message, path=str(path))
 
     checks.extend(configured_agent_command_checks())
+    checks.extend(remote_pane_input_doctor_checks())
 
     tracker_socket_exists = p["tracker_socket"].exists()
     tracker_reachable = can_connect(p["tracker_socket"])
