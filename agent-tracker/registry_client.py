@@ -94,6 +94,18 @@ class RegistryClient:
     def fetch_trackers(self):
         return self.request("GET", "/trackers")
 
+    def set_remote_watch_leases(self, client_id: str, watch_targets: list[str], lease_seconds: float) -> int:
+        status, _ = self.request("POST", f"/trackers/{self.tracker_id}/watch-leases", {
+            "client_id": client_id,
+            "watch_targets": watch_targets,
+            "lease_seconds": lease_seconds,
+        })
+        return status or 500
+
+    def clear_remote_watch_leases(self, client_id: str) -> int:
+        status, _ = self.request("DELETE", f"/trackers/{self.tracker_id}/watch-leases/{client_id}", {})
+        return status or 500
+
 
 def _read_token_config(config):
     if config.get("token"):
@@ -154,6 +166,20 @@ def fetch_events():
 def ack_event(event_id):
     client = _default_client()
     return None if client is None else client.ack_event(event_id)
+
+
+def set_remote_watch_leases(client_id: str, watch_targets: list[str], lease_seconds: float):
+    client = _default_client()
+    if client is None:
+        return 500
+    return client.set_remote_watch_leases(client_id, watch_targets, lease_seconds)
+
+
+def clear_remote_watch_leases(client_id: str):
+    client = _default_client()
+    if client is None:
+        return 500
+    return client.clear_remote_watch_leases(client_id)
 
 
 def ack_delivery(message_id):
@@ -674,6 +700,10 @@ def _event_loop(client=None):
                 sender_name, local_payload = _local_tracker_event_payload(event.get("event_type"), payload)
                 LOG.info("mapping remote %s sender=%s message_id=%s target=%s", event.get("event_type"), sender_name, payload.get("message_id"), local_payload.get("target_agent_name"))
                 state.publish_event(event.get("event_type"), local_payload)
+            elif event.get("event_type") == "remote_agent_event":
+                payload = event.get("payload") or {}
+                LOG.info("publishing remote_agent_event locally: %s", payload)
+                state.publish_event("remote_agent_event", payload)
             elif event.get("event_type") == "spin_request":
                 payload = event.get("payload") or {}
                 config_name = payload.get("config_name")

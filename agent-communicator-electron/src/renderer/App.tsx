@@ -170,7 +170,7 @@ export function App() {
     if (status?.mode !== 'tracker') return
 
     const unsubscribe = window.broccoliCommsMock?.onTrackerEvents(async (events) => {
-      const hasMessages = events.some((e) => e.event_type === 'message_delivered')
+      const hasMessages = events.some((e) => e.event_type === 'message_delivered' || e.event_type === 'remote_agent_event')
       const hasAgents = events.some((e) => e.event_type === 'agent_registered' || e.event_type === 'agent_unregistered')
 
       if (hasAgents) {

@@ -1012,6 +1012,19 @@ def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
         # Atomically register/renew client lease
         state.update_watchlist_lease(client_id, watch_list or [], lease_seconds)
 
+        # Classify local vs remote watched targets
+        remote_watchlist = [item for item in (watch_list or []) if "/" in item]
+        if remote_watchlist:
+            try:
+                registry_client.set_remote_watch_leases(client_id, remote_watchlist, lease_seconds)
+            except Exception as e:
+                logging.warning(f"Failed to delegate remote watch lease to registry: {e}")
+        else:
+            try:
+                registry_client.clear_remote_watch_leases(client_id)
+            except Exception as e:
+                logging.debug(f"Failed to clear remote watch lease on registry: {e}")
+
     # Enforce buffer queue eviction checks
     with state.event_lock:
         oldest_seq = state.events[0]["seq"] if state.events else state.event_sequence_id
