@@ -267,7 +267,7 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
           }
         }
         if (method === 'capture_pane') {
-          expect(params).toMatchObject({ agent_name: 'alpha', last_lines: 25, include_ansi: false })
+          expect(params).toMatchObject({ agent_id: 'alpha-id', last_lines: 25, include_ansi: false })
           return {
             agent_name: 'alpha',
             agent_id: 'alpha-id',
@@ -293,11 +293,49 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
       async (socketPath) => {
         const client = new LocalTrackerClient(socketPath, 'desktop')
         await client.listAgents()
-        const result = await client.sendPaneCapture('alpha', 'desktop')
+        const result = await client.sendPaneCapture('local:alpha-id', 'desktop')
         expect(result.ok).toBe(true)
         expect(result.summary).toContain('Snapshot sent successfully')
 
         expect(calls.map((c) => c.method)).toEqual(['ensure_mailbox', 'list', 'capture_pane', 'send_message'])
+      },
+    )
+  })
+
+  it('dispatches a remote pane capture request successfully across tracker registries', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    await withFakeTracker(
+      (method, params) => {
+        calls.push({ method, params })
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local' },
+            'zephyrus/reviewer': { agent_id: 'rev-id', name: 'zephyrus/reviewer', scope: 'remote', target_address: 'zephyrus/reviewer', tracker_id: 'track-z' },
+          }
+        }
+        if (method === 'publish_tracker_event') {
+          expect(params).toMatchObject({
+            target_tracker_id: 'track-z',
+            event_type: 'pane_capture_request',
+            payload: {
+              source: 'reviewer',
+              target: 'desktop',
+              requester: 'desktop',
+            },
+          })
+          return true
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        await client.listAgents()
+        const result = await client.sendPaneCapture('remote:zephyrus/reviewer', 'desktop')
+        expect(result.ok).toBe(true)
+        expect(result.summary).toContain('Remote pane capture request sent to zephyrus')
+
+        expect(calls.map((c) => c.method)).toEqual(['ensure_mailbox', 'list', 'publish_tracker_event'])
       },
     )
   })

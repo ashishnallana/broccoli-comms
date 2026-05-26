@@ -284,19 +284,20 @@ export class LocalTrackerClient {
   async sendPaneCapture(source: string, target: string): Promise<ActionResult> {
     try {
       await this.ensureMailbox()
-      const isRemote = source.includes('/')
+      const isRemote = source.startsWith('remote:')
+      const cleanSource = isRemote ? source.slice('remote:'.length) : source.startsWith('local:') ? source.slice('local:'.length) : source
       let snapshot: any
 
       if (isRemote) {
         // Remote pane captures are requested via publish_tracker_event
-        const remoteHost = source.split('/', 1)[0]
+        const remoteHost = cleanSource.split('/', 1)[0]
         const targetAgent = this.agentsByConversation.get(source)
         const targetTrackerId = targetAgent?.tracker_id
-        if (!targetTrackerId) throw new Error(`Tracker ID not found for remote source ${source}`)
+        if (!targetTrackerId) throw new Error(`Tracker ID not found for remote source ${cleanSource}`)
 
         const requestPayload = {
           request_id: `electron-req-${Date.now()}`,
-          source: source.split('/', 2)[1],
+          source: cleanSource.split('/', 2)[1],
           target: `${this.selfAgentName}`,
           requester: this.selfAgentName,
           format: 'markdown',
@@ -312,10 +313,17 @@ export class LocalTrackerClient {
         return { ok: true, summary: `Remote pane capture request sent to ${remoteHost}` }
       } else {
         // Local pane captures: invoke capture_pane directly
-        snapshot = await this.call<any>('capture_pane', { agent_name: source, last_lines: 25, include_ansi: false })
+        const sourceAgent = this.agentsByConversation.get(source)
+        const captureParams = sourceAgent
+          ? sourceAgent.agent_id
+            ? { agent_id: sourceAgent.agent_id }
+            : { agent_name: sourceAgent.name }
+          : { agent_name: cleanSource }
+
+        snapshot = await this.call<any>('capture_pane', { ...captureParams, last_lines: 25, include_ansi: false })
         if (!snapshot) throw new Error('Failed to capture pane snapshot')
 
-        const messageText = `### Pane Capture Snapshot from ${snapshot.agent_name || source}\n` +
+        const messageText = `### Pane Capture Snapshot from ${snapshot.agent_name || sourceAgent?.name || cleanSource}\n` +
           `- **Pane:** ${snapshot.tmux_pane || 'unknown'}\n` +
           `- **Session:** ${snapshot.session || 'unknown'}\n` +
           `- **Copy Mode:** ${snapshot.copy_mode ? 'Active' : 'Inactive'}\n` +
@@ -331,7 +339,7 @@ export class LocalTrackerClient {
 
         await this.call('send_message', {
           ...targetParams,
-          sender_name: source,
+          sender_name: sourceAgent?.name || cleanSource,
           sender_id: snapshot.agent_id,
           message: messageText,
         })

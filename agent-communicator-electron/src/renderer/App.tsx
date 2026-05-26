@@ -224,8 +224,8 @@ export function App() {
     if (!selectedAgent) return
     setComposerStatus(`Capturing pane snapshot for ${selectedAgent.displayName}...`)
     const result = await runtime.sendPaneCapture(
-      selectedAgent.name,
-      status?.mode === 'tracker' ? 'agent-communicator' : selectedAgent.name,
+      selectedAgent.conversationKey,
+      status?.mode === 'tracker' ? 'agent-communicator' : selectedAgent.conversationKey,
     )
     if (result.ok) {
       setComposerStatus(result.summary || `Pane snapshot for ${selectedAgent.displayName} delivered successfully!`)
