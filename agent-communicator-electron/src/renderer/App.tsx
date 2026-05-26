@@ -93,6 +93,12 @@ export function App() {
     y: number
     agentId: string
   } | null>(null)
+  const [promptModal, setPromptModal] = useState<{
+    isOpen: boolean
+    title: string
+    placeholder: string
+    onSubmit: (value: string) => void
+  } | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(true)
   const [visibleAgents, setVisibleAgents] = useState<AgentSummary[]>([])
   const [agentFilterActive, setAgentFilterActive] = useState(false)
@@ -730,6 +736,83 @@ export function App() {
     })
   }, [])
 
+  const promptModalElement = promptModal && promptModal.isOpen ? (
+    <div
+      className="prompt-modal-overlay"
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0, 0, 0, 0.6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999
+      }}
+      onClick={() => setPromptModal(null)}
+    >
+      <div
+        className="prompt-modal-content"
+        style={{
+          background: 'var(--surface-card)',
+          border: '1px solid var(--hairline)',
+          borderRadius: 'var(--r-md)',
+          padding: '20px',
+          width: '360px',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.5)'
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--on-dark)', marginBottom: '12px' }}>
+          {promptModal.title}
+        </div>
+        <input
+          id="prompt-modal-input"
+          className="search-input"
+          placeholder={promptModal.placeholder}
+          style={{ width: '100%', margin: '0 0 16px 0' }}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              const val = (e.target as HTMLInputElement).value.trim()
+              if (val) {
+                promptModal.onSubmit(val)
+                setPromptModal(null)
+              }
+            } else if (e.key === 'Escape') {
+              setPromptModal(null)
+            }
+          }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+          <button
+            className="btn"
+            style={{ height: '28px', padding: '0 12px', fontSize: '12px', cursor: 'pointer' }}
+            onClick={() => setPromptModal(null)}
+          >
+            Cancel
+          </button>
+          <button
+            className="btn primary"
+            style={{ height: '28px', padding: '0 12px', fontSize: '12px', cursor: 'pointer' }}
+            onClick={() => {
+              const input = document.getElementById('prompt-modal-input') as HTMLInputElement
+              const val = input?.value.trim()
+              if (val) {
+                promptModal.onSubmit(val)
+                setPromptModal(null)
+              }
+            }}
+          >
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null
+
   const contextMenuElement = contextMenu ? (
     <div
       className="custom-context-menu"
@@ -761,21 +844,25 @@ export function App() {
         className="menu-item create"
         onClick={(event) => {
           event.stopPropagation()
-          const name = window.prompt('Enter new group channel name:')
-          if (name) {
-            const cleanName = name.trim().replace(/[^A-Za-z0-9_-]/g, '_')
-            if (cleanName) {
+          const targetAgentId = contextMenu.agentId
+          setPromptModal({
+            isOpen: true,
+            title: 'Create New Group',
+            placeholder: 'Enter group name (e.g. dev-team)',
+            onSubmit: (name) => {
+              const cleanName = name.trim().replace(/[^A-Za-z0-9_-]/g, '_')
+              if (!cleanName) return
               const gId = `group:${cleanName}`
               setGroups((current) => ({
                 ...current,
                 [gId]: {
                   id: gId,
                   name: cleanName,
-                  memberIds: [...new Set([...(current[gId]?.memberIds ?? []), contextMenu.agentId])]
+                  memberIds: [...new Set([...(current[gId]?.memberIds ?? []), targetAgentId])]
                 }
               }))
             }
-          }
+          })
           setContextMenu(null)
         }}
       >
@@ -834,8 +921,14 @@ export function App() {
             onVisibleAgentsChange={updateVisibleAgents}
             onOpenLaunch={() => setLaunchModalOpen(true)}
             onOpenCreateGroup={() => {
-              const name = window.prompt('Enter new group channel name:')
-              if (name) createGroup(name)
+              setPromptModal({
+                isOpen: true,
+                title: 'Create Custom Group Channel',
+                placeholder: 'Enter group name (e.g. dev-team)',
+                onSubmit: (name) => {
+                  createGroup(name)
+                }
+              })
             }}
             onAgentContextMenu={handleAgentContextMenu}
           />
@@ -867,6 +960,7 @@ export function App() {
         details={details}
       />
       {contextMenuElement}
+      {promptModalElement}
     </>
   )
 }

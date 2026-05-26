@@ -117,7 +117,7 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange,
 
       <div className="agents-col-footer">
         <div className="footer-label">Safety boundary</div>
-        <div className="footer-body">Local tracker messaging only. Ctrl-N / Ctrl-P follows the filtered agent list.</div>
+        <div className="footer-body">Registry-aware inbox messaging. Ctrl-N / Ctrl-P follows the filtered agent list.</div>
       </div>
     </section>
   )
