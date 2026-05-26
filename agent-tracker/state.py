@@ -524,8 +524,9 @@ def read_group_timeline(group_id: str, last_n: int = 200) -> list[dict]:
 
 
 def update_group_watch(watch_id: str, group_id: str, members: list[str], lease_seconds: float, include_body: bool = True, reply_to_tracker_id: str | None = None) -> None:
+    watch_key = f"{reply_to_tracker_id}:{watch_id}" if reply_to_tracker_id else watch_id
     with group_watches_lock:
-        active_group_watches[watch_id] = {
+        active_group_watches[watch_key] = {
             "expires_at": time.time() + lease_seconds,
             "group_id": group_id,
             "members": set(members),
@@ -548,17 +549,20 @@ def normalize_group_member(member: str) -> dict:
     addr = member
     if addr.startswith("remote:"):
         addr = addr[len("remote:"):]
-    for reg_pref in ["local:", "mundus:"]:
-        if addr.startswith(reg_pref):
-            addr = addr[len(reg_pref):]
 
     if "/" in addr:
         parts = addr.split("/")
+        host_part = parts[0]
+        agent_part = parts[1]
+        if ":" in host_part:
+            host_part = host_part.split(":")[-1]
         return {
-            "hostname": parts[0],
-            "agent": parts[1]
+            "hostname": host_part,
+            "agent": agent_part
         }
     else:
+        if ":" in addr:
+            addr = addr.split(":")[-1]
         return {
             "hostname": None,
             "agent": addr

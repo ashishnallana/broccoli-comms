@@ -746,7 +746,7 @@ def _event_loop(client=None):
                     state.append_to_group_timeline(group_id, message_payload)
                     state.publish_event("message_delivered", {
                         "message_id": message_payload.get("message_id"),
-                        "target_agent_name": f"group-update-{group_id}",
+                        "target_agent_name": group_id,
                         "sender": message_payload.get("sender")
                     })
             elif event.get("event_type") == "spin_request":

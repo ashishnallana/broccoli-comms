@@ -215,5 +215,12 @@ class TestState(unittest.TestCase):
             state.GROUP_TIMELINE_DIR = orig_dir
             shutil.rmtree(temp_cache)
 
+    def test_normalize_group_member(self):
+        self.assertEqual(state.normalize_group_member("remote:local:host/agent"), {"hostname": "host", "agent": "agent"})
+        self.assertEqual(state.normalize_group_member("local:host/agent"), {"hostname": "host", "agent": "agent"})
+        self.assertEqual(state.normalize_group_member("host/agent"), {"hostname": "host", "agent": "agent"})
+        self.assertEqual(state.normalize_group_member("agent"), {"hostname": None, "agent": "agent"})
+        self.assertEqual(state.normalize_group_member("local:agent"), {"hostname": None, "agent": "agent"})
+
 if __name__ == '__main__':
     unittest.main()

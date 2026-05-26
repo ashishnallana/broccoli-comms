@@ -1004,8 +1004,10 @@ def handle_get_group_timeline(params: dict) -> dict:
     if last_n is not None:
         try:
             last_n = int(last_n)
+            if last_n <= 0:
+                raise ValueError("last_n must be a positive integer")
         except ValueError:
-            raise ValueError("last_n must be an integer")
+            raise ValueError("last_n must be a positive integer")
 
     messages = state.read_group_timeline(group_id, last_n)
     return {"messages": messages}
