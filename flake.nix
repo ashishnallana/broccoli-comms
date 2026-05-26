@@ -79,6 +79,21 @@
             text = ''exec ${pkgs.python3}/bin/python3 ${./agent-registry/managed_agent.py} "$@"'';
           };
 
+          agentCommunicatorElectron = pkgs.writeShellApplication {
+            name = "agent-communicator-electron";
+            runtimeInputs = with pkgs; [ nodejs ];
+            text = ''
+              src=${./agent-communicator-electron}
+              if [ -d "$src/node_modules" ]; then
+                cd "$src"
+                exec npm run dev
+              fi
+              echo "agent-communicator-electron is currently a development launcher." >&2
+              echo "Run from a checkout with npm dependencies installed, or override services.broccoli-comms.electron.package." >&2
+              exit 1
+            '';
+          };
+
           broccoliComms = pkgs.writeShellApplication {
             name = "broccoli-comms";
             runtimeInputs = with pkgs; [ python3 tmux coreutils procps bash agentTracker agentTrackerCtl agentWrapper agentCommunicator ];
@@ -91,11 +106,12 @@
             '';
           };
         in {
-          inherit agentTracker agentTrackerCtl agentWrapper agentCommunicator agentRegistry managedAgent broccoliComms;
+          inherit agentTracker agentTrackerCtl agentWrapper agentCommunicator agentCommunicatorElectron agentRegistry managedAgent broccoliComms;
           agent-tracker = agentTracker;
           agent-tracker-ctl = agentTrackerCtl;
           agent-wrapper = agentWrapper;
           agent-communicator = agentCommunicator;
+          agent-communicator-electron = agentCommunicatorElectron;
           agent-registry = agentRegistry;
           agent-registry-managed-agent = managedAgent;
           default = broccoliComms;
@@ -160,5 +176,15 @@
             meta.description = "Standalone Broccoli Comms agent runtime";
           };
         });
+
+      homeManagerModules = {
+        broccoli-comms = import ./modules/home-manager.nix self;
+        default = self.homeManagerModules.broccoli-comms;
+      };
+
+      nixosModules = {
+        broccoli-comms = import ./modules/nixos.nix self;
+        default = self.nixosModules.broccoli-comms;
+      };
     };
 }
