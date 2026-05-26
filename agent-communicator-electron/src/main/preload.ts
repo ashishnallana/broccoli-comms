@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipcChannels'
-import type { ActionResult, AgentSummary, Message, RuntimeStatus, SendResult, TargetRef } from '../shared/contracts'
+import type { ActionResult, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef } from '../shared/contracts'
 
 const api = {
   getStatus: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC_CHANNELS.runtimeStatus),
@@ -13,6 +13,10 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.sendDirectKeys, target, keys),
   sendPaneCapture: (sourceName: string, targetName: string): Promise<ActionResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.sendPaneCapture, sourceName, targetName),
+  listSavedAgents: (): Promise<SavedAgent[]> => ipcRenderer.invoke(IPC_CHANNELS.listSavedAgents),
+  spinAgent: (configName: string, directory: string): Promise<ActionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.spinAgent, configName, directory),
+  selectLocalDirectory: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.selectLocalDirectory),
 }
 
 contextBridge.exposeInMainWorld('broccoliCommsMock', api)

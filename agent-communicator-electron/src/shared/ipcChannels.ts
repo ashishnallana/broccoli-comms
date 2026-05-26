@@ -6,6 +6,9 @@ export const IPC_CHANNELS = {
   sendDirectText: 'broccoli-mock:send-direct-text',
   sendDirectKeys: 'broccoli-mock:send-direct-keys',
   sendPaneCapture: 'broccoli-mock:send-pane-capture',
+  listSavedAgents: 'broccoli-mock:list-saved-agents',
+  spinAgent: 'broccoli-mock:spin-agent',
+  selectLocalDirectory: 'broccoli-mock:select-local-directory',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

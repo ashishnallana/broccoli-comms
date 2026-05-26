@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AgentSummary, ComposerMode, Message, RuntimeStatus } from '../shared/contracts'
+import type { AgentSummary, ComposerMode, Message, RuntimeStatus, SavedAgent } from '../shared/contracts'
 import { AgentList } from './components/AgentList'
 import { AppShell } from './components/AppShell'
 import { Composer } from './components/Composer'
@@ -26,6 +26,8 @@ export function App() {
   // Modal & overlay visibility states
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [launchModalOpen, setLaunchModalOpen] = useState(false)
+  const [savedAgents, setSavedAgents] = useState<SavedAgent[]>([])
 
   const directStatusResetTimer = useRef<number | undefined>(undefined)
   const modeRef = useRef<ComposerMode>(mode)
@@ -55,11 +57,16 @@ export function App() {
   useEffect(() => {
     let cancelled = false
     async function load() {
-      const [runtimeStatus, agentList] = await Promise.all([runtime.getStatus(), runtime.listAgents()])
+      const [runtimeStatus, agentList, savedList] = await Promise.all([
+        runtime.getStatus(),
+        runtime.listAgents(),
+        runtime.listSavedAgents(),
+      ])
       if (cancelled) return
       setStatus(runtimeStatus)
       setAgents(agentList)
       setSelectedId(agentList[0]?.id)
+      setSavedAgents(savedList)
       setLoading(false)
     }
     void load()
@@ -196,6 +203,23 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [moveSelection, selectedAgent, status])
 
+  async function launchAgent(configName: string, directory: string) {
+    setComposerStatus(`Spinning agent ${configName} in Tmux...`)
+    const result = await runtime.spinAgent(configName, directory)
+    if (result.ok) {
+      setComposerStatus(result.summary || `Agent ${configName} spun successfully!`)
+      const agentList = await runtime.listAgents()
+      setAgents(agentList)
+    } else {
+      setComposerStatus(result.error ?? 'Failed to spin agent.')
+    }
+    return result
+  }
+
+  async function browseDirectory() {
+    return runtime.selectLocalDirectory()
+  }
+
   async function capturePane() {
     if (!selectedAgent) return
     setComposerStatus(`Capturing pane snapshot for ${selectedAgent.displayName}...`)
@@ -321,7 +345,20 @@ export function App() {
       onClosePalette={() => setPaletteOpen(false)}
       agentsRaw={agents}
       onSelectAgent={selectAgent}
-      agents={<AgentList agents={agents} selectedId={selectedId} onSelect={selectAgent} onVisibleAgentsChange={updateVisibleAgents} />}
+      launchModalOpen={launchModalOpen}
+      onCloseLaunchModal={() => setLaunchModalOpen(false)}
+      onLaunchAgent={launchAgent}
+      onBrowseDirectory={browseDirectory}
+      savedAgents={savedAgents}
+      agents={
+        <AgentList
+          agents={agents}
+          selectedId={selectedId}
+          onSelect={selectAgent}
+          onVisibleAgentsChange={updateVisibleAgents}
+          onOpenLaunch={() => setLaunchModalOpen(true)}
+        />
+      }
       main={
         loading ? (
           <EmptyState />

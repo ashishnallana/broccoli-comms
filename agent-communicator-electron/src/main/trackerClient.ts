@@ -1,6 +1,8 @@
 import { connect } from 'node:net'
 import { basename, join } from 'node:path'
-import type { ActionResult, AgentStatus, AgentSummary, Message, RuntimeStatus, SendResult, TargetRef } from '../shared/contracts'
+import { readdir, readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import type { ActionResult, AgentStatus, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef } from '../shared/contracts'
 
 interface RpcResponse<T> {
   result?: T
@@ -134,6 +136,22 @@ export function messageMatchesConversation(message: TrackerMessage, target: Pick
 
 export function mergeConversationMessages(inbound: Message[], sent: Message[]): Message[] {
   return [...inbound, ...sent].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+}
+
+export function spinSessionName(directory: string): string {
+  const leaf = basename(directory).replace(/[^A-Za-z0-9_.-]/g, '_')
+  return `${leaf}-spin`
+}
+
+function resolveAgentWrapperPath(): string {
+  return process.env.BROCCOLI_COMMS_AGENT_WRAPPER || 'agent-wrapper'
+}
+
+function buildSpinCommand(agentCommand: string, agentArgs: string[]): string {
+  const wrapper = resolveAgentWrapperPath()
+  const innerCommand = `${wrapper} ${agentCommand} ${agentArgs.join(' ')}`
+  const callerPath = process.env.PATH || ''
+  return `bash -c 'export PATH="${callerPath}"; ${innerCommand}; zsh'`
 }
 
 export class LocalTrackerClient {
@@ -319,6 +337,71 @@ export class LocalTrackerClient {
         })
         return { ok: true, summary: `Snapshot sent successfully to ${target}` }
       }
+    } catch (error) {
+      return { ok: false, summary: '', error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  async listSavedAgents(): Promise<SavedAgent[]> {
+    const home = homedir()
+    const agentsDir = join(home, '.config', 'agent-tracker', 'agents')
+    const list: SavedAgent[] = []
+    try {
+      const entries = await readdir(agentsDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const configPath = join(agentsDir, entry.name, 'config.json')
+        try {
+          const content = await readFile(configPath, 'utf8')
+          const raw = JSON.parse(content)
+          list.push({
+            name: entry.name,
+            directory: raw.directory,
+            agentCommand: raw['agent-command'] || raw.agentCommand,
+            agentArgs: raw['agent-args'] || raw.agentArgs || [],
+            description: raw.description || '',
+          })
+        } catch {
+          // Skip invalid json
+        }
+      }
+    } catch {
+      // Skip missing folder
+    }
+    return list.sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  async spinAgent(configName: string, directory: string): Promise<ActionResult> {
+    try {
+      await this.ensureMailbox()
+      const home = homedir()
+      const configPath = join(home, '.config', 'agent-tracker', 'agents', configName, 'config.json')
+      const content = await readFile(configPath, 'utf8')
+      const raw = JSON.parse(content)
+
+      const agentCommand = raw['agent-command'] || raw.agentCommand
+      const agentArgs = raw['agent-args'] || raw.agentArgs || []
+      if (!agentCommand) throw new Error(`Config ${configName} lacks 'agent-command' parameter`)
+
+      const absoluteDir = join(directory.startsWith('~') ? directory.replace('~', home) : directory)
+      const session = spinSessionName(absoluteDir)
+      const command = buildSpinCommand(agentCommand, agentArgs)
+
+      const env = { ...process.env }
+      delete env.TMUX
+      delete env.TMUX_PANE
+      delete env.AGENT_ID
+      delete env.AGENT_NAME
+      delete env.AGENT_UUID
+
+      const resolvedName = await this.call<string>('spin_agent', {
+        session,
+        directory: absoluteDir,
+        command,
+        name: session,
+        env,
+      })
+      return { ok: true, summary: `Agent spun successfully as: ${resolvedName} in session: ${session}` }
     } catch (error) {
       return { ok: false, summary: '', error: error instanceof Error ? error.message : String(error) }
     }

@@ -8,11 +8,12 @@ interface Props {
   selectedId?: string
   onSelect: (agent: AgentSummary) => void
   onVisibleAgentsChange?: (agents: AgentSummary[], filterActive: boolean) => void
+  onOpenLaunch: () => void
 }
 
 const scopes: AgentScope[] = ['local', 'remote']
 
-export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange }: Props) {
+export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch }: Props) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filterActive = normalizedQuery.length > 0
@@ -76,7 +77,19 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange 
             <div className="agent-section" key={scope}>
               <div className="section-head">
                 <span className="section-head-title">{scope} Agents</span>
-                <span className="section-head-count">{grouped[scope].length}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {scope === 'local' && (
+                    <button
+                      className="section-head-add"
+                      title="Launch saved agent configuration"
+                      onClick={onOpenLaunch}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      +
+                    </button>
+                  )}
+                  <span className="section-head-count">{grouped[scope].length}</span>
+                </div>
               </div>
               {grouped[scope].length === 0 ? (
                 <div className="empty-card">No {scope} agents match filters.</div>

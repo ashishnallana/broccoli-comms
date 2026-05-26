@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
-import type { AgentSummary, RuntimeStatus } from '../../shared/contracts'
+import type { AgentSummary, RuntimeStatus, SavedAgent } from '../../shared/contracts'
 import { RuntimeStatusBar } from './RuntimeStatusBar'
 import { ShortcutsPanel } from './ShortcutsPanel'
 import { CommandPalette } from './CommandPalette'
+import { LaunchAgentModal } from './LaunchAgentModal'
 
 interface Props {
   agents: ReactNode
@@ -22,6 +23,12 @@ interface Props {
 
   agentsRaw: AgentSummary[]
   onSelectAgent: (agent: AgentSummary) => void
+
+  launchModalOpen: boolean
+  onCloseLaunchModal: () => void
+  onLaunchAgent: (configName: string, directory: string) => Promise<{ ok: boolean; error?: string }>
+  onBrowseDirectory: () => Promise<string | null>
+  savedAgents: SavedAgent[]
 }
 
 export function AppShell({
@@ -39,6 +46,11 @@ export function AppShell({
   onClosePalette,
   agentsRaw,
   onSelectAgent,
+  launchModalOpen,
+  onCloseLaunchModal,
+  onLaunchAgent,
+  onBrowseDirectory,
+  savedAgents,
 }: Props) {
   return (
     <>
@@ -71,6 +83,13 @@ export function AppShell({
 
       <CommandPalette open={paletteOpen} agents={agentsRaw} onSelectAgent={onSelectAgent} onClose={onClosePalette} />
       <ShortcutsPanel open={shortcutsOpen} onClose={onCloseShortcuts} />
+      <LaunchAgentModal
+        open={launchModalOpen}
+        savedAgents={savedAgents}
+        onClose={onCloseLaunchModal}
+        onLaunch={onLaunchAgent}
+        onBrowseDirectory={onBrowseDirectory}
+      />
     </>
   )
 }

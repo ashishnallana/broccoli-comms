@@ -62,6 +62,14 @@ export interface ActionResult {
   error?: string
 }
 
+export interface SavedAgent {
+  name: string
+  directory?: string
+  agentCommand: string
+  agentArgs: string[]
+  description: string
+}
+
 export interface CommunicatorRuntimeClient {
   getStatus(): Promise<RuntimeStatus>
   listAgents(): Promise<AgentSummary[]>
@@ -70,4 +78,7 @@ export interface CommunicatorRuntimeClient {
   sendDirectText(target: TargetRef, text: string, submit: boolean): Promise<ActionResult>
   sendDirectKeys(target: TargetRef, keys: string[]): Promise<ActionResult>
   sendPaneCapture(sourceName: string, targetName: string): Promise<ActionResult>
+  listSavedAgents(): Promise<SavedAgent[]>
+  spinAgent(configName: string, directory: string): Promise<ActionResult>
+  selectLocalDirectory(): Promise<string | null>
 }

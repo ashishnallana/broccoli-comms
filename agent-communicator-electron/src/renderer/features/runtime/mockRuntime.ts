@@ -1,4 +1,4 @@
-import type { ActionResult, AgentSummary, Message, RuntimeStatus, SendResult, TargetRef } from '../../../shared/contracts'
+import type { ActionResult, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef } from '../../../shared/contracts'
 import { mockAgents, mockMessages, mockRuntimeStatus } from '../../../test/fixtures'
 import { nextMockId } from '../../lib/ids'
 
@@ -75,5 +75,33 @@ export class MockRuntimeClient {
     }
     this.messages[sourceName] = [...(this.messages[sourceName] ?? []), message]
     return { ok: true, summary: `Mock snapshot successfully sent to ${targetName}` }
+  }
+
+  async listSavedAgents(): Promise<SavedAgent[]> {
+    await latency()
+    return [
+      {
+        name: 'jetski',
+        agentCommand: 'jetski-cli',
+        agentArgs: [],
+        description: '专家智能编程助手 pair programming with DeepMind researchers',
+      },
+      {
+        name: 'pi',
+        agentCommand: 'pi-agent',
+        agentArgs: ['--role', 'reviewer'],
+        description: 'Local developer assistant for Nix and shell scripting',
+      },
+    ]
+  }
+
+  async spinAgent(configName: string, directory: string): Promise<ActionResult> {
+    await latency(180)
+    return { ok: true, summary: `Mock spun agent '${configName}' successfully inside ${directory}` }
+  }
+
+  async selectLocalDirectory(): Promise<string | null> {
+    await latency()
+    return '/mock/local/projects/broccoli-comms'
   }
 }

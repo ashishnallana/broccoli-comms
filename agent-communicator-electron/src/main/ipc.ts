@@ -95,4 +95,28 @@ export function registerMockIpcHandlers(): void {
     mockMessages[sourceName] = [...(mockMessages[sourceName] ?? []), message]
     return { ok: true, summary: `Mock snapshot successfully sent to ${targetName}` }
   })
+  ipcMain.handle(IPC_CHANNELS.listSavedAgents, async () => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.listSavedAgents()
+
+    return [
+      { name: 'jetski', agentCommand: 'jetski-cli', agentArgs: [], description: '专家智能编程助手 pair programming with DeepMind researchers' },
+      { name: 'pi', agentCommand: 'pi-agent', agentArgs: ['--role', 'reviewer'], description: 'Local developer assistant for Nix and shell scripting' },
+    ]
+  })
+  ipcMain.handle(IPC_CHANNELS.spinAgent, async (_event, configName: string, directory: string) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.spinAgent(configName, directory)
+
+    return { ok: true, summary: `Mock spun agent '${configName}' successfully inside ${directory}` }
+  })
+  ipcMain.handle(IPC_CHANNELS.selectLocalDirectory, async () => {
+    const { dialog } = require('electron')
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+      title: 'Select Agent Working Directory',
+      buttonLabel: 'Select Directory',
+    })
+    return result.filePaths[0] || null
+  })
 }
