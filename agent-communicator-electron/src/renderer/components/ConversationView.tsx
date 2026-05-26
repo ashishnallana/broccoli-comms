@@ -171,7 +171,7 @@ export function ConversationView({ agent, messages, detailsOpen, onToggleDetails
         </div>
       </div>
 
-      <div className="feed" id="feed" ref={timelineRef}>
+      <div className={`feed ${agent.id.startsWith('group:') || agent.id.startsWith('host:') ? 'group-chat' : ''}`} id="feed" ref={timelineRef}>
         {renderedElements.length === 0 ? (
           <div className="empty-card">No messages yet. Use the composer below to send a message.</div>
         ) : (

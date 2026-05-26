@@ -1391,3 +1391,25 @@ kbd {
   line-height: 1.4;
   color: var(--muted);
 }
+
+/* ===== Group Chat Layout Customizations ===== */
+.feed.group-chat .msg-row {
+  margin-bottom: 16px;
+}
+
+.feed.group-chat .msg-author-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--body-strong);
+}
+
+.feed.group-chat .msg-author-recipient {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-blue);
+}
+
+.feed.group-chat .msg-author-arrow {
+  font-size: 13px;
+  margin: 0 4px;
+}
