@@ -4,7 +4,7 @@ export type RuntimeHealth = 'healthy' | 'degraded' | 'offline'
 export type ComposerMode = 'message' | 'directText' | 'directKeys'
 
 export interface RuntimeStatus {
-  mode: 'mock'
+  mode: 'mock' | 'tracker'
   label: string
   health: RuntimeHealth
   tracker: RuntimeHealth

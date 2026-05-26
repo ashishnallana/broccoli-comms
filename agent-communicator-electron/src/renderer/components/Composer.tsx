@@ -43,7 +43,7 @@ export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props)
           disabled={directBlocked}
           onChange={(event) => setBody(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+            if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
               void submit()
             }

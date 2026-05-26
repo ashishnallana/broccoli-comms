@@ -63,6 +63,7 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false
+    let timer: number | undefined
     async function loadMessages() {
       if (!selectedAgent) {
         setMessages([])
@@ -72,8 +73,10 @@ export function App() {
       if (!cancelled) setMessages(nextMessages)
     }
     void loadMessages()
+    timer = window.setInterval(() => void loadMessages(), 3000)
     return () => {
       cancelled = true
+      if (timer !== undefined) window.clearInterval(timer)
     }
   }, [runtime, selectedAgent])
 
@@ -167,12 +170,23 @@ export function App() {
       </dl>
       <div className="warning-card">Direct Text and Direct Keys are explicit mock-only pane-control modes.</div>
       <div className="mock-boundary-card">
-        <h3>Mock boundary</h3>
+        <h3>{status?.mode === 'tracker' ? 'Tracker Simple View' : 'Mock boundary'}</h3>
         <ul>
-          <li>Local fixture data only</li>
-          <li>No tracker or registry calls</li>
-          <li>No tmux pane control</li>
-          <li>No persistence beyond this mock session</li>
+          {status?.mode === 'tracker' ? (
+            <>
+              <li>Local agent-tracker socket only</li>
+              <li>Send/receive normal messages for local agents</li>
+              <li>No registry, remote agents, or direct pane control</li>
+              <li>Reply inbox identity is configured by environment</li>
+            </>
+          ) : (
+            <>
+              <li>Local fixture data only</li>
+              <li>No tracker or registry calls</li>
+              <li>No tmux pane control</li>
+              <li>No persistence beyond this mock session</li>
+            </>
+          )}
         </ul>
       </div>
     </div>

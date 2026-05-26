@@ -672,6 +672,47 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    def test_ensure_mailbox_creates_local_no_notify_identity(self):
+        result = rpc_handler.handle_ensure_mailbox({"agent_name": "agent-communicator"})
+        self.assertEqual(result["name"], "agent-communicator")
+        info = state.get_agent("agent-communicator")
+        self.assertEqual(info.get("agent_id"), result["agent_id"])
+        self.assertTrue(info.get("is_mailbox"))
+        self.assertTrue(info.get("no_notify_with_send_keys"))
+        self.assertTrue(info.get("no_registry"))
+        self.assertEqual(info.get("agent_type"), "agent-communicator-ui")
+        self.assertIsNone(info.get("session"))
+        self.assertIsNone(info.get("tmux_pane"))
+        self.assertIsNone(info.get("tmux_socket"))
+        self.assertIsNone(info.get("wrapper_pid"))
+        self.assertIsNone(info.get("pid"))
+
+    def test_ensure_mailbox_clears_existing_pane_metadata_and_blocks_direct_input(self):
+        state.set_agent("agent-communicator", {
+            "agent_id": "ui-id",
+            "uuid": "ui-id",
+            "session": "old-session",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "wrapper_pid": 123,
+            "pid": 456,
+        })
+        rpc_handler.handle_ensure_mailbox({"agent_name": "agent-communicator"})
+        info = state.get_agent("agent-communicator")
+        self.assertIsNone(info.get("session"))
+        self.assertIsNone(info.get("tmux_pane"))
+        self.assertIsNone(info.get("tmux_socket"))
+        self.assertIsNone(info.get("wrapper_pid"))
+        self.assertIsNone(info.get("pid"))
+        with self.assertRaisesRegex(RuntimeError, "no registered tmux pane"):
+            rpc_handler.handle_send_input({"agent_name": "agent-communicator", "input_type": "text", "text": "unsafe"})
+
+    def test_ensure_mailbox_rejects_remote_names(self):
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_ensure_mailbox({"agent_name": "host/agent-communicator"})
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_ensure_mailbox({"agent_name": "registry:host/agent-communicator"})
+
     @mock.patch("state.publish_event")
     def test_get_inbox_publishes_message_read_event_once(self, publish_event):
         inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
@@ -693,6 +734,49 @@ class TestRpcHandler(unittest.TestCase):
             publish_event.reset_mock()
             rpc_handler.handle_get_inbox({"agent_name": "agent1"})
             publish_event.assert_not_called()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("state.publish_event")
+    def test_get_inbox_mark_read_false_does_not_mark_or_publish(self, publish_event):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            with open(inbox_path, "w") as f:
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "hi", "read": False, "message_id": "m1"}) + "\n")
+
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "mark_read": False, "last_n": 100})
+            self.assertEqual(result["mode"], "last_n")
+            self.assertEqual(len(result["messages"]), 1)
+            publish_event.assert_not_called()
+
+            with open(inbox_path, "r") as f:
+                stored = [json.loads(line) for line in f if line.strip()]
+            self.assertFalse(stored[0]["read"])
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("state.publish_event")
+    def test_get_inbox_sender_filter_marks_only_matching_messages(self, publish_event):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            with open(inbox_path, "w") as f:
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "a", "read": False, "message_id": "m1"}) + "\n")
+                f.write(json.dumps({"sender": "beta", "sender_agent_id": "beta-id", "message": "b", "read": False, "message_id": "m2"}) + "\n")
+
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "sender_agent_id": "alpha-id"})
+            self.assertEqual([m["message_id"] for m in result["messages"]], ["m1"])
+
+            with open(inbox_path, "r") as f:
+                stored = [json.loads(line) for line in f if line.strip()]
+            self.assertTrue(stored[0]["read"])
+            self.assertFalse(stored[1]["read"])
+            publish_event.assert_called_once()
         finally:
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
