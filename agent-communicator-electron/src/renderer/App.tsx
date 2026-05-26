@@ -146,17 +146,32 @@ export function App() {
         return
       }
 
+      // 3. Legacy Ctrl-N / Ctrl-P & Ctrl-X selection / capture triggers (Bypass input focus checks)
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        const key = event.key.toLowerCase()
+        if (key === 'n' || key === 'p') {
+          event.preventDefault()
+          moveSelection(key === 'n' ? 1 : -1)
+          return
+        }
+        if (key === 'x') {
+          event.preventDefault()
+          capturePane()
+          return
+        }
+      }
+
       // Don't intercept keyboard shortcuts when typing in inputs
       if (inField) return
 
-      // 3. "?" to toggle Shortcuts panel
+      // 4. "?" to toggle Shortcuts panel
       if (event.key === '?') {
         event.preventDefault()
         setShortcutsOpen((open) => !open)
         return
       }
 
-      // 4. "[" and "]" to navigate next/prev agent channel
+      // 5. "[" and "]" to navigate next/prev agent channel
       if (event.key === '[') {
         event.preventDefault()
         moveSelection(-1)
@@ -168,28 +183,12 @@ export function App() {
         return
       }
 
-      // 5. "r" or "/" to focus composer input
+      // 6. "r" or "/" to focus composer input
       if (event.key === 'r' || event.key === '/') {
         event.preventDefault()
         const input = document.querySelector('.composer-input') as HTMLInputElement | HTMLTextAreaElement | null
         input?.focus()
         return
-      }
-
-      // 6. Legacy Ctrl-N / Ctrl-P selection navigation
-      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-        const key = event.key.toLowerCase()
-        if (key === 'n' || key === 'p') {
-          event.preventDefault()
-          moveSelection(key === 'n' ? 1 : -1)
-          return
-        }
-        // 7. Ctrl+X to trigger Pane Capture
-        if (key === 'x') {
-          event.preventDefault()
-          capturePane()
-          return
-        }
       }
     }
 
