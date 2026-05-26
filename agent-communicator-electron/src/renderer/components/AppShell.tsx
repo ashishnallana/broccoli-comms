@@ -43,10 +43,6 @@ export function AppShell({
   return (
     <>
       <div className="menubar">
-        <span>File</span>
-        <span>Edit</span>
-        <span>View</span>
-        <span>Window</span>
         <span style={{ cursor: 'pointer' }} onClick={onOpenShortcuts}>Help</span>
         <div className="menubar-search" id="openPalette" onClick={onOpenPalette}>
           <svg className="menubar-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">

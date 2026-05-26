@@ -41,7 +41,6 @@ export function CommandPalette({ open, agents, onSelectAgent, onClose }: Props) 
 
   const actions = useMemo(() => {
     const list = [
-      { type: 'action' as const, id: 'action-pause', label: 'Pause live stream', meta: 'Space' },
       { type: 'action' as const, id: 'action-shortcuts', label: 'Show keyboard shortcuts', meta: '?' },
       { type: 'action' as const, id: 'action-close', label: 'Close palette', meta: 'esc' },
     ]

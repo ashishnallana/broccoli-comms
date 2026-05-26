@@ -257,12 +257,7 @@ export function App() {
         </div>
       </dl>
 
-      <div className="detail-actions">
-        <button className="btn">Mark read</button>
-        <button className="btn">Copy target</button>
-        <button className="btn">Open CWD</button>
-        <button className="btn">View logs</button>
-      </div>
+
 
       <div className="info-note">
         <strong>Direct Text</strong> and <strong>Direct Keys</strong> remain locked in this tracker-focused UI.

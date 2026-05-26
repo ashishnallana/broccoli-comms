@@ -48,8 +48,6 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange 
 
       <div className="subnav" role="tablist" aria-label="Communicator sections">
         <button className="subnav-item active">Agents</button>
-        <button className="subnav-item">Prompts</button>
-        <button className="subnav-item">Settings</button>
       </div>
 
       <input
