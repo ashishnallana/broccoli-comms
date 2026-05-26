@@ -345,14 +345,12 @@ export function App() {
         </div>
         <div className="detail-row">
           <dt className="detail-key">Direct control</dt>
-          <dd className="detail-val">Locked / not implemented</dd>
+          <dd className="detail-val" style={{ color: 'var(--accent-emerald)', fontWeight: 700 }}>Unlocked / Operational</dd>
         </div>
       </dl>
 
-
-
       <div className="info-note">
-        <strong>Direct Text</strong> and <strong>Direct Keys</strong> remain locked in this tracker-focused UI.
+        <strong>Direct Control Unlocked!</strong> Switch composer tab modes to <strong>Direct Text</strong> or <strong>Direct Keys</strong> to inject command text and custom Unix keystrokes.
       </div>
 
       <div className="info-card">

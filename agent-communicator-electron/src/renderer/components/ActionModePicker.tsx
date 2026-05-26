@@ -8,8 +8,8 @@ interface Props {
 
 const modes: Array<{ value: ComposerMode; label: string; hint: string; direct?: boolean }> = [
   { value: 'message', label: 'Message', hint: 'INBOX' },
-  { value: 'directText', label: 'Direct Text', hint: 'LOCKED', direct: true },
-  { value: 'directKeys', label: 'Direct Keys', hint: 'LOCKED', direct: true },
+  { value: 'directText', label: 'Direct Text', hint: 'TEXT', direct: true },
+  { value: 'directKeys', label: 'Direct Keys', hint: 'KEYS', direct: true },
 ]
 
 export function ActionModePicker({ mode, onModeChange }: Props) {
