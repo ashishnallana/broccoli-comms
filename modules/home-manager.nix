@@ -24,6 +24,7 @@ let
   trackerSocket = if cfg.tracker.socketPath != null then cfg.tracker.socketPath else "${trackerCacheDir}/agent-tracker.sock";
   trackerStdout = "${trackerCacheDir}/launchd.stdout.log";
   trackerStderr = "${trackerCacheDir}/launchd.stderr.log";
+  trackerHostSuffixPath = "${stateRoot}/broccoli-comms/agent-tracker/hostname-suffix";
 
   envList = attrs: lib.mapAttrsToList (name: value: "${name}=${toString value}") attrs;
   optionalEnv = name: value: lib.optionalAttrs (value != null) { ${name} = value; };
@@ -31,7 +32,6 @@ let
   trackerEnv = {
     AGENT_TRACKER_SOCKET = trackerSocket;
     XDG_CACHE_HOME = builtins.dirOf trackerCacheDir;
-    AGENT_TRACKER_HOSTNAME = cfg.tracker.hostname;
     AGENT_TRACKER_HTTP_PORT = toString cfg.tracker.httpPort;
     AGENT_REGISTRY_HEARTBEAT_SECONDS = toString cfg.tracker.registryHeartbeatSeconds;
     AGENT_REGISTRY_AUTH = if cfg.tracker.registryAuth then "true" else "false";
@@ -50,10 +50,11 @@ let
       "/sbin"
       (lib.makeBinPath [ pkgs.tmux pkgs.coreutils pkgs.gnugrep pkgs.procps pkgs.bash ])
     ];
-  } // optionalEnv "AGENT_TRACKER_TMUX_SOCKET" cfg.tracker.tmuxSocketPath
+  } // optionalEnv "AGENT_TRACKER_HOSTNAME" cfg.tracker.hostname
+    // optionalEnv "AGENT_TRACKER_TMUX_SOCKET" cfg.tracker.tmuxSocketPath
     // optionalEnv "AGENT_REGISTRY_TOKEN" cfg.tracker.registryToken
     // lib.optionalAttrs (cfg.tracker.registries != []) {
-      AGENT_REGISTRIES_JSON = builtins.replaceStrings ["\""] ["\\\""] (builtins.toJSON cfg.tracker.registries);
+      AGENT_REGISTRIES_JSON = builtins.toJSON cfg.tracker.registries;
     }
     // lib.optionalAttrs cfg.tracker.remotePaneInput.enable {
       BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED = "1";
@@ -61,6 +62,30 @@ let
     // cfg.tracker.environment;
 
   trackerStart = pkgs.writeShellScript "broccoli-comms-agent-tracker-start" ''
+    if [ -z "''${AGENT_TRACKER_HOSTNAME:-}" ]; then
+      suffix_file=${lib.escapeShellArg trackerHostSuffixPath}
+      mkdir -p "$(dirname "$suffix_file")"
+      if [ ! -s "$suffix_file" ]; then
+        ${pkgs.python3}/bin/python3 - <<'PY' > "$suffix_file"
+import random
+import string
+print(''.join(random.choice(string.ascii_lowercase) for _ in range(3)))
+PY
+      fi
+      suffix="$(tr -cd 'a-z' < "$suffix_file" | cut -c1-3)"
+      if [ "''${#suffix}" -ne 3 ]; then
+        suffix="$(${pkgs.python3}/bin/python3 - <<'PY'
+import random
+import string
+print(''.join(random.choice(string.ascii_lowercase) for _ in range(3)))
+PY
+)"
+        printf '%s\n' "$suffix" > "$suffix_file"
+      fi
+      base="$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf '%s' ${lib.escapeShellArg config.home.username})"
+      base="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-' | sed 's/^-//; s/-$//')"
+      export AGENT_TRACKER_HOSTNAME="''${base:-${config.home.username}}-$suffix"
+    fi
     ${lib.optionalString (cfg.tracker.registryAuth && cfg.tracker.registryTokenFile != null) ''export AGENT_REGISTRY_TOKEN="$(cat ${lib.escapeShellArg (toString cfg.tracker.registryTokenFile)})"''}
     exec ${cfg.tracker.package}/bin/agent-tracker
   '';
@@ -82,8 +107,8 @@ let
 
   electronEnv = {
     AGENT_TRACKER_SOCKET = trackerSocket;
-    AGENT_TRACKER_HOSTNAME = cfg.tracker.hostname;
-  } // cfg.electron.environment;
+  } // optionalEnv "AGENT_TRACKER_HOSTNAME" cfg.tracker.hostname
+    // cfg.electron.environment;
   electronStart = pkgs.writeShellScript "broccoli-comms-electron-start" ''
     exec ${cfg.electron.package}/bin/agent-communicator-electron
   '';
@@ -123,7 +148,11 @@ in {
     tracker = {
       enable = mkOption { type = types.bool; default = cfg.enable; description = "Enable agent-tracker as a systemd user service or launchd agent."; };
       package = mkOption { type = types.package; default = packages.agentTracker; defaultText = "self.packages.<system>.agentTracker"; };
-      hostname = mkOption { type = types.str; default = "${config.home.username}-broccoli"; description = "AGENT_TRACKER_HOSTNAME."; };
+      hostname = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = "Optional AGENT_TRACKER_HOSTNAME override. When null, the service generates a stable <machine-hostname>-<three-letter-suffix> identity and stores the suffix under XDG state.";
+      };
       socketPath = mkOption { type = types.nullOr types.str; default = null; description = "AGENT_TRACKER_SOCKET. Defaults to ~/.cache/broccoli-comms/agent-tracker/agent-tracker.sock."; };
       cacheDir = mkOption { type = types.nullOr types.str; default = null; description = "Tracker cache directory. Defaults to ~/.cache/broccoli-comms/agent-tracker."; };
       tmuxSocketPath = mkOption { type = types.nullOr types.str; default = null; description = "Optional AGENT_TRACKER_TMUX_SOCKET."; };
@@ -174,12 +203,6 @@ in {
       home.activation.ensureBroccoliCommsTrackerDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         mkdir -p ${lib.escapeShellArg trackerCacheDir}
       '';
-      home.sessionVariables = {
-        AGENT_TRACKER_SOCKET = trackerSocket;
-        AGENT_TRACKER_HOSTNAME = cfg.tracker.hostname;
-      } // lib.optionalAttrs (cfg.tracker.registries != []) {
-        AGENT_REGISTRIES_JSON = builtins.replaceStrings ["\""] ["\\\""] (builtins.toJSON cfg.tracker.registries);
-      };
     })
 
     (lib.mkIf (cfg.tracker.enable && pkgs.stdenv.isLinux) {
