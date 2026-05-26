@@ -140,7 +140,16 @@ export function trackerMessageToMessage(conversationKey: string, message: Tracke
 export function messageMatchesConversation(message: TrackerMessage, target: Pick<TrackerAgent, 'agent_id' | 'uuid' | 'name'>): boolean {
   const stableID = target.agent_id || target.uuid
   if (stableID && message.sender_agent_id === stableID) return true
-  return Boolean(target.name && message.sender === target.name)
+  
+  if (!target.name) return false
+  if (message.sender === target.name) return true
+  
+  if (target.name.includes('/')) {
+    const segments = target.name.split('/')
+    const bareName = segments[segments.length - 1]
+    if (message.sender === bareName) return true
+  }
+  return false
 }
 
 export function mergeConversationMessages(inbound: Message[], sent: Message[]): Message[] {
@@ -234,13 +243,48 @@ export class LocalTrackerClient {
   }
 
   async listMessages(conversationKey: string, inboxOwnerName?: string): Promise<Message[]> {
-    
+    if (conversationKey.startsWith('mailbox:')) {
+      const mailboxName = conversationKey.slice('mailbox:'.length)
+      try {
+        const result = await this.call<ReadInboxResult>('get_inbox', {
+          agent_name: mailboxName,
+          clear: false,
+          last_n: 100,
+          mark_read: false
+        })
+        return (result.messages || []).map((message) => {
+          return trackerMessageToMessage(conversationKey, message, message.recipient || 'you', this.selfAgentName)
+        })
+      } catch (error) {
+        return []
+      }
+    }
+
     if (!this.agentsByConversation.has(conversationKey)) {
       await this.listAgents()
     }
     const selectedAgent = this.agentsByConversation.get(conversationKey)
     const sent = this.sentMessagesByConversation.get(conversationKey) ?? []
     if (!selectedAgent) return sent
+
+    let peerSentList: Message[] = []
+    if (selectedAgent.scope === 'local') {
+      try {
+        const peerInbox = await this.call<ReadInboxResult>('get_inbox', {
+          agent_name: selectedAgent.name,
+          clear: false,
+          last_n: 100,
+          mark_read: false
+        })
+        peerSentList = (peerInbox.messages || [])
+          .filter((message) => message.sender === this.selfAgentName)
+          .map((message) => trackerMessageToMessage(conversationKey, message, selectedAgent.name || 'local-agent', this.selfAgentName))
+      } catch (e) {
+        // Ignore if peer inbox is missing
+      }
+    }
+
+    const combinedSent = mergeConversationMessages(peerSentList, sent)
 
     try {
       const senderFilter = selectedAgent.agent_id || selectedAgent.uuid
@@ -261,7 +305,7 @@ export class LocalTrackerClient {
           const recipientName = inboxOwnerName && selectedAgent.scope === 'local' ? selectedAgent.name || 'local-agent' : message.recipient || 'you'
           return trackerMessageToMessage(conversationKey, message, recipientName, this.selfAgentName)
         })
-      return mergeConversationMessages(inbound, sent)
+      return mergeConversationMessages(inbound, combinedSent)
     } catch (error) {
       return mergeConversationMessages(
         [
@@ -495,7 +539,7 @@ export class LocalTrackerClient {
   private async ensureMailbox(): Promise<MailboxIdentity> {
     if (this.mailboxReady) return { name: this.selfAgentName }
     try {
-      const mailbox = await this.call<MailboxIdentity>('ensure_mailbox', { agent_name: this.selfAgentName })
+      const mailbox = await this.call<MailboxIdentity>('ensure_mailbox', { agent_name: this.selfAgentName, no_registry: false })
       this.mailboxReady = true
       return mailbox
     } catch (error) {

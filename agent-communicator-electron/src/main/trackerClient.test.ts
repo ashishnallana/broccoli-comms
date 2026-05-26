@@ -141,7 +141,7 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
     await withFakeTracker(
       (method, params) => {
         if (method === 'ensure_mailbox') {
-          expect(params).toEqual({ agent_name: 'desktop' })
+          expect(params).toEqual({ agent_name: 'desktop', no_registry: false })
           return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
         }
         expect(method).toBe('list')
@@ -240,7 +240,7 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
         const agents = await client.listAgents()
         expect(agents).toEqual([])
 
-        expect(calls[0]).toMatchObject({ method: 'ensure_mailbox', params: { agent_name: 'desktop' } })
+        expect(calls[0]).toMatchObject({ method: 'ensure_mailbox', params: { agent_name: 'desktop', no_registry: false } })
         expect(calls[1]).toMatchObject({
           method: 'register',
           params: {

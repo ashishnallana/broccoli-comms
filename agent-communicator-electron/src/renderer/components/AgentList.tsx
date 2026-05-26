@@ -13,7 +13,7 @@ interface Props {
   onAgentContextMenu?: (e: React.MouseEvent, agentId: string) => void
 }
 
-const categories = ['groups', 'agents'] as const
+const categories = ['mailbox', 'groups', 'agents'] as const
 
 export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch, onOpenCreateGroup, onAgentContextMenu }: Props) {
   const [query, setQuery] = useState('')

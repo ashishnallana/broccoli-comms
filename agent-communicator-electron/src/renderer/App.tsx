@@ -179,10 +179,29 @@ export function App() {
     }
   }, [])
 
+  const mailboxChannel = useMemo<AgentSummary>(() => {
+    const mailboxName = 'agent-communicator'
+    return {
+      id: `mailbox:${mailboxName}`,
+      name: mailboxName,
+      displayName: `Inbox: ${mailboxName} (mailbox)`,
+      scope: 'local',
+      status: 'idle',
+      cwd: '/work/mailbox',
+      project: 'Mailbox Channel',
+      address: `@${mailboxName}`,
+      unread: 0,
+      lastActiveAt: new Date().toISOString(),
+      conversationKey: `mailbox:${mailboxName}`,
+      canDirectControl: false,
+      tags: ['mailbox', 'inbox', 'local'],
+    }
+  }, [])
+
   const agents = useMemo<AgentSummary[]>(() => {
     const groupSummaries = allGroups.map(groupToAgentSummary)
-    return [...groupSummaries, ...rawAgents]
-  }, [allGroups, rawAgents, groupToAgentSummary])
+    return [mailboxChannel, ...groupSummaries, ...rawAgents]
+  }, [mailboxChannel, allGroups, rawAgents, groupToAgentSummary])
 
   const selectedAgent = agents.find((agent) => agent.id === selectedId)
 
@@ -339,6 +358,8 @@ export function App() {
       watchlist = getGroupMembers(selectedAgent.id).map((aId) => {
         return aId.startsWith('local:') ? aId.slice('local:'.length) : aId
       })
+    } else if (selectedAgent.id.startsWith('mailbox:')) {
+      watchlist = []
     } else {
       const stableId = selectedAgent.id.startsWith('local:')
         ? selectedAgent.id.slice('local:'.length)
@@ -652,6 +673,35 @@ export function App() {
         </div>
       )}
     </>
+  ) : selectedAgent && selectedAgent.id.startsWith('mailbox:') ? (
+    <>
+      <dl className="detail-list">
+        <div className="detail-row">
+          <dt className="detail-key">Identity</dt>
+          <dd className="detail-val"><code>{selectedAgent.name}</code></dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">Type</dt>
+          <dd className="detail-val">Shared Mailbox</dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">CWD</dt>
+          <dd className="detail-val"><code>/work/mailbox</code></dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">Observed Messages</dt>
+          <dd className="detail-val" style={{ color: 'var(--accent-blue)', fontWeight: 700 }}>{messages.length} Messages</dd>
+        </div>
+        <div className="detail-row">
+          <dt className="detail-key">Direct control</dt>
+          <dd className="detail-val" style={{ color: 'var(--accent-rose)', fontWeight: 700 }}>Disabled (Inbox Only)</dd>
+        </div>
+      </dl>
+
+      <div className="info-note">
+        <strong>Global Mailbox View:</strong> This segment displays every fanned-out remote watchevents event and incoming DM message delivered to the shared <code>{selectedAgent.name}</code> inbox.
+      </div>
+    </>
   ) : selectedAgent ? (
     <>
       <dl className="detail-list">
@@ -945,9 +995,12 @@ export function App() {
                 onToggleDetails={() => setDetailsOpen((open) => !open)}
                 onCapturePane={capturePane}
               />
-              {selectedAgent.id.startsWith('group:') || selectedAgent.id.startsWith('host:') ? (
+              {selectedAgent.id.startsWith('group:') || selectedAgent.id.startsWith('host:') || selectedAgent.id.startsWith('mailbox:') ? (
                 <div className="read-only-group-banner" style={{ padding: '16px 24px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border-light)', color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center' }}>
-                  Group channels are read-only. Select an individual agent card in the sidebar to send direct DMs or execute direct control input.
+                  {selectedAgent.id.startsWith('mailbox:')
+                    ? `Inbox mailbox is read-only. Select a dynamic group or individual agent to compose private messages.`
+                    : `Group channels are read-only. Select an individual agent card in the sidebar to send direct DMs or execute direct control input.`
+                  }
                 </div>
               ) : (
                 <Composer agent={selectedAgent} mode={mode} status={composerStatus} onModeChange={updateMode} onSubmit={submit} />
