@@ -54,6 +54,26 @@ function renderMarkdown(text: string): ReactNode {
   return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: rawHtml }} />
 }
 
+function deliveryMarker(message: Message): { label: string; title: string; className: string } | null {
+  if (message.direction !== 'outbound') return null
+  switch (message.deliveryState) {
+    case 'sending':
+      return { label: '…', title: 'Sending', className: 'sending' }
+    case 'sent':
+      return { label: '✓', title: 'Sent to tracker', className: 'sent' }
+    case 'delivered':
+      return { label: '✓', title: 'Delivered to recipient inbox', className: 'delivered' }
+    case 'notified':
+      return { label: '✓✓', title: 'Recipient notified', className: 'notified' }
+    case 'read':
+      return { label: '✓✓', title: 'Read', className: 'read' }
+    case 'failed':
+      return { label: '!', title: 'Failed', className: 'failed' }
+    default:
+      return null
+  }
+}
+
 function parsePaneCapture(body: string): PaneCaptureDetails | null {
   if (!body.startsWith('### Pane Capture Snapshot from') && !body.startsWith('### Mock Pane Capture Snapshot from')) {
     return null
@@ -192,12 +212,13 @@ export function MessageBubble({ message, grouped = false, focused = false, onFoc
   }
 
   const kind = inferKind(message.body)
+  const marker = deliveryMarker(message)
 
   return (
-    <div className={`msg-row ${grouped ? 'grouped' : ''} ${focused ? 'focused' : ''}`} tabIndex={0} onFocus={onFocus}>
+    <div className={`msg-row ${grouped ? 'grouped' : ''} ${marker ? 'has-delivery' : ''} ${focused ? 'focused' : ''}`} tabIndex={0} onFocus={onFocus}>
       <div className="msg-gutter">
         {grouped ? (
-          <span className="msg-time">{shortTime}</span>
+          <span className="msg-time">{marker ? marker.label : shortTime}</span>
         ) : (
           <div className="msg-avatar-wrap">
             <div className="msg-avatar" style={{ background: avatarBg(message.author) }}>
@@ -215,6 +236,7 @@ export function MessageBubble({ message, grouped = false, focused = false, onFoc
               {message.recipient ? `@${message.recipient}` : message.direction === 'outbound' ? `@${message.conversationKey}` : '#group'}
             </span>
             {kind && <span className={`msg-kind ${kind}`}>{kind}</span>}
+            {marker && <span className={`msg-delivery ${marker.className}`} title={marker.title}>{marker.label}</span>}
             <span className="msg-author-time">{fullTimeStr}</span>
           </div>
         )}

@@ -463,7 +463,8 @@ kbd {
 }
 .msg-row.grouped { padding-top: 1px; padding-bottom: 1px; }
 .msg-row.grouped .msg-gutter { visibility: hidden; }
-.msg-row.grouped:hover .msg-gutter { visibility: visible; }
+.msg-row.grouped:hover .msg-gutter,
+.msg-row.grouped.has-delivery .msg-gutter { visibility: visible; }
 .msg-row.grouped .msg-author { display: none; }
 
 .msg-gutter {
@@ -539,6 +540,22 @@ kbd {
 .msg-kind.handoff { color: var(--accent-purple); border-color: rgba(196, 181, 253, 0.2); background: rgba(196, 181, 253, 0.06); }
 .msg-kind.commit { color: var(--accent-emerald); border-color: rgba(34, 197, 94, 0.2); background: rgba(34, 197, 94, 0.06); }
 .msg-kind.error { color: var(--accent-rose); border-color: rgba(239, 68, 68, 0.2); background: rgba(239, 68, 68, 0.06); }
+.msg-delivery {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.msg-delivery.sending,
+.msg-delivery.sent { color: var(--muted); }
+.msg-delivery.delivered,
+.msg-delivery.notified { color: var(--body); }
+.msg-delivery.read { color: var(--accent-blue); }
+.msg-delivery.failed { color: var(--accent-rose); letter-spacing: 0; }
+.msg-row.grouped.has-delivery .msg-time { color: var(--body); font-weight: 700; letter-spacing: -1px; }
+.msg-row.grouped.has-delivery .msg-delivery.read,
+.msg-row.grouped.has-delivery .msg-time { font-variant-numeric: tabular-nums; }
 
 .msg-body {
   font-size: 14px;

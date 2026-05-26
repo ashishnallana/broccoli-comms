@@ -407,7 +407,7 @@ export function App() {
 
       const hasMessages = events.some((event) => {
         const type = trackerEventType(event)
-        return type === 'message_delivered' || type === 'remote_agent_event' || type === 'message_notified'
+        return type === 'message_delivered' || type === 'remote_agent_event' || type === 'message_notified' || type === 'message_read'
       })
 
       const hasAgents = events.some((event) => {

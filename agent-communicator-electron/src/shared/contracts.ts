@@ -38,7 +38,7 @@ export interface AgentSummary {
 }
 
 export type MessageDirection = 'inbound' | 'outbound' | 'system'
-export type MessageDeliveryState = 'received' | 'sending' | 'delivered' | 'failed'
+export type MessageDeliveryState = 'received' | 'sending' | 'sent' | 'delivered' | 'notified' | 'read' | 'failed'
 
 export interface Message {
   id: string

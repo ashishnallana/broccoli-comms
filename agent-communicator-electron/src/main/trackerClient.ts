@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
-import type { ActionResult, AgentStatus, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef, GroupWatchParams } from '../shared/contracts'
+import type { ActionResult, AgentStatus, AgentSummary, Message, MessageDeliveryState, RuntimeStatus, SavedAgent, SendResult, TargetRef, GroupWatchParams } from '../shared/contracts'
 
 interface RpcResponse<T> {
   result?: T
@@ -41,6 +41,7 @@ interface TrackerMessage {
   timestamp?: string
   message?: string
   delivered?: boolean
+  notified?: boolean
   read?: boolean
   message_id?: string
   recipient?: string
@@ -141,7 +142,7 @@ export function trackerMessageToMessage(conversationKey: string, message: Tracke
     recipient,
     body: message.message || '',
     createdAt: message.timestamp || new Date().toISOString(),
-    deliveryState: message.delivered || outbound ? 'delivered' : 'received',
+    deliveryState: message.read ? 'read' : message.notified ? 'notified' : message.delivered || outbound ? 'delivered' : 'received',
   }
 }
 
@@ -162,6 +163,26 @@ export function messageMatchesConversation(message: TrackerMessage, target: Pick
 
 export function mergeConversationMessages(inbound: Message[], sent: Message[]): Message[] {
   return [...inbound, ...sent].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+}
+
+function deliveryStateForTrackerEvent(type: string | undefined): MessageDeliveryState | undefined {
+  if (type === 'message_read') return 'read'
+  if (type === 'message_notified') return 'notified'
+  if (type === 'message_delivered') return 'delivered'
+  return undefined
+}
+
+function advanceDeliveryState(current: MessageDeliveryState, next: MessageDeliveryState): MessageDeliveryState {
+  const rank: Record<MessageDeliveryState, number> = {
+    failed: -1,
+    received: 0,
+    sending: 1,
+    sent: 2,
+    delivered: 3,
+    notified: 4,
+    read: 5,
+  }
+  return rank[next] > rank[current] ? next : current
 }
 
 export function spinSessionName(directory: string): string {
@@ -370,16 +391,17 @@ export class LocalTrackerClient {
     const conversationKey = target.id || target.address
     try {
       await this.ensureMailbox()
-      await this.call('send_message', { ...trackerMessageTargetParams(target), sender_name: this.selfAgentName, message: body })
+      const messageId = `tracker-out-${Date.now()}-${Math.random().toString(16).slice(2)}`
+      await this.call('send_message', { ...trackerMessageTargetParams(target), sender_name: this.selfAgentName, message: body, message_id: messageId })
       const message = {
-        id: `tracker-out-${Date.now()}`,
+        id: messageId,
         conversationKey,
         direction: 'outbound' as const,
         author: 'you',
         recipient: target.address,
         body,
         createdAt: new Date().toISOString(),
-        deliveryState: 'delivered' as const,
+        deliveryState: 'sent' as const,
       }
       this.sentMessagesByConversation.set(conversationKey, [...(this.sentMessagesByConversation.get(conversationKey) ?? []), message])
       return { ok: true, message }
@@ -588,11 +610,29 @@ export class LocalTrackerClient {
       lease_seconds: leaseSeconds,
       timeout: 25
     })
+    this.applyOutboundStatusEvents(response.events || [])
     return {
       events: response.events,
       lastSeq: response.last_seq,
       reset: response.reset,
       gap: response.gap
+    }
+  }
+
+  private applyOutboundStatusEvents(events: any[]): void {
+    for (const event of events) {
+      const nextState = deliveryStateForTrackerEvent(event.event_type ?? event.type)
+      const messageId = event.message_id ?? event.messageId ?? event.payload?.message_id
+      if (!nextState || !messageId) continue
+      for (const [conversationKey, sent] of this.sentMessagesByConversation.entries()) {
+        let changed = false
+        const updated = sent.map((message) => {
+          if (message.id !== messageId) return message
+          changed = true
+          return { ...message, deliveryState: advanceDeliveryState(message.deliveryState, nextState) }
+        })
+        if (changed) this.sentMessagesByConversation.set(conversationKey, updated)
+      }
     }
   }
 
