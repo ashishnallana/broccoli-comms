@@ -2,8 +2,8 @@ import type { AgentSummary } from '../../../shared/contracts'
 
 export function groupAgents(agents: AgentSummary[]): Record<'groups' | 'agents', AgentSummary[]> {
   return {
-    groups: agents.filter((agent) => agent.id.startsWith('group:')),
-    agents: agents.filter((agent) => !agent.id.startsWith('group:')),
+    groups: agents.filter((agent) => agent.id.startsWith('group:') || agent.id.startsWith('host:')),
+    agents: agents.filter((agent) => !agent.id.startsWith('group:') && !agent.id.startsWith('host:')),
   }
 }
 

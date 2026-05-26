@@ -14,6 +14,7 @@ export interface GroupChannel {
   id: string
   name: string
   memberIds: string[]
+  isHostGroup?: boolean
 }
 
 const DEFAULT_GROUPS: Record<string, GroupChannel> = {
@@ -24,10 +25,52 @@ const DEFAULT_GROUPS: Record<string, GroupChannel> = {
   }
 }
 
+const parseHostname = (agent: AgentSummary): string => {
+  if (agent.scope === 'local') return 'local-host'
+  let addr = agent.address || agent.name
+  if (addr.startsWith('registry:')) {
+    addr = addr.slice('registry:'.length)
+  }
+  if (addr.includes('/')) {
+    return addr.split('/')[0]
+  }
+  return 'unknown-host'
+}
+
+function initials(name: string): string {
+  const parts = name.split(/[-_\s]+/).filter(Boolean)
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+  return name.slice(0, 2).toUpperCase()
+}
+
+function statusDotClass(status: string): string {
+  if (status === 'offline') return 'error'
+  if (status === 'waiting' || status === 'busy') return 'warn'
+  if (status === 'idle') return ''
+  return 'idle'
+}
+
+export function avatarBg(name: string): string {
+  const colors = [
+    'var(--accent-blue)',
+    'var(--accent-purple)',
+    'var(--accent-pink)',
+    'var(--accent-amber)',
+    'var(--accent-emerald)',
+    'var(--accent-teal)',
+  ]
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const index = Math.abs(hash) % colors.length
+  return colors[index]
+}
+
 export function App() {
   const runtime = useMemo(() => createRuntimeClient(), [])
   const [status, setStatus] = useState<RuntimeStatus | null>(null)
-  const [agents, setAgents] = useState<AgentSummary[]>([])
+  const [rawAgents, setRawAgents] = useState<AgentSummary[]>([])
   const [selectedId, setSelectedId] = useState<string>()
   const [messages, setMessages] = useState<Message[]>([])
   const [mode, setMode] = useState<ComposerMode>('message')
@@ -64,8 +107,6 @@ export function App() {
   const modeRef = useRef<ComposerMode>(mode)
   const selectedIdRef = useRef<string | undefined>(selectedId)
 
-  const selectedAgent = agents.find((agent) => agent.id === selectedId)
-
   function clearDirectStatusReset() {
     if (directStatusResetTimer.current !== undefined) {
       window.clearTimeout(directStatusResetTimer.current)
@@ -86,9 +127,35 @@ export function App() {
     return () => clearDirectStatusReset()
   }, [])
 
+  const hostnameGroups = useMemo<GroupChannel[]>(() => {
+    const hosts: Record<string, string[]> = {}
+    for (const a of rawAgents) {
+      const host = parseHostname(a)
+      if (host === 'unknown-host') continue
+      if (!hosts[host]) {
+        hosts[host] = []
+      }
+      hosts[host].push(a.id)
+    }
+
+    return Object.entries(hosts)
+      .filter(([_, memberIds]) => memberIds.length > 0)
+      .map(([host, memberIds]) => ({
+        id: `host:${host}`,
+        name: `${host} (host)`,
+        memberIds,
+        isHostGroup: true
+      }))
+  }, [rawAgents])
+
+  const allGroups = useMemo<GroupChannel[]>(() => {
+    const customList = Object.values(groups)
+    return [...hostnameGroups, ...customList]
+  }, [hostnameGroups, groups])
+
   // Map GroupChannel records into React sidebar AgentSummary items
   const groupToAgentSummary = useCallback((group: GroupChannel): AgentSummary => {
-    const displayName = `Group: #${group.name}`
+    const displayName = group.isHostGroup ? `Host: #${group.name}` : `Group: #${group.name}`
     return {
       id: group.id,
       name: group.name,
@@ -106,6 +173,19 @@ export function App() {
     }
   }, [])
 
+  const agents = useMemo<AgentSummary[]>(() => {
+    const groupSummaries = allGroups.map(groupToAgentSummary)
+    return [...groupSummaries, ...rawAgents]
+  }, [allGroups, rawAgents, groupToAgentSummary])
+
+  const selectedAgent = agents.find((agent) => agent.id === selectedId)
+
+  useEffect(() => {
+    if (agents.length > 0 && !selectedId) {
+      setSelectedId(agents[0].id)
+    }
+  }, [agents, selectedId])
+
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -116,12 +196,8 @@ export function App() {
       ])
       if (cancelled) return
       
-      const groupSummaries = Object.values(groups).map(groupToAgentSummary)
-      const mergedAgents = [...groupSummaries, ...agentList]
-      
       setStatus(runtimeStatus)
-      setAgents(mergedAgents)
-      setSelectedId(mergedAgents[0]?.id)
+      setRawAgents(agentList)
       setSavedAgents(savedList)
       setLoading(false)
     }
@@ -129,7 +205,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [runtime, groups, groupToAgentSummary])
+  }, [runtime])
 
   // Client-side chronological group timeline aggregator
   const compileGroupTimeline = useCallback((groupMessagesMap: Record<string, Message[]>, memberIds: string[]): Message[] => {
@@ -151,13 +227,16 @@ export function App() {
   }, [])
 
   const getGroupMembers = useCallback((groupId: string): string[] => {
+    if (groupId.startsWith('host:')) {
+      return hostnameGroups.find((hg) => hg.id === groupId)?.memberIds || []
+    }
     const group = groups[groupId]
     if (!group) return []
     if (groupId === 'group:dev-team' && group.memberIds.length === 0) {
-      return agents.filter((a) => a.id !== groupId && !a.id.startsWith('group:') && a.scope === 'local').map((a) => a.id)
+      return agents.filter((a) => a.id !== groupId && !a.id.startsWith('group:') && !a.id.startsWith('host:') && a.scope === 'local').map((a) => a.id)
     }
     return group.memberIds
-  }, [groups, agents])
+  }, [groups, hostnameGroups, agents])
 
   const createGroup = useCallback((name: string) => {
     const cleanName = name.trim().replace(/[^A-Za-z0-9_-]/g, '_')
@@ -227,7 +306,7 @@ export function App() {
     const currentAgent = agents.find((a) => a.id === selectedId)
     if (!currentAgent) return
 
-    if (currentAgent.id.startsWith('group:')) {
+    if (currentAgent.id.startsWith('group:') || currentAgent.id.startsWith('host:')) {
       const memberIds = getGroupMembers(currentAgent.id)
       const messagesMap: Record<string, Message[]> = {}
       await Promise.all(
@@ -250,7 +329,7 @@ export function App() {
   useEffect(() => {
     if (!selectedAgent) return
     let watchlist: string[] = []
-    if (selectedAgent.id.startsWith('group:')) {
+    if (selectedAgent.id.startsWith('group:') || selectedAgent.id.startsWith('host:')) {
       watchlist = getGroupMembers(selectedAgent.id).map((aId) => {
         return aId.startsWith('local:') ? aId.slice('local:'.length) : aId
       })
@@ -280,22 +359,7 @@ export function App() {
 
       if (hasAgents) {
         const nextAgents = await runtime.listAgents()
-        const injectedGroupChannel: AgentSummary = {
-          id: 'group:dev-team',
-          name: 'dev-team',
-          displayName: 'Dev Team Channel (#dev-team)',
-          scope: 'local',
-          status: 'idle',
-          cwd: '/work/dev-team',
-          project: 'Group Channel',
-          address: '#dev-team',
-          unread: 0,
-          lastActiveAt: new Date().toISOString(),
-          conversationKey: 'group:dev-team',
-          canDirectControl: false,
-          tags: ['group', 'local'],
-        }
-        setAgents([injectedGroupChannel, ...nextAgents])
+        setRawAgents(nextAgents)
       }
       if (hasMessages) {
         void reloadActiveMessages()
@@ -313,22 +377,7 @@ export function App() {
 
     const unsubscribeReset = window.broccoliCommsMock?.onTrackerResetRequired(async () => {
       const nextAgents = await runtime.listAgents()
-      const injectedGroupChannel: AgentSummary = {
-        id: 'group:dev-team',
-        name: 'dev-team',
-        displayName: 'Dev Team Channel (#dev-team)',
-        scope: 'local',
-        status: 'idle',
-        cwd: '/work/dev-team',
-        project: 'Group Channel',
-        address: '#dev-team',
-        unread: 0,
-        lastActiveAt: new Date().toISOString(),
-        conversationKey: 'group:dev-team',
-        canDirectControl: false,
-        tags: ['group', 'local'],
-      }
-      setAgents([injectedGroupChannel, ...nextAgents])
+      setRawAgents(nextAgents)
       void reloadActiveMessages()
     })
 
@@ -360,7 +409,7 @@ export function App() {
   function selectAgent(agent: AgentSummary) {
     clearDirectStatusReset()
     setSelectedId(agent.id)
-    setAgents((current) =>
+    setRawAgents((current) =>
       current.map((candidate) => (candidate.id === agent.id && candidate.unread > 0 ? { ...candidate, unread: 0 } : candidate)),
     )
   }
@@ -459,7 +508,7 @@ export function App() {
     if (result.ok) {
       setComposerStatus(result.summary || `Agent ${configName} spun successfully!`)
       const agentList = await runtime.listAgents()
-      setAgents(agentList)
+      setRawAgents(agentList)
     } else {
       setComposerStatus(result.error ?? 'Failed to spin agent.')
     }
@@ -562,7 +611,42 @@ export function App() {
     }, 2500) as any
   }
 
-  const details = selectedAgent ? (
+  const selectedGroup = allGroups.find((g) => g.id === selectedId)
+
+  const details = selectedGroup ? (
+    <>
+      <h4 style={{ fontSize: '12px', color: 'var(--text-light)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+        Group Members ({getGroupMembers(selectedGroup.id).length})
+      </h4>
+      <div className="group-members-list">
+        {getGroupMembers(selectedGroup.id).map((mId) => {
+          const member = agents.find((a) => a.id === mId)
+          if (!member) return null
+          return (
+            <button
+              key={member.id}
+              className="member-row"
+              onClick={() => selectAgent(member)}
+            >
+              <span className="agent-avatar-sm" style={{ background: avatarBg(member.displayName) }}>
+                {initials(member.displayName)}
+              </span>
+              <span style={{ flex: 1, fontSize: '12.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {member.displayName}
+              </span>
+              <span className={`channel-status-dot ${statusDotClass(member.status)}`} style={{ width: '6px', height: '6px', minWidth: '6px' }} />
+            </button>
+          )
+        })}
+      </div>
+
+      {selectedGroup.isHostGroup && (
+        <div className="info-note" style={{ marginTop: '16px' }}>
+          <strong>Host Monitoring Timeline:</strong> This dynamic group automatically aggregates events for all agents running on the machine <code>{selectedGroup.name.replace(' (host)', '')}</code>.
+        </div>
+      )}
+    </>
+  ) : selectedAgent ? (
     <>
       <dl className="detail-list">
         <div className="detail-row">
@@ -637,7 +721,7 @@ export function App() {
 
   const handleAgentContextMenu = useCallback((e: React.MouseEvent, agentId: string) => {
     e.preventDefault()
-    if (agentId.startsWith('group:')) return
+    if (agentId.startsWith('group:') || agentId.startsWith('host:')) return
     setContextMenu({
       visible: true,
       x: e.clientX,
@@ -768,7 +852,7 @@ export function App() {
                 onToggleDetails={() => setDetailsOpen((open) => !open)}
                 onCapturePane={capturePane}
               />
-              {selectedAgent.id.startsWith('group:') ? (
+              {selectedAgent.id.startsWith('group:') || selectedAgent.id.startsWith('host:') ? (
                 <div className="read-only-group-banner" style={{ padding: '16px 24px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border-light)', color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center' }}>
                   Group channels are read-only. Select an individual agent card in the sidebar to send direct DMs or execute direct control input.
                 </div>
