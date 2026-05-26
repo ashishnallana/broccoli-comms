@@ -15,6 +15,6 @@ def handle(_args):
         params["agent_id"] = os.environ["AGENT_ID"]
     elif "AGENT_NAME" in os.environ:
         params["agent_name"] = os.environ["AGENT_NAME"]
+    params["include_remote"] = True
     agents = call_rpc("list", params)
-    agents = merge_registry_agents(agents, fetch_registry_agents())
     print(json.dumps(agents))
