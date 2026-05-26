@@ -46,10 +46,9 @@ export function registerMockIpcHandlers(): void {
     mockMessages[message.conversationKey] = [...(mockMessages[message.conversationKey] ?? []), message]
     return { ok: true, message }
   })
-  ipcMain.handle(IPC_CHANNELS.sendDirectText, async (_event, target: TargetRef, _text: string, submit: boolean) => {
-    if (trackerClient()) {
-      return { ok: false, summary: 'Direct pane control is not wired for tracker Simple View yet.', error: 'direct-not-implemented' }
-    }
+  ipcMain.handle(IPC_CHANNELS.sendDirectText, async (_event, target: TargetRef, text: string, submit: boolean) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.sendDirectText(target, text, submit)
     return {
       ok: target.scope === 'local',
       summary:
@@ -60,9 +59,8 @@ export function registerMockIpcHandlers(): void {
     }
   })
   ipcMain.handle(IPC_CHANNELS.sendDirectKeys, async (_event, target: TargetRef, keys: string[]) => {
-    if (trackerClient()) {
-      return { ok: false, summary: 'Direct pane control is not wired for tracker Simple View yet.', error: 'direct-not-implemented' }
-    }
+    const tracker = trackerClient()
+    if (tracker) return tracker.sendDirectKeys(target, keys)
     return {
       ok: target.scope === 'local',
       summary:

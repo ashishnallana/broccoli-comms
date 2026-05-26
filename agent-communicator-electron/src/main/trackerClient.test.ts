@@ -340,6 +340,47 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
       },
     )
   })
+
+  it('injects local direct text and keys successfully', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    await withFakeTracker(
+      (method, params) => {
+        calls.push({ method, params })
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local' },
+            alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local' },
+          }
+        }
+        if (method === 'send_input') {
+          return { success: true }
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        await client.listAgents()
+
+        const textResult = await client.sendDirectText({ scope: 'local', id: 'local:alpha-id', address: 'alpha' }, 'ls -la', true)
+        expect(textResult.ok).toBe(true)
+        expect(calls.find((c) => c.method === 'send_input' && c.params.input_type === 'text')?.params).toMatchObject({
+          input_type: 'text',
+          text: 'ls -la',
+          submit: true,
+          agent_id: 'alpha-id',
+        })
+
+        const keysResult = await client.sendDirectKeys({ scope: 'local', id: 'local:alpha-id', address: 'alpha' }, ['Escape', 'C-c'])
+        expect(keysResult.ok).toBe(true)
+        expect(calls.find((c) => c.method === 'send_input' && c.params.input_type === 'keys')?.params).toMatchObject({
+          input_type: 'keys',
+          keys: ['Escape', 'C-c'],
+          agent_id: 'alpha-id',
+        })
+      },
+    )
+  })
 })
 
 describe('tracker Simple View mapping', () => {

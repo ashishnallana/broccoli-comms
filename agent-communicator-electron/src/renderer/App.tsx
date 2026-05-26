@@ -238,12 +238,49 @@ export function App() {
 
   async function submit(body: string) {
     if (!selectedAgent) return
-    if (mode !== 'message') {
-      setMode('message')
-      setComposerStatus('Direct pane control is locked; reset to Message mode.')
+    const target = targetForAgent(selectedAgent)
+
+    if (mode === 'directText') {
+      setComposerStatus(`Injecting direct text into ${selectedAgent.displayName}...`)
+      const result = await runtime.sendDirectText(target, body, true)
+      if (result.ok) {
+        setComposerStatus(`Direct text successfully injected!`)
+        resetComposerStatusAfterDelay()
+      } else {
+        setComposerStatus(result.error ?? 'Failed to inject direct text.')
+      }
       return
     }
-    const target = targetForAgent(selectedAgent)
+
+    if (mode === 'directKeys') {
+      try {
+        const payload = JSON.parse(body)
+        if (payload.type === 'keys') {
+          setComposerStatus(`Injecting key strokes [${payload.keys.join(', ')}] into ${selectedAgent.displayName}...`)
+          const result = await runtime.sendDirectKeys(target, payload.keys)
+          if (result.ok) {
+            setComposerStatus(`Keys successfully injected!`)
+            resetComposerStatusAfterDelay()
+          } else {
+            setComposerStatus(result.error ?? 'Failed to inject keys.')
+          }
+          return
+        }
+      } catch {
+        const keys = body.split(/[\s,]+/).filter(Boolean)
+        setComposerStatus(`Injecting key strokes [${keys.join(', ')}] into ${selectedAgent.displayName}...`)
+        const result = await runtime.sendDirectKeys(target, keys)
+        if (result.ok) {
+          setComposerStatus(`Keys successfully injected!`)
+          resetComposerStatusAfterDelay()
+        } else {
+          setComposerStatus(result.error ?? 'Failed to inject keys.')
+        }
+        return
+      }
+    }
+
+    // Message mode
     const pending = optimisticMessage(selectedAgent.conversationKey, body)
     setMessages((current) => [...current, pending])
     setComposerStatus(status?.mode === 'tracker' ? 'Sending tracker message…' : 'Sending mock message…')
@@ -264,6 +301,15 @@ export function App() {
       )
       setComposerStatus(result.error ?? 'Message failed.')
     }
+  }
+
+  function resetComposerStatusAfterDelay() {
+    if (directStatusResetTimer.current !== undefined) {
+      window.clearTimeout(directStatusResetTimer.current)
+    }
+    directStatusResetTimer.current = window.setTimeout(() => {
+      setComposerStatus(defaultComposerStatus(modeRef.current))
+    }, 2500) as any
   }
 
   const details = selectedAgent ? (

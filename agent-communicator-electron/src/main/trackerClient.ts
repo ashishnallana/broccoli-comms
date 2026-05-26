@@ -154,6 +154,14 @@ function buildSpinCommand(agentCommand: string, agentArgs: string[]): string {
   return `bash -c 'export PATH="${callerPath}"; ${innerCommand}; zsh'`
 }
 
+function trackerDirectInputTargetParams(target: TargetRef): Record<string, string> {
+  const isRemote = target.id.startsWith('remote:')
+  const stableID = target.id.startsWith('local:') ? target.id.slice('local:'.length) : isRemote ? target.id.slice('remote:'.length) : ''
+  if (isRemote) return { target_address: target.address }
+  if (stableID) return { agent_id: stableID }
+  return { agent_name: target.address }
+}
+
 export class LocalTrackerClient {
   private readonly sentMessagesByConversation = new Map<string, Message[]>()
   private readonly agentsByConversation = new Map<string, TrackerAgent>()
@@ -413,6 +421,39 @@ export class LocalTrackerClient {
         env,
       })
       return { ok: true, summary: `Agent spun successfully as: ${resolvedName} in session: ${session}` }
+    } catch (error) {
+      return { ok: false, summary: '', error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  async sendDirectText(target: TargetRef, text: string, submit: boolean): Promise<ActionResult> {
+    try {
+      await this.ensureMailbox()
+      const params = {
+        input_type: 'text',
+        text,
+        submit,
+        sender_name: this.selfAgentName,
+        ...trackerDirectInputTargetParams(target),
+      }
+      await this.call('send_input', params)
+      return { ok: true, summary: `Direct text successfully injected` }
+    } catch (error) {
+      return { ok: false, summary: '', error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  async sendDirectKeys(target: TargetRef, keys: string[]): Promise<ActionResult> {
+    try {
+      await this.ensureMailbox()
+      const params = {
+        input_type: 'keys',
+        keys,
+        sender_name: this.selfAgentName,
+        ...trackerDirectInputTargetParams(target),
+      }
+      await this.call('send_input', params)
+      return { ok: true, summary: `Direct keys successfully injected` }
     } catch (error) {
       return { ok: false, summary: '', error: error instanceof Error ? error.message : String(error) }
     }

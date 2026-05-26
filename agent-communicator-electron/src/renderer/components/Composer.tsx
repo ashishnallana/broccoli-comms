@@ -13,14 +13,21 @@ interface Props {
 
 export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props) {
   const [body, setBody] = useState('')
-  const direct = mode !== 'message'
-  const directBlocked = direct
 
   async function submit() {
     const trimmed = body.trim()
-    if (!trimmed || directBlocked) return
-    await onSubmit(trimmed)
+    if (!trimmed) return
+    if (mode === 'directKeys') {
+      const keys = trimmed.split(/[\s,]+/).filter(Boolean)
+      await onSubmit(JSON.stringify({ type: 'keys', keys }))
+    } else {
+      await onSubmit(trimmed)
+    }
     setBody('')
+  }
+
+  async function handleSendDirectKey(keyName: string) {
+    await onSubmit(JSON.stringify({ type: 'keys', keys: [keyName] }))
   }
 
   return (
@@ -31,12 +38,48 @@ export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props)
           <span className="ok">●</span> {status}
         </div>
       </div>
+
+      {/* Direct Keys Keyboard Matrix */}
+      {mode === 'directKeys' && (
+        <div
+          className="quick-keys-row"
+          style={{
+            display: 'flex',
+            gap: '6px',
+            marginTop: '2px',
+            marginBottom: '8px',
+            flexWrap: 'wrap',
+          }}
+        >
+          {['Escape', 'Enter', 'C-c', 'Tab', 'Up', 'Down', 'Left', 'Right'].map((keyName) => (
+            <button
+              key={keyName}
+              className="btn"
+              style={{
+                height: '24px',
+                padding: '0 10px',
+                fontSize: '11px',
+                fontFamily: '"JetBrains Mono", monospace',
+                background: 'var(--surface-soft)',
+                borderColor: 'var(--hairline-strong)',
+                borderRadius: 'var(--r-sm)',
+                color: 'var(--primary)',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              onClick={() => handleSendDirectKey(keyName)}
+            >
+              {keyName === 'C-c' ? 'Ctrl+C' : keyName}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="composer-input-row">
         <textarea
           className="composer-input"
           value={body}
-          placeholder={directBlocked ? 'Direct pane control is locked.' : composerPlaceholder(mode)}
-          disabled={directBlocked}
+          placeholder={composerPlaceholder(mode)}
           onChange={(event) => setBody(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -45,7 +88,7 @@ export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props)
             }
           }}
         />
-        <button className="btn primary send" disabled={directBlocked || !body.trim()} onClick={() => void submit()}>
+        <button className="btn primary send" disabled={!body.trim() && mode !== 'directKeys'} onClick={() => void submit()}>
           {composerActionLabel(mode)}
         </button>
       </div>
