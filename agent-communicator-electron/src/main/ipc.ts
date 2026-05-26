@@ -130,6 +130,7 @@ export function registerMockIpcHandlers(): void {
       if (tracker) {
         void tracker.updateWatchlist(watchlist).catch((e) => console.error('Failed to update group watchlist lease:', e))
       }
+      activeWatchlist = [watchlist.groupId, ...watchlist.members]
     } else {
       activeWatchlist = watchlist as string[]
     }

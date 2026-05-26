@@ -30,6 +30,7 @@ watchlist_lock = threading.Lock()
 
 active_group_watches = {}  # watch_id -> {"expires_at": float, "group_id": str, "members": set, "include_body": bool}
 group_watches_lock = threading.Lock()
+group_timelines_lock = threading.Lock()
 
 TRANSIENT_COMMS = {
     "ps", "grep", "pgrep", "ls", "cat", "sleep", "which", "sh", "bash", "zsh",
@@ -468,32 +469,33 @@ def append_to_group_timeline(group_id: str, message_payload: dict) -> None:
     os.makedirs(GROUP_TIMELINE_DIR, exist_ok=True)
     timeline_path = _get_group_timeline_path(group_id)
 
-    exists = False
-    if os.path.exists(timeline_path):
+    with group_timelines_lock:
+        exists = False
+        if os.path.exists(timeline_path):
+            try:
+                with open(timeline_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            if entry.get("message_id") == msg_id:
+                                exists = True
+                                break
+                        except json.JSONDecodeError:
+                            continue
+            except Exception as e:
+                logging.warning("failed to read group timeline for deduplication: %s", e)
+
+        if exists:
+            return
+
         try:
-            with open(timeline_path, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                        if entry.get("message_id") == msg_id:
-                            exists = True
-                            break
-                    except json.JSONDecodeError:
-                        continue
+            with open(timeline_path, "a") as f:
+                f.write(json.dumps(message_payload) + "\n")
         except Exception as e:
-            logging.warning("failed to read group timeline for deduplication: %s", e)
-
-    if exists:
-        return
-
-    try:
-        with open(timeline_path, "a") as f:
-            f.write(json.dumps(message_payload) + "\n")
-    except Exception as e:
-        logging.warning("failed to append to group timeline %s: %s", timeline_path, e)
+            logging.warning("failed to append to group timeline %s: %s", timeline_path, e)
 
 
 def read_group_timeline(group_id: str, last_n: int = 200) -> list[dict]:
@@ -541,10 +543,31 @@ def sweep_expired_group_watches() -> None:
             logging.info("swept expired group watch lease watch_id=%s", wid)
 
 
+def normalize_group_member(member: str) -> dict:
+    """Normalizes a qualified group member address into registry, hostname, and agent bare name."""
+    addr = member
+    if addr.startswith("remote:"):
+        addr = addr[len("remote:"):]
+    for reg_pref in ["local:", "mundus:"]:
+        if addr.startswith(reg_pref):
+            addr = addr[len(reg_pref):]
+
+    if "/" in addr:
+        parts = addr.split("/")
+        return {
+            "hostname": parts[0],
+            "agent": parts[1]
+        }
+    else:
+        return {
+            "hostname": None,
+            "agent": addr
+        }
+
+
 def _member_matches(member_address: str, logical_name: str) -> bool:
-    if "/" in member_address:
-        return member_address.split("/")[-1] == logical_name
-    return member_address == logical_name
+    norm = normalize_group_member(member_address)
+    return norm.get("agent") == logical_name
 
 
 def record_to_matching_group_timelines(sender: str, recipient: str, msg_obj: dict) -> None:

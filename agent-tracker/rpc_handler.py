@@ -497,6 +497,9 @@ def _maybe_focus_remote_delivery(info: dict, current_name: str, msg_obj: dict) -
 
 def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: str | None = None, verify: bool = False) -> str:
     """Writes a message to a local agent inbox and triggers/queues notification."""
+    msg_id = msg_obj.get("message_id") or str(uuid.uuid4())
+    msg_obj["message_id"] = msg_id
+
     info = state.get_agent(target_name_or_id)
     if not info:
         raise DeliveryTargetNotFound("Target agent not found")
@@ -506,7 +509,6 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
     inbox_file = os.path.join(state.INBOX_DIR, f"{uuid_str}.inbox")
     notify_sender = notify_sender or msg_obj.get("sender", "unknown")
     attach_dir = None
-    msg_id = msg_obj.get("message_id")
 
     try:
         with _locked_inbox(inbox_file):
@@ -1019,10 +1021,10 @@ def _delegate_group_watch_to_remote_trackers(watch_id: str, group_id: str, membe
     trackers = body.get("trackers") or []
     remote_hosts = set()
     for m in members:
-        if "/" in m:
-            host = m.split("/")[0]
-            if host != registry_client.HOSTNAME:
-                remote_hosts.add(host)
+        norm = state.normalize_group_member(m)
+        host = norm.get("hostname")
+        if host and host != registry_client.HOSTNAME:
+            remote_hosts.add(host)
 
     for host in remote_hosts:
         target_tid = None
