@@ -174,6 +174,12 @@ in {
       home.activation.ensureBroccoliCommsTrackerDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         mkdir -p ${lib.escapeShellArg trackerCacheDir}
       '';
+      home.sessionVariables = {
+        AGENT_TRACKER_SOCKET = trackerSocket;
+        AGENT_TRACKER_HOSTNAME = cfg.tracker.hostname;
+      } // lib.optionalAttrs (cfg.tracker.registries != []) {
+        AGENT_REGISTRIES_JSON = builtins.toJSON cfg.tracker.registries;
+      };
     })
 
     (lib.mkIf (cfg.tracker.enable && pkgs.stdenv.isLinux) {
