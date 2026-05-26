@@ -332,18 +332,24 @@ export function App() {
     if (!currentAgent) return
 
     if (currentAgent.id.startsWith('group:') || currentAgent.id.startsWith('host:')) {
-      const memberIds = getGroupMembers(currentAgent.id)
-      const messagesMap: Record<string, Message[]> = {}
-      await Promise.all(
-        memberIds.map(async (memberId) => {
-          const activeMember = agents.find((a) => a.id === memberId)
-          if (activeMember) {
-            messagesMap[memberId] = await runtime.listMessages(activeMember.conversationKey, activeMember.name)
-          }
-        })
-      )
-      const aggregated = compileGroupTimeline(messagesMap, memberIds)
-      setMessages(aggregated)
+      try {
+        const nextMessages = await runtime.listGroupMessages(currentAgent.id)
+        setMessages(nextMessages)
+      } catch (e) {
+        console.warn('listGroupMessages failed, falling back to manual per-member inbox aggregation:', e)
+        const memberIds = getGroupMembers(currentAgent.id)
+        const messagesMap: Record<string, Message[]> = {}
+        await Promise.all(
+          memberIds.map(async (memberId) => {
+            const activeMember = agents.find((a) => a.id === memberId)
+            if (activeMember) {
+              messagesMap[memberId] = await runtime.listMessages(activeMember.conversationKey, activeMember.name)
+            }
+          })
+        )
+        const aggregated = compileGroupTimeline(messagesMap, memberIds)
+        setMessages(aggregated)
+      }
     } else {
       const nextMessages = await runtime.listMessages(currentAgent.conversationKey)
       setMessages(nextMessages)
@@ -353,22 +359,23 @@ export function App() {
   // Watchlist Synchronizer: automatically update daemon watchlist on active channel change
   useEffect(() => {
     if (!selectedAgent) return
-    let watchlist: string[] = []
     if (selectedAgent.id.startsWith('group:') || selectedAgent.id.startsWith('host:')) {
-      watchlist = getGroupMembers(selectedAgent.id).map((aId) => {
-        return aId.startsWith('local:') ? aId.slice('local:'.length) : aId
+      const members = getGroupMembers(selectedAgent.id)
+      runtime.updateWatchlist({
+        mode: 'group',
+        groupId: selectedAgent.id,
+        members
       })
     } else if (selectedAgent.id.startsWith('mailbox:')) {
-      watchlist = []
+      runtime.updateWatchlist([])
     } else {
       const stableId = selectedAgent.id.startsWith('local:')
         ? selectedAgent.id.slice('local:'.length)
         : selectedAgent.id.startsWith('remote:')
         ? selectedAgent.id.slice('remote:'.length)
         : selectedAgent.id
-      watchlist = [stableId]
+      runtime.updateWatchlist([stableId])
     }
-    runtime.updateWatchlist(watchlist)
   }, [selectedAgent, agents, runtime, getGroupMembers])
 
   // Trigger initial messages load and sync on active selectedAgent changes

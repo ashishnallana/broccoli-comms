@@ -71,10 +71,17 @@ export interface SavedAgent {
   description: string
 }
 
+export interface GroupWatchParams {
+  mode: 'group'
+  groupId: string
+  members: string[]
+}
+
 export interface CommunicatorRuntimeClient {
   getStatus(): Promise<RuntimeStatus>
   listAgents(): Promise<AgentSummary[]>
   listMessages(conversationKey: string, inboxOwnerName?: string): Promise<Message[]>
+  listGroupMessages(groupId: string): Promise<Message[]>
   sendMessage(target: TargetRef, body: string): Promise<SendResult>
   sendDirectText(target: TargetRef, text: string, submit: boolean): Promise<ActionResult>
   sendDirectKeys(target: TargetRef, keys: string[]): Promise<ActionResult>
@@ -83,7 +90,7 @@ export interface CommunicatorRuntimeClient {
   spinAgent(configName: string, directory: string): Promise<ActionResult>
   selectLocalDirectory(): Promise<string | null>
   waitEvents(clientId: string, cursor: number, watchlist: string[], leaseSeconds: number): Promise<{ events: any[]; lastSeq: number; reset?: boolean; gap?: boolean }>
-  updateWatchlist(watchlist: string[]): void
+  updateWatchlist(watchlist: string[] | GroupWatchParams): void
   onTrackerResetRequired(callback: () => void): () => void
   onTrackerWatchDenied(callback: (errorMsg: string) => void): () => void
   onTrackerEvents(callback: (events: any[]) => void): () => void

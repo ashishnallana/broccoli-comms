@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipcChannels'
-import type { TargetRef } from '../shared/contracts'
+import type { TargetRef, GroupWatchParams } from '../shared/contracts'
 import { mockAgents, mockMessages, mockRuntimeStatus } from '../test/fixtures'
 import { LocalTrackerClient, resolveTrackerSocket } from './trackerClient'
 
@@ -124,8 +124,20 @@ export function registerMockIpcHandlers(): void {
     if (tracker) return tracker.waitEvents(clientId, cursor, watchlist, leaseSeconds)
     return { events: [], lastSeq: 0 }
   })
-  ipcMain.on('tracker-update-watchlist', (_event, watchlist: string[]) => {
-    activeWatchlist = watchlist
+  ipcMain.on('tracker-update-watchlist', (_event, watchlist: string[] | GroupWatchParams) => {
+    if (watchlist && typeof watchlist === 'object' && 'mode' in watchlist && watchlist.mode === 'group') {
+      const tracker = trackerClient()
+      if (tracker) {
+        void tracker.updateWatchlist(watchlist).catch((e) => console.error('Failed to update group watchlist lease:', e))
+      }
+    } else {
+      activeWatchlist = watchlist as string[]
+    }
+  })
+  ipcMain.handle('tracker-list-group-messages', async (_event, groupId: string) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.listGroupMessages(groupId)
+    return []
   })
 }
 

@@ -1,11 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipcChannels'
-import type { ActionResult, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef } from '../shared/contracts'
+import type { ActionResult, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef, GroupWatchParams } from '../shared/contracts'
 
 const api = {
   getStatus: (): Promise<RuntimeStatus> => ipcRenderer.invoke(IPC_CHANNELS.runtimeStatus),
   listAgents: (): Promise<AgentSummary[]> => ipcRenderer.invoke(IPC_CHANNELS.listAgents),
-  listMessages: (conversationKey: string): Promise<Message[]> => ipcRenderer.invoke(IPC_CHANNELS.listMessages, conversationKey),
+  listMessages: (conversationKey: string, inboxOwnerName?: string): Promise<Message[]> => ipcRenderer.invoke(IPC_CHANNELS.listMessages, conversationKey, inboxOwnerName),
+  listGroupMessages: (groupId: string): Promise<Message[]> =>
+    ipcRenderer.invoke('tracker-list-group-messages', groupId),
   sendMessage: (target: TargetRef, body: string): Promise<SendResult> => ipcRenderer.invoke(IPC_CHANNELS.sendMessage, target, body),
   sendDirectText: (target: TargetRef, text: string, submit: boolean): Promise<ActionResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.sendDirectText, target, text, submit),
@@ -19,7 +21,7 @@ const api = {
   selectLocalDirectory: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.selectLocalDirectory),
   waitEvents: (clientId: string, cursor: number, watchlist: string[], leaseSeconds: number): Promise<{ events: any[]; lastSeq: number; reset?: boolean; gap?: boolean }> =>
     ipcRenderer.invoke('tracker-wait-events', clientId, cursor, watchlist, leaseSeconds),
-  updateWatchlist: (watchlist: string[]): void => ipcRenderer.send('tracker-update-watchlist', watchlist),
+  updateWatchlist: (watchlist: string[] | GroupWatchParams): void => ipcRenderer.send('tracker-update-watchlist', watchlist),
   onTrackerResetRequired: (callback: () => void) => {
     const subscription = () => callback()
     ipcRenderer.on('tracker-reset-required', subscription)

@@ -1,4 +1,4 @@
-import type { ActionResult, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef } from '../../../shared/contracts'
+import type { ActionResult, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef, GroupWatchParams } from '../../../shared/contracts'
 import { mockAgents, mockMessages, mockRuntimeStatus } from '../../../test/fixtures'
 import { nextMockId } from '../../lib/ids'
 
@@ -23,6 +23,11 @@ export class MockRuntimeClient {
   async listMessages(conversationKey: string, _inboxOwnerName?: string): Promise<Message[]> {
     await latency()
     return clone(this.messages[conversationKey] ?? [])
+  }
+
+  async listGroupMessages(groupId: string): Promise<Message[]> {
+    await latency()
+    return clone(this.messages[groupId] ?? [])
   }
 
   async sendMessage(target: TargetRef, body: string): Promise<SendResult> {
@@ -112,7 +117,7 @@ export class MockRuntimeClient {
     return { events: [], lastSeq: 0 }
   }
 
-  updateWatchlist(_watchlist: string[]): void {
+  updateWatchlist(_watchlist: string[] | GroupWatchParams): void {
     // Mock no-op
   }
 

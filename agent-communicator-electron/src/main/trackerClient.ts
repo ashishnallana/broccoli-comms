@@ -2,7 +2,7 @@ import { connect } from 'node:net'
 import { basename, join } from 'node:path'
 import { readdir, readFile } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
-import type { ActionResult, AgentStatus, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef } from '../shared/contracts'
+import type { ActionResult, AgentStatus, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef, GroupWatchParams } from '../shared/contracts'
 
 interface RpcResponse<T> {
   result?: T
@@ -324,6 +324,37 @@ export class LocalTrackerClient {
         ],
         sent,
       )
+    }
+  }
+
+  async listGroupMessages(groupId: string): Promise<Message[]> {
+    try {
+      const result = await this.call<ReadInboxResult>('get_group_timeline', {
+        group_id: groupId,
+        last_n: 200
+      })
+      return (result.messages || []).map((message) => {
+        return trackerMessageToMessage(groupId, message, message.recipient || 'you', this.selfAgentName)
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes('Method not found')) {
+        throw new Error('Method not found: get_group_timeline')
+      }
+      return []
+    }
+  }
+
+  async updateWatchlist(watchlist: string[] | GroupWatchParams): Promise<void> {
+    if (watchlist && 'mode' in watchlist && watchlist.mode === 'group') {
+      await this.call('update_watchlist', {
+        watch_id: 'electron-active-group',
+        mode: 'group',
+        group_id: watchlist.groupId,
+        members: watchlist.members,
+        lease_seconds: 120,
+        include_body: true
+      })
     }
   }
 
