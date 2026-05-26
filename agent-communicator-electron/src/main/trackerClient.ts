@@ -67,11 +67,11 @@ export function localConversationKey(agent: Pick<TrackerAgent, 'agent_id' | 'uui
 }
 
 export function trackerMessageTargetParams(target: TargetRef): Record<string, string> {
-  if (target.scope !== 'local') {
-    throw new Error('tracker Simple View supports local targets only')
+  if (target.scope === 'remote') {
+    return { target_address: target.address }
   }
   if (target.address.includes('/') || target.address.startsWith('registry:')) {
-    throw new Error('tracker Simple View rejects host-qualified or registry targets')
+    return { target_address: target.address }
   }
   const stableID = target.id.startsWith('local:') ? target.id.slice('local:'.length) : ''
   if (stableID) return { agent_id: stableID }
@@ -91,24 +91,24 @@ function projectFromCwd(cwd: string): string {
 }
 
 export function trackerAgentToSummary(name: string, agent: TrackerAgent): AgentSummary | undefined {
-  if (agent.scope === 'remote' || agent.target_address?.includes('/')) return undefined
+  const isRemote = agent.scope === 'remote'
   const displayName = agent.name || name
-  const conversationKey = localConversationKey(agent, displayName)
+  const conversationKey = isRemote ? `remote:${agent.target_address || name}` : localConversationKey(agent, displayName)
   const cwd = agent.cwd || ''
   return {
     id: conversationKey,
     name: displayName,
     displayName,
-    scope: 'local',
+    scope: isRemote ? 'remote' : 'local',
     status: normalizeStatus(agent),
     cwd,
-    project: projectFromCwd(cwd),
-    address: displayName,
+    project: isRemote ? agent.tracker_id || 'remote tracker' : projectFromCwd(cwd),
+    address: agent.target_address || displayName,
     unread: 0,
     lastActiveAt: new Date().toISOString(),
     conversationKey,
     canDirectControl: false,
-    tags: ['tracker', 'local', 'simple-view'],
+    tags: isRemote ? ['remote', 'registry'] : ['tracker', 'local', 'simple-view'],
   }
 }
 
@@ -182,7 +182,10 @@ export class LocalTrackerClient {
 
   async listAgents(): Promise<AgentSummary[]> {
     await this.ensureMailbox()
-    const agents = await this.call<Record<string, TrackerAgent>>('list', { agent_name: this.selfAgentName })
+    const agents = await this.call<Record<string, TrackerAgent>>('list', {
+      agent_name: this.selfAgentName,
+      include_remote: true,
+    })
     this.agentsByConversation.clear()
     return Object.entries(agents)
       .map(([name, agent]) => ({ ...agent, name: agent.name || name }))
@@ -196,9 +199,7 @@ export class LocalTrackerClient {
   }
 
   async listMessages(conversationKey: string): Promise<Message[]> {
-    if (conversationKey.includes('/') || conversationKey.startsWith('registry:')) {
-      throw new Error('tracker Simple View supports local conversations only')
-    }
+    
     if (!this.agentsByConversation.has(conversationKey)) {
       await this.listAgents()
     }

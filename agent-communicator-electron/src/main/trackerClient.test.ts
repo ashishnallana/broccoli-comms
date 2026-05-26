@@ -128,16 +128,16 @@ describe('tracker identity and target params', () => {
     })
   })
 
-  it('maps legacy local names but rejects host-qualified/remote targets at the main-process boundary', () => {
+  it('maps legacy local names, supports remote host-qualified targets, and handles registry targets at the main-process boundary', () => {
     expect(trackerMessageTargetParams({ scope: 'local', id: 'alpha', address: 'alpha' })).toEqual({ agent_name: 'alpha' })
-    expect(() => trackerMessageTargetParams({ scope: 'remote', id: 'host/alpha', address: 'host/alpha' })).toThrow(/local targets only/)
-    expect(() => trackerMessageTargetParams({ scope: 'local', id: 'bad', address: 'host/alpha' })).toThrow(/host-qualified/)
-    expect(() => trackerMessageTargetParams({ scope: 'local', id: 'bad', address: 'registry:host/alpha' })).toThrow(/host-qualified/)
+    expect(trackerMessageTargetParams({ scope: 'remote', id: 'host/alpha', address: 'host/alpha' })).toEqual({ target_address: 'host/alpha' })
+    expect(trackerMessageTargetParams({ scope: 'local', id: 'bad', address: 'host/alpha' })).toEqual({ target_address: 'host/alpha' })
+    expect(trackerMessageTargetParams({ scope: 'local', id: 'bad', address: 'registry:host/alpha' })).toEqual({ target_address: 'registry:host/alpha' })
   })
 })
 
 describe('LocalTrackerClient tracker Simple View behavior', () => {
-  it('lists local targets while excluding the configured Electron inbox identity', async () => {
+  it('lists both local and remote targets while excluding the configured Electron inbox identity', async () => {
     await withFakeTracker(
       (method, params) => {
         if (method === 'ensure_mailbox') {
@@ -145,7 +145,7 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
           return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
         }
         expect(method).toBe('list')
-        expect(params).toEqual({ agent_name: 'desktop' })
+        expect(params).toEqual({ agent_name: 'desktop', include_remote: true })
         return {
           desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local', cwd: '/repo/app' },
           alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local', cwd: '/repo/alpha' },
@@ -155,8 +155,9 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
       async (socketPath) => {
         const client = new LocalTrackerClient(socketPath, 'desktop')
         const agents = await client.listAgents()
-        expect(agents.map((agent) => agent.name)).toEqual(['alpha'])
-        expect(agents[0]).toMatchObject({ id: 'local:alpha-id', canDirectControl: false })
+        expect(agents.map((agent) => agent.name).sort()).toEqual(['alpha', 'host/beta'])
+        expect(agents.find(a => a.name === 'alpha')).toMatchObject({ id: 'local:alpha-id', scope: 'local', canDirectControl: false })
+        expect(agents.find(a => a.name === 'host/beta')).toMatchObject({ id: 'remote:host/beta', scope: 'remote', canDirectControl: false })
       },
     )
   })
@@ -232,8 +233,13 @@ describe('tracker Simple View mapping', () => {
     })
   })
 
-  it('filters out remote tracker rows', () => {
-    expect(trackerAgentToSummary('host/alpha', { scope: 'remote', target_address: 'host/alpha' })).toBeUndefined()
+  it('maps remote tracker rows successfully', () => {
+    expect(trackerAgentToSummary('host/alpha', { scope: 'remote', target_address: 'host/alpha', tracker_id: 'reg-a' })).toMatchObject({
+      id: 'remote:host/alpha',
+      scope: 'remote',
+      project: 'reg-a',
+      address: 'host/alpha'
+    })
   })
 
   it('maps tracker inbox messages into one-to-one timeline messages', () => {

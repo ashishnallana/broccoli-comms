@@ -4,6 +4,7 @@ import { healthLabel } from '../lib/format'
 
 interface Props {
   status: RuntimeStatus | null
+  onOpenShortcuts: () => void
 }
 
 function dotClass(health: RuntimeHealth | undefined): string {
@@ -13,7 +14,7 @@ function dotClass(health: RuntimeHealth | undefined): string {
   return 'muted'
 }
 
-export function RuntimeStatusBar({ status }: Props) {
+export function RuntimeStatusBar({ status, onOpenShortcuts }: Props) {
   const [open, setOpen] = useState(false)
   const [watchdog, setWatchdog] = useState(131)
 
@@ -87,6 +88,11 @@ export function RuntimeStatusBar({ status }: Props) {
       <div className="sb-item" title="Runtime mode">
         <span className="sb-dot muted" />
         <span className="sb-value muted">{mode === 'tracker' ? 'Tracker simple' : 'Dev mock'}</span>
+      </div>
+      <div className="sb-divider" />
+      <div className="sb-item clickable" id="openShortcuts" title="Keyboard shortcuts" onClick={onOpenShortcuts}>
+        <span className="sb-label">Shortcuts</span>
+        <kbd>?</kbd>
       </div>
     </footer>
   )

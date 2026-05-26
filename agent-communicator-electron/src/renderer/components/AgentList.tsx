@@ -33,44 +33,33 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange 
   }, [filterActive, onVisibleAgentsChange, visibleAgents])
 
   return (
-    <section className="agents-col">
-      <div className="col-header">
-        <div className="brand">
-          <div className="brand-logo">A</div>
+    <section className="sidebar">
+      <div className="sidebar-header">
+        <div className="workspace">
+          <div className="workspace-icon">A</div>
           <div>
-            <div className="brand-name">Agent Communicator</div>
-            <div className="brand-sub">Electron app · shared inbox</div>
+            <div className="workspace-name">Agent Monitor</div>
+            <div className="workspace-sub">
+              {agents.length} agents · {unreadTotal} unread
+            </div>
           </div>
-        </div>
-
-        <div className="subnav" role="tablist" aria-label="Communicator sections">
-          <button className="subnav-item active">Agents</button>
-          <button className="subnav-item">Prompts</button>
-          <button className="subnav-item">Settings</button>
         </div>
       </div>
 
-      <div className="agents-head">
-        <div className="agents-head-row">
-          <h2>Agents</h2>
-          <div className="count-cluster" aria-label="Agent counts">
-            <span className="count-pill">
-              <strong>{agents.length}</strong> total
-            </span>
-            <span className="count-pill">
-              <strong>{unreadTotal}</strong> unread
-            </span>
-          </div>
-        </div>
-        <input
-          className="search-input"
-          value={query}
-          placeholder="Search agents, cwd, project…"
-          onChange={(event) => setQuery(event.target.value)}
-        />
+      <div className="subnav" role="tablist" aria-label="Communicator sections">
+        <button className="subnav-item active">Agents</button>
+        <button className="subnav-item">Prompts</button>
+        <button className="subnav-item">Settings</button>
       </div>
 
-      <div className="agents-list">
+      <input
+        className="search-input"
+        value={query}
+        placeholder="Search agents, cwd, project…"
+        onChange={(event) => setQuery(event.target.value)}
+      />
+
+      <div className="sidebar-scroll">
         <div className="locked-banner">
           <svg className="locked-banner-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
             <rect x="3" y="7" width="10" height="7" rx="1.5" />
@@ -87,12 +76,12 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange 
         ) : (
           scopes.map((scope) => (
             <div className="agent-section" key={scope}>
-              <div className="section-label">
-                <span className="section-label-text">{scope}</span>
-                <span className="section-count">{grouped[scope].length}</span>
+              <div className="section-head">
+                <span className="section-head-title">{scope} Agents</span>
+                <span className="section-head-count">{grouped[scope].length}</span>
               </div>
               {grouped[scope].length === 0 ? (
-                <div className="empty-card">No {scope} agents in this filtered view.</div>
+                <div className="empty-card">No {scope} agents match filters.</div>
               ) : (
                 grouped[scope].map((agent) => (
                   <AgentCard key={agent.id} agent={agent} selected={agent.id === selectedId} onSelect={() => onSelect(agent)} />

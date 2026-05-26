@@ -15,7 +15,7 @@ export function Sidebar({ status }: Props) {
           <span>Electron mock</span>
         </div>
       </div>
-      <RuntimeStatusBar status={status} />
+      <RuntimeStatusBar status={status} onOpenShortcuts={() => {}} />
       <nav className="nav-list" aria-label="Mock navigation">
         <button className="active">
           <span>Agents</span>

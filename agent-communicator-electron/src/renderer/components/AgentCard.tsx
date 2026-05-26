@@ -1,5 +1,4 @@
 import type { AgentSummary } from '../../shared/contracts'
-import { relativeTime } from '../lib/time'
 
 interface Props {
   agent: AgentSummary
@@ -13,27 +12,41 @@ function initials(name: string): string {
   return name.slice(0, 2).toUpperCase()
 }
 
-function stateClass(agent: AgentSummary): string {
-  if (agent.unread > 0) return 'has-unread'
-  if (agent.status === 'offline') return 'has-status status-error'
-  if (agent.status === 'waiting' || agent.status === 'busy') return 'has-status status-warn'
-  if (agent.status === 'idle') return 'has-status'
-  return ''
+function statusDotClass(status: string): string {
+  if (status === 'offline') return 'error'
+  if (status === 'waiting' || status === 'busy') return 'warn'
+  if (status === 'idle') return ''
+  return 'idle'
+}
+
+export function avatarBg(name: string): string {
+  const colors = [
+    'var(--accent-blue)',
+    'var(--accent-purple)',
+    'var(--accent-pink)',
+    'var(--accent-amber)',
+    'var(--accent-emerald)',
+    'var(--accent-teal)',
+  ]
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const index = Math.abs(hash) % colors.length
+  return colors[index]
 }
 
 export function AgentCard({ agent, selected, onSelect }: Props) {
   return (
-    <button className={`agent-card ${selected ? 'active' : ''} ${stateClass(agent)}`} aria-pressed={selected} onClick={onSelect}>
-      <div className="agent-avatar">{initials(agent.displayName)}</div>
-      <div className="agent-main">
-        <div className="agent-name-row">
-          <span className="agent-name">{agent.displayName}</span>
-          <span className="agent-time">{relativeTime(agent.lastActiveAt).replace(' ago', '')}</span>
-        </div>
-        <div className="agent-project">
-          <span className="proj-host">{agent.project || agent.scope}</span> · {agent.cwd || agent.address}
-        </div>
-      </div>
+    <button className={`channel ${selected ? 'active' : ''}`} aria-pressed={selected} onClick={onSelect}>
+      <span className="agent-avatar-sm" style={{ background: avatarBg(agent.displayName) }}>
+        {initials(agent.displayName)}
+      </span>
+      <span className="channel-name">{agent.displayName}</span>
+      <span className="channel-meta">
+        <span className={`channel-status-dot ${statusDotClass(agent.status)}`} />
+        {agent.unread > 0 && <span className="channel-badge">{agent.unread}</span>}
+      </span>
     </button>
   )
 }

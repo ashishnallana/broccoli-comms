@@ -22,6 +22,11 @@ export function App() {
   const [detailsOpen, setDetailsOpen] = useState(true)
   const [visibleAgents, setVisibleAgents] = useState<AgentSummary[]>([])
   const [agentFilterActive, setAgentFilterActive] = useState(false)
+
+  // Modal & overlay visibility states
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+
   const directStatusResetTimer = useRef<number | undefined>(undefined)
   const modeRef = useRef<ComposerMode>(mode)
   const selectedIdRef = useRef<string | undefined>(selectedId)
@@ -108,27 +113,82 @@ export function App() {
     setAgentFilterActive(filterActive)
   }, [])
 
-  function moveSelection(delta: 1 | -1) {
-    const navigationAgents = agentFilterActive ? visibleAgents : agents
-    if (navigationAgents.length === 0) return
-    const currentIndex = navigationAgents.findIndex((agent) => agent.id === selectedId)
-    const fallbackIndex = delta > 0 ? 0 : navigationAgents.length - 1
-    const nextIndex = currentIndex === -1 ? fallbackIndex : (currentIndex + delta + navigationAgents.length) % navigationAgents.length
-    selectAgent(navigationAgents[nextIndex])
-  }
+  const moveSelection = useCallback(
+    (delta: 1 | -1) => {
+      const navigationAgents = agentFilterActive ? visibleAgents : agents
+      if (navigationAgents.length === 0) return
+      const currentIndex = navigationAgents.findIndex((agent) => agent.id === selectedIdRef.current)
+      const fallbackIndex = delta > 0 ? 0 : navigationAgents.length - 1
+      const nextIndex = currentIndex === -1 ? fallbackIndex : (currentIndex + delta + navigationAgents.length) % navigationAgents.length
+      selectAgent(navigationAgents[nextIndex])
+    },
+    [agentFilterActive, agents, visibleAgents],
+  )
 
+  // Global keyboard shortcut listener
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
-      const key = event.key.toLowerCase()
-      if (key !== 'n' && key !== 'p') return
-      event.preventDefault()
-      moveSelection(key === 'n' ? 1 : -1)
+      const activeEl = document.activeElement
+      const inField = activeEl && ['INPUT', 'TEXTAREA'].includes(activeEl.tagName)
+
+      // 1. Cmd+K / Ctrl+K (Command Palette)
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setPaletteOpen((open) => !open)
+        return
+      }
+
+      // 2. Escape to close overlays
+      if (event.key === 'Escape') {
+        setPaletteOpen(false)
+        setShortcutsOpen(false)
+        if (inField) (activeEl as HTMLElement).blur()
+        return
+      }
+
+      // Don't intercept keyboard shortcuts when typing in inputs
+      if (inField) return
+
+      // 3. "?" to toggle Shortcuts panel
+      if (event.key === '?') {
+        event.preventDefault()
+        setShortcutsOpen((open) => !open)
+        return
+      }
+
+      // 4. "[" and "]" to navigate next/prev agent channel
+      if (event.key === '[') {
+        event.preventDefault()
+        moveSelection(-1)
+        return
+      }
+      if (event.key === ']') {
+        event.preventDefault()
+        moveSelection(1)
+        return
+      }
+
+      // 5. "r" or "/" to focus composer input
+      if (event.key === 'r' || event.key === '/') {
+        event.preventDefault()
+        const input = document.querySelector('.composer-input') as HTMLInputElement | HTMLTextAreaElement | null
+        input?.focus()
+        return
+      }
+
+      // 6. Legacy Ctrl-N / Ctrl-P selection navigation
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        const key = event.key.toLowerCase()
+        if (key === 'n' || key === 'p') {
+          event.preventDefault()
+          moveSelection(key === 'n' ? 1 : -1)
+        }
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [agentFilterActive, agents, selectedId, visibleAgents])
+  }, [moveSelection])
 
   async function submit(body: string) {
     if (!selectedAgent) return
@@ -177,11 +237,15 @@ export function App() {
         </div>
         <div className="detail-row">
           <dt className="detail-key">Address</dt>
-          <dd className="detail-val"><code>{selectedAgent.address}</code></dd>
+          <dd className="detail-val">
+            <code>{selectedAgent.address}</code>
+          </dd>
         </div>
         <div className="detail-row">
           <dt className="detail-key">CWD</dt>
-          <dd className="detail-val"><code>{selectedAgent.cwd}</code></dd>
+          <dd className="detail-val">
+            <code>{selectedAgent.cwd}</code>
+          </dd>
         </div>
         <div className="detail-row">
           <dt className="detail-key">Tags</dt>
@@ -200,7 +264,9 @@ export function App() {
         <button className="btn">View logs</button>
       </div>
 
-      <div className="info-note"><strong>Direct Text</strong> and <strong>Direct Keys</strong> remain locked in this tracker-focused UI.</div>
+      <div className="info-note">
+        <strong>Direct Text</strong> and <strong>Direct Keys</strong> remain locked in this tracker-focused UI.
+      </div>
 
       <div className="info-card">
         <div className="info-card-title">{status?.mode === 'tracker' ? 'Tracker Simple View' : 'Mock boundary'}</div>
@@ -230,6 +296,14 @@ export function App() {
       status={status}
       detailsOpen={detailsOpen}
       onCloseDetails={() => setDetailsOpen(false)}
+      shortcutsOpen={shortcutsOpen}
+      onOpenShortcuts={() => setShortcutsOpen(true)}
+      onCloseShortcuts={() => setShortcutsOpen(false)}
+      paletteOpen={paletteOpen}
+      onOpenPalette={() => setPaletteOpen(true)}
+      onClosePalette={() => setPaletteOpen(false)}
+      agentsRaw={agents}
+      onSelectAgent={selectAgent}
       agents={<AgentList agents={agents} selectedId={selectedId} onSelect={selectAgent} onVisibleAgentsChange={updateVisibleAgents} />}
       main={
         loading ? (
@@ -242,13 +316,7 @@ export function App() {
               detailsOpen={detailsOpen}
               onToggleDetails={() => setDetailsOpen((open) => !open)}
             />
-            <Composer
-              agent={selectedAgent}
-              mode={mode}
-              status={composerStatus}
-              onModeChange={updateMode}
-              onSubmit={submit}
-            />
+            <Composer agent={selectedAgent} mode={mode} status={composerStatus} onModeChange={updateMode} onSubmit={submit} />
           </div>
         ) : (
           <EmptyState />
