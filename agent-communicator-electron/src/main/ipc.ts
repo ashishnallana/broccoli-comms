@@ -118,3 +118,38 @@ export function registerMockIpcHandlers(): void {
     return result.filePaths[0] || null
   })
 }
+
+let eventLoopRunning = false
+let eventLoopCancel = false
+
+export async function startTrackerEventLoop(webContents: Electron.WebContents) {
+  if (eventLoopRunning) return
+  eventLoopRunning = true
+  eventLoopCancel = false
+
+  let since = 0
+  while (!eventLoopCancel) {
+    const tracker = trackerClient()
+    if (!tracker) {
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      continue
+    }
+
+    try {
+      const result = await tracker.waitEvents(since, 20)
+      if (eventLoopCancel) break
+
+      if (result && result.events && result.events.length > 0) {
+        webContents.send(IPC_CHANNELS.onTrackerEvents, result.events)
+        since = result.last_id || since
+      }
+    } catch (error) {
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    }
+  }
+  eventLoopRunning = false
+}
+
+export function stopTrackerEventLoop() {
+  eventLoopCancel = true
+}

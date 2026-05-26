@@ -9,6 +9,7 @@ export const IPC_CHANNELS = {
   listSavedAgents: 'broccoli-mock:list-saved-agents',
   spinAgent: 'broccoli-mock:spin-agent',
   selectLocalDirectory: 'broccoli-mock:select-local-directory',
+  onTrackerEvents: 'broccoli-mock:on-tracker-events',
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

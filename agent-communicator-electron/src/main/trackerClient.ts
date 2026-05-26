@@ -459,6 +459,11 @@ export class LocalTrackerClient {
     }
   }
 
+  async waitEvents(since: number, timeout: number): Promise<{ events: any[]; last_id?: number }> {
+    await this.ensureMailbox()
+    return this.call<{ events: any[]; last_id?: number }>('wait_events', { since, timeout })
+  }
+
   private async ensureMailbox(): Promise<MailboxIdentity> {
     if (this.mailboxReady) return { name: this.selfAgentName }
     try {

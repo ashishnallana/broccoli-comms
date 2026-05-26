@@ -77,7 +77,6 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false
-    let timer: number | undefined
     async function loadMessages() {
       if (!selectedAgent) {
         setMessages([])
@@ -87,12 +86,32 @@ export function App() {
       if (!cancelled) setMessages(nextMessages)
     }
     void loadMessages()
-    timer = window.setInterval(() => void loadMessages(), 3000)
     return () => {
       cancelled = true
-      if (timer !== undefined) window.clearInterval(timer)
     }
   }, [runtime, selectedAgent])
+
+  useEffect(() => {
+    if (status?.mode !== 'tracker') return
+
+    const unsubscribe = window.broccoliCommsMock?.onTrackerEvents(async (events) => {
+      const hasMessages = events.some((e) => e.event_type === 'message_delivered')
+      const hasAgents = events.some((e) => e.event_type === 'agent_registered' || e.event_type === 'agent_unregistered')
+
+      if (hasAgents) {
+        const nextAgents = await runtime.listAgents()
+        setAgents(nextAgents)
+      }
+      if (hasMessages && selectedAgent) {
+        const nextMessages = await runtime.listMessages(selectedAgent.conversationKey)
+        setMessages(nextMessages)
+      }
+    })
+
+    return () => {
+      if (unsubscribe) unsubscribe()
+    }
+  }, [runtime, selectedAgent, status])
 
 
 

@@ -17,6 +17,13 @@ const api = {
   spinAgent: (configName: string, directory: string): Promise<ActionResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.spinAgent, configName, directory),
   selectLocalDirectory: (): Promise<string | null> => ipcRenderer.invoke(IPC_CHANNELS.selectLocalDirectory),
+  onTrackerEvents: (callback: (events: any[]) => void) => {
+    const subscription = (_event: any, events: any[]) => callback(events)
+    ipcRenderer.on(IPC_CHANNELS.onTrackerEvents, subscription)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.onTrackerEvents, subscription)
+    }
+  },
 }
 
 contextBridge.exposeInMainWorld('broccoliCommsMock', api)

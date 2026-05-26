@@ -104,4 +104,8 @@ export class MockRuntimeClient {
     await latency()
     return '/mock/local/projects/broccoli-comms'
   }
+
+  onTrackerEvents(_callback: (events: any[]) => void): () => void {
+    return () => {}
+  }
 }

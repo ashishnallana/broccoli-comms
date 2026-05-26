@@ -81,4 +81,5 @@ export interface CommunicatorRuntimeClient {
   listSavedAgents(): Promise<SavedAgent[]>
   spinAgent(configName: string, directory: string): Promise<ActionResult>
   selectLocalDirectory(): Promise<string | null>
+  onTrackerEvents(callback: (events: any[]) => void): () => void
 }

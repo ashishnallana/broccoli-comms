@@ -2,23 +2,24 @@
 
 ## Overview
 - **Workspace ID**: `7473ae6d-06a8-444d-8a9f-c50788f3f465`
-- **Last Updated**: `2026-05-26T15:27:00Z`
-- **Goal**: Change the default tmux pane capture scrollback history lines limit from 25 to 20 inside both the Electron client and the background tracker python daemon.
+- **Last Updated**: `2026-05-26T15:30:00Z`
+- **Goal**: Refactor the Electron app to be 100% push-based, running background long-poll wait_events loops and bridging them over WebContents IPC events.
 - **Links**: [README.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/README.md)
 
 ## Active Agents
 | Agent ID | Agent Name | Role / Purpose | Process Info | Status | Last Active |
 |---|---|---|---|---|---|
-| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & UI Developer | Pane %1 | Working | 2026-05-26T15:27:00Z |
+| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Working | 2026-05-26T15:30:00Z |
 
 ## Task Allocation & Progress
 | Task ID | Description | Assigned Agent ID | Status | Priority | Dependencies | Notes / Artifacts |
 |---|---|---|---|---|---|---|
-| task-01 | Change default capture lines to 20 in trackerClient.ts | b58eb4c9-7601-4038-b3af-eb73f99ae069 | In Progress | P0 | | Code updates |
-| task-02 | Update trackerClient.test.ts unit tests mock assertions to expect 20 lines | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-01 | Test updates |
-| task-03 | Change DEFAULT_CAPTURE_PANE_LINES to 20 in agent-tracker/ctl_commands/common.py | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-02 | Daemon updates |
-| task-04 | Verify tsc compilers and Vitest tests pass successfully | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-03 | Compiler check |
-| task-05 | Commit all modifications to main branch | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-04 | Committed to main branch |
+| task-01 | Add onTrackerEvents subscription contracts and preload context bridges | b58eb4c9-7601-4038-b3af-eb73f99ae069 | In Progress | P0 | | Contracts & preload updates |
+| task-02 | Implement background wait_events long-poll loop inside main process (ipc.ts) | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-01 | IPC event loops |
+| task-03 | Trigger event loop startup when mainWindow is initialized in main.ts | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-02 | Window main.ts updates |
+| task-04 | Remove setInterval polling inside App.tsx and bind onTrackerEvents reactive reloaders | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-03 | App.tsx hook updates |
+| task-05 | Verify compiler checks and Vitest integration suites pass cleanly | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-04 | Compiler check |
+| task-06 | Commit all modifications to main branch | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-05 | Code merge |
 
 ## Active Blockers & Dependencies
 | Blocked Agent ID | Blocked Task ID | Blocking Task ID | Blocking Agent ID | Reason |
@@ -26,7 +27,7 @@
 | None | | | | |
 
 ## Decisions & Design Notes Log
-- **2026-05-26T15:27:00Z** [tanmayvijay]: DECISION: Approved changing default scrollback capture lines limit from 25 to 20 inside Electron and Daemon to optimize payload sizes.
+- **2026-05-26T15:30:00Z** [tanmayvijay]: DECISION: Approved replacing React polling loops with high-performance background wait_events long-poll push systems.
 
 ## Running the Electron App
 
@@ -51,7 +52,7 @@ AGENT_TRACKER_SOCKET=~/.cache/agent-tracker/agent-tracker.sock npm run dev
 ```
 
 ### 3. Running in Mock / Developer Mode
-If you want to explore or develop the UI without running any active backend services or socket daemons, run:
+If you want to explore or develop the UI without running any active background services or socket daemons, run:
 ```bash
 cd agent-communicator-electron
 npm run dev
