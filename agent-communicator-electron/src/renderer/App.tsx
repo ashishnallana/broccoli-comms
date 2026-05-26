@@ -63,9 +63,29 @@ export function App() {
         runtime.listSavedAgents(),
       ])
       if (cancelled) return
+      
+      // Inject client-side Mock Group Channel
+      const injectedGroupChannel: AgentSummary = {
+        id: 'group:dev-team',
+        name: 'dev-team',
+        displayName: 'Dev Team Channel (#dev-team)',
+        scope: 'local',
+        status: 'idle',
+        cwd: '/work/dev-team',
+        project: 'Group Channel',
+        address: '#dev-team',
+        unread: 0,
+        lastActiveAt: new Date().toISOString(),
+        conversationKey: 'group:dev-team',
+        canDirectControl: false,
+        tags: ['group', 'local'],
+      }
+      
+      const mergedAgents = [injectedGroupChannel, ...agentList]
+      
       setStatus(runtimeStatus)
-      setAgents(agentList)
-      setSelectedId(agentList[0]?.id)
+      setAgents(mergedAgents)
+      setSelectedId(mergedAgents[0]?.id)
       setSavedAgents(savedList)
       setLoading(false)
     }
@@ -75,22 +95,77 @@ export function App() {
     }
   }, [runtime])
 
-  useEffect(() => {
-    let cancelled = false
-    async function loadMessages() {
-      if (!selectedAgent) {
-        setMessages([])
-        return
+  // Client-side chronological group timeline aggregator
+  const compileGroupTimeline = useCallback((groupMessagesMap: Record<string, Message[]>, memberIds: string[]): Message[] => {
+    const allMsgs: Message[] = []
+    const seenIds = new Set<string>()
+    
+    for (const memberId of memberIds) {
+      const msgs = groupMessagesMap[memberId] || []
+      for (const m of msgs) {
+        if (!seenIds.has(m.id)) {
+          seenIds.add(m.id)
+          allMsgs.push(m)
+        }
       }
-      const nextMessages = await runtime.listMessages(selectedAgent.conversationKey)
-      if (!cancelled) setMessages(nextMessages)
     }
-    void loadMessages()
-    return () => {
-      cancelled = true
-    }
-  }, [runtime, selectedAgent])
+    
+    // Sort chronologically
+    return allMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  }, [])
 
+  const reloadActiveMessages = useCallback(async () => {
+    if (!selectedId) {
+      setMessages([])
+      return
+    }
+    const currentAgent = agents.find((a) => a.id === selectedId)
+    if (!currentAgent) return
+
+    if (currentAgent.id.startsWith('group:')) {
+      const memberIds = agents.filter((a) => a.id !== currentAgent.id).map((a) => a.id)
+      const messagesMap: Record<string, Message[]> = {}
+      await Promise.all(
+        memberIds.map(async (memberId) => {
+          const activeMember = agents.find((a) => a.id === memberId)
+          if (activeMember) {
+            messagesMap[memberId] = await runtime.listMessages(activeMember.conversationKey)
+          }
+        })
+      )
+      const aggregated = compileGroupTimeline(messagesMap, memberIds)
+      setMessages(aggregated)
+    } else {
+      const nextMessages = await runtime.listMessages(currentAgent.conversationKey)
+      setMessages(nextMessages)
+    }
+  }, [runtime, selectedId, agents, compileGroupTimeline])
+
+  // Watchlist Synchronizer: automatically update daemon watchlist on active channel change
+  useEffect(() => {
+    if (!selectedAgent) return
+    let watchlist: string[] = []
+    if (selectedAgent.id.startsWith('group:')) {
+      watchlist = agents.filter((a) => a.id !== selectedAgent.id).map((a) => {
+        return a.id.startsWith('local:') ? a.id.slice('local:'.length) : a.id
+      })
+    } else {
+      const stableId = selectedAgent.id.startsWith('local:')
+        ? selectedAgent.id.slice('local:'.length)
+        : selectedAgent.id.startsWith('remote:')
+        ? selectedAgent.id.slice('remote:'.length)
+        : selectedAgent.id
+      watchlist = [stableId]
+    }
+    runtime.updateWatchlist(watchlist)
+  }, [selectedAgent, agents, runtime])
+
+  // Trigger initial messages load and sync on active selectedAgent changes
+  useEffect(() => {
+    void reloadActiveMessages()
+  }, [reloadActiveMessages])
+
+  // Pushed Events Handler: listen for new messages and directory registration updates
   useEffect(() => {
     if (status?.mode !== 'tracker') return
 
@@ -100,18 +175,62 @@ export function App() {
 
       if (hasAgents) {
         const nextAgents = await runtime.listAgents()
-        setAgents(nextAgents)
+        const injectedGroupChannel: AgentSummary = {
+          id: 'group:dev-team',
+          name: 'dev-team',
+          displayName: 'Dev Team Channel (#dev-team)',
+          scope: 'local',
+          status: 'idle',
+          cwd: '/work/dev-team',
+          project: 'Group Channel',
+          address: '#dev-team',
+          unread: 0,
+          lastActiveAt: new Date().toISOString(),
+          conversationKey: 'group:dev-team',
+          canDirectControl: false,
+          tags: ['group', 'local'],
+        }
+        setAgents([injectedGroupChannel, ...nextAgents])
       }
-      if (hasMessages && selectedAgent) {
-        const nextMessages = await runtime.listMessages(selectedAgent.conversationKey)
-        setMessages(nextMessages)
+      if (hasMessages) {
+        void reloadActiveMessages()
       }
     })
 
     return () => {
       if (unsubscribe) unsubscribe()
     }
-  }, [runtime, selectedAgent, status])
+  }, [runtime, status, reloadActiveMessages])
+
+  // Tracker Reset Handler: handle cursor expired notifications gracefully from the daemon
+  useEffect(() => {
+    if (status?.mode !== 'tracker') return
+
+    const unsubscribeReset = window.broccoliCommsMock?.onTrackerResetRequired(async () => {
+      const nextAgents = await runtime.listAgents()
+      const injectedGroupChannel: AgentSummary = {
+        id: 'group:dev-team',
+        name: 'dev-team',
+        displayName: 'Dev Team Channel (#dev-team)',
+        scope: 'local',
+        status: 'idle',
+        cwd: '/work/dev-team',
+        project: 'Group Channel',
+        address: '#dev-team',
+        unread: 0,
+        lastActiveAt: new Date().toISOString(),
+        conversationKey: 'group:dev-team',
+        canDirectControl: false,
+        tags: ['group', 'local'],
+      }
+      setAgents([injectedGroupChannel, ...nextAgents])
+      void reloadActiveMessages()
+    })
+
+    return () => {
+      if (unsubscribeReset) unsubscribeReset()
+    }
+  }, [runtime, status, reloadActiveMessages])
 
 
 

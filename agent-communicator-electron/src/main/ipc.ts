@@ -117,8 +117,17 @@ export function registerMockIpcHandlers(): void {
     })
     return result.filePaths[0] || null
   })
+  ipcMain.handle('tracker-wait-events', async (_event, clientId: string, cursor: number, watchlist: string[], leaseSeconds: number) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.waitEvents(clientId, cursor, watchlist, leaseSeconds)
+    return { events: [], lastSeq: 0 }
+  })
+  ipcMain.on('tracker-update-watchlist', (_event, watchlist: string[]) => {
+    activeWatchlist = watchlist
+  })
 }
 
+let activeWatchlist: string[] = []
 let eventLoopRunning = false
 let eventLoopCancel = false
 
@@ -136,14 +145,26 @@ export async function startTrackerEventLoop(webContents: Electron.WebContents) {
     }
 
     try {
-      const result = await tracker.waitEvents(since, 20)
+      const clientId = tracker.selfAgentName
+      const result = await tracker.waitEvents(clientId, since, activeWatchlist, 60)
       if (eventLoopCancel) break
+
+      if (result.reset || result.gap) {
+        since = 0
+        webContents.send('tracker-reset-required')
+        continue
+      }
 
       if (result && result.events && result.events.length > 0) {
         webContents.send(IPC_CHANNELS.onTrackerEvents, result.events)
-        since = result.last_id || since
       }
+      since = result.lastSeq || since
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      if (msg.includes('cursor_expired')) {
+        since = 0
+        webContents.send('tracker-reset-required')
+      }
       await new Promise((resolve) => setTimeout(resolve, 3000))
     }
   }

@@ -99,5 +99,39 @@ class TestState(unittest.TestCase):
             "agent_id": "id-2", "name": "agent2", "aliases": [], "status": "working", "agent_type": "unknown", "agent_cmd": "unknown", "cwd": None
         }])
 
+    def test_event_buffer_bounds_and_eviction(self):
+        state.events = []
+        state.event_sequence_id = 0
+        # Publish 550 events
+        for i in range(550):
+            state.publish_event("dummy_event", {"data": i})
+        # Check events length is capped at MAX_EVENTS (500)
+        self.assertEqual(len(state.events), 500)
+        # Oldest event seq should be 51
+        self.assertEqual(state.events[0]["seq"], 51)
+        # Newest event seq should be 550
+        self.assertEqual(state.events[-1]["seq"], 550)
+
+    def test_watchlist_lease_and_sweeping(self):
+        state.active_watchlists = {}
+        # Register a lease for client1 expiring in 0.1 seconds, and client2 expiring in 10 seconds
+        state.update_watchlist_lease("client1", ["agent1"], 0.1)
+        state.update_watchlist_lease("client2", ["agent2"], 10.0)
+        
+        self.assertIn("client1", state.active_watchlists)
+        self.assertIn("client2", state.active_watchlists)
+        
+        # Sweep immediately - nothing should be swept
+        state.sweep_expired_watchlists()
+        self.assertIn("client1", state.active_watchlists)
+        self.assertIn("client2", state.active_watchlists)
+        
+        # Sleep 0.15 seconds and sweep - client1 should be swept, client2 remains
+        import time
+        time.sleep(0.15)
+        state.sweep_expired_watchlists()
+        self.assertNotIn("client1", state.active_watchlists)
+        self.assertIn("client2", state.active_watchlists)
+
 if __name__ == '__main__':
     unittest.main()

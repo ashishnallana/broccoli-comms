@@ -175,6 +175,9 @@ def monitor_once(now: float | None = None):
             logging.info(f"Removing dead agent: {name}")
             state.delete_agent(name)
 
+    # Sweep expired client event watchlists
+    state.sweep_expired_watchlists()
+
 
 def background_monitor():
     """Periodically checks process health and scrapes panes for status."""

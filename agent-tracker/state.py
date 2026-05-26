@@ -20,8 +20,11 @@ pane_index = {}  # tmux pane id -> agent_id
 state_lock = threading.Lock()
 event_lock = threading.Condition()
 events = []
-event_seq = 0
-MAX_EVENTS = 200
+event_sequence_id = 0
+MAX_EVENTS = 500
+
+active_watchlists = {}  # client_id -> {"expires_at": float, "watch_list": set}
+watchlist_lock = threading.Lock()
 
 TRANSIENT_COMMS = {
     "ps", "grep", "pgrep", "ls", "cat", "sleep", "which", "sh", "bash", "zsh",
@@ -296,12 +299,12 @@ def get_agents_for_registry() -> list[dict]:
 
 def publish_event(event_type: str, payload: dict) -> dict:
     """Publishes a best-effort in-memory event for live observers such as a TUI."""
-    global event_seq
+    global event_sequence_id
     with event_lock:
-        event_seq += 1
+        event_sequence_id += 1
         event = {
             **payload,
-            "seq": event_seq,
+            "seq": event_sequence_id,
             "type": event_type,
             "timestamp": time.time(),
         }
@@ -311,32 +314,69 @@ def publish_event(event_type: str, payload: dict) -> dict:
         return event.copy()
 
 
-def wait_events(since: int = 0, timeout: float = 25.0, filters: dict | None = None) -> dict:
+def update_watchlist_lease(client_id: str, watch_list: list[str], lease_seconds: float) -> None:
+    """Atomically registers or replaces a client watchlist lease with a set TTL."""
+    with watchlist_lock:
+        expires_at = time.time() + lease_seconds
+        active_watchlists[client_id] = {
+            "expires_at": expires_at,
+            "watch_list": set(watch_list)
+        }
+        logging.debug(f"Updated watchlist lease for client {client_id} with TTL {lease_seconds}s. Watchlist: {watch_list}")
+
+
+def sweep_expired_watchlists() -> None:
+    """Sweeps and purges expired client watchlists from in-memory tracking."""
+    now = time.time()
+    with watchlist_lock:
+        expired = [cid for cid, data in active_watchlists.items() if data["expires_at"] < now]
+        for cid in expired:
+            active_watchlists.pop(cid)
+            logging.info(f"Purged expired watchlist lease for client {cid}")
+
+
+def wait_events(since: int = 0, timeout: float = 25.0, filters: dict | None = None, client_id: str | None = None, watch_list: list[str] | None = None) -> dict:
     """Best-effort event long-poll for observers; callers must still read durable inboxes."""
     deadline = time.time() + max(0.0, min(float(timeout), 30.0))
     filters = filters or {}
+    
+    effective_watchlist = set()
+    if watch_list:
+        effective_watchlist.update(watch_list)
+    if client_id:
+        effective_watchlist.add(client_id)
 
     def event_matches(event: dict) -> bool:
+        # Backward-compatibility filters
         target_agent_id = filters.get("target_agent_id")
         target_agent_name = filters.get("target_agent_name")
         if target_agent_id and event.get("target_agent_id") != target_agent_id:
             return False
         if target_agent_name and event.get("target_agent_name") != target_agent_name:
             return False
+            
+        # Active watchlist-based filtering
+        if effective_watchlist:
+            t_id = event.get("target_agent_id")
+            t_name = event.get("target_agent_name")
+            sender = event.get("sender")
+            # Match if either the target ID, target name, or sender is in effective watchlist
+            if not (t_id in effective_watchlist or t_name in effective_watchlist or sender in effective_watchlist):
+                return False
         return True
 
     with event_lock:
         while True:
-            reset = since > event_seq
-            first_seq = events[0]["seq"] if events else event_seq + 1
+            reset = since > event_sequence_id
+            first_seq = events[0]["seq"] if events else event_sequence_id + 1
             gap = bool(events and since < first_seq - 1)
             effective_since = 0 if reset else since
             matching = [event.copy() for event in events if event["seq"] > effective_since and event_matches(event)]
             if matching or reset or gap:
-                return {"events": matching, "last_seq": event_seq, "reset": reset, "gap": gap}
+                return {"events": matching, "last_seq": event_sequence_id, "reset": reset, "gap": gap}
             remaining = deadline - time.time()
             if remaining <= 0:
-                return {"events": [], "last_seq": event_seq, "reset": False, "gap": False}
+                return {"events": [], "last_seq": event_sequence_id, "reset": False, "gap": False}
             event_lock.wait(timeout=remaining)
 
 

@@ -58,6 +58,10 @@ class DeliveryValidationError(ValueError):
     pass
 
 
+class CursorExpiredError(ValueError):
+    pass
+
+
 def _utc_now_isoformat() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -295,7 +299,7 @@ def handle_ensure_mailbox(params: dict) -> dict:
         "agent_type": existing.get("agent_type", "agent-communicator-ui"),
         "agent_cmd": existing.get("agent_cmd", "agent-communicator-electron"),
         "no_notify_with_send_keys": True,
-        "no_registry": params.get("no_registry", False),
+        "no_registry": params.get("no_registry", True),
         "cwd": params.get("cwd") or existing.get("cwd"),
         "last_heartbeat": time.time(),
         "recovered_at": None,
@@ -979,20 +983,51 @@ def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
 
 
 def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
-    """Best-effort event long-poll for observers; clients must read inbox for truth."""
+    """Best-effort cursored, lease-bound event long-poll or legacy filters-based poll."""
     try:
-        since = int(params.get("since", 0) if params.get("since") is not None else 0)
+        cursor = int(params.get("cursor", params.get("since", 0)) if params.get("cursor", params.get("since")) is not None else 0)
         timeout = float(params.get("timeout", 25.0) if params.get("timeout") is not None else 25.0)
     except (TypeError, ValueError):
-        raise ValueError("since must be an integer and timeout must be a number")
-    if since < 0 or timeout < 0:
-        raise ValueError("since and timeout must be non-negative")
-    filters = {
-        key: params[key]
-        for key in ("target_agent_id", "target_agent_name")
-        if params.get(key)
-    }
-    return state.wait_events(since=since, timeout=timeout, filters=filters)
+        raise ValueError("cursor/since must be an integer and timeout must be a number")
+    if cursor < 0 or timeout < 0:
+        raise ValueError("cursor/since and timeout must be non-negative")
+
+    client_id = params.get("client_id")
+    watch_list = params.get("watch_list")
+    lease_seconds = params.get("lease_seconds")
+    
+    if client_id:
+        if not isinstance(client_id, str):
+            raise ValueError("client_id must be a string")
+        if watch_list is not None and not isinstance(watch_list, list):
+            raise ValueError("watch_list must be a list of strings")
+        if lease_seconds is not None:
+            try:
+                lease_seconds = float(lease_seconds)
+            except ValueError:
+                raise ValueError("lease_seconds must be a number")
+        else:
+            lease_seconds = 60.0  # Default lease to 60 seconds if not specified
+            
+        # Atomically register/renew client lease
+        state.update_watchlist_lease(client_id, watch_list or [], lease_seconds)
+
+    # Enforce buffer queue eviction checks
+    with state.event_lock:
+        oldest_seq = state.events[0]["seq"] if state.events else state.event_sequence_id
+        if cursor > 0 and cursor < oldest_seq - 1:
+            raise CursorExpiredError("cursor_expired")
+
+    # Extract backward-compatibility filters if client_id not used
+    filters = None
+    if not client_id:
+        filters = {
+            key: params[key]
+            for key in ("target_agent_id", "target_agent_name")
+            if params.get(key)
+        }
+
+    return state.wait_events(since=cursor, timeout=timeout, filters=filters, client_id=client_id, watch_list=watch_list)
 
 
 def handle_whoami(params: dict, caller_pid: int = None) -> dict:
@@ -1193,6 +1228,8 @@ def handle_client(conn: socket.socket) -> None:
                     result = handler(params, caller_pid=caller_pid)
                 else:
                     result = handler(params)
+            except CursorExpiredError as e:
+                error = {"code": -32001, "message": "cursor_expired"}
             except ValueError as e:
                 error = {"code": -32602, "message": str(e)}
             except RuntimeError as e:

@@ -169,7 +169,7 @@ export class LocalTrackerClient {
 
   constructor(
     private readonly socketPath: string,
-    private readonly selfAgentName = resolveSelfAgentName(),
+    public readonly selfAgentName = resolveSelfAgentName(),
   ) {}
 
   async getStatus(): Promise<RuntimeStatus> {
@@ -459,9 +459,21 @@ export class LocalTrackerClient {
     }
   }
 
-  async waitEvents(since: number, timeout: number): Promise<{ events: any[]; last_id?: number }> {
+  async waitEvents(clientId: string, cursor: number, watchlist: string[], leaseSeconds: number): Promise<{ events: any[]; lastSeq: number; reset?: boolean; gap?: boolean }> {
     await this.ensureMailbox()
-    return this.call<{ events: any[]; last_id?: number }>('wait_events', { since, timeout })
+    const response = await this.call<{ events: any[]; last_seq: number; reset?: boolean; gap?: boolean }>('wait_events', {
+      client_id: clientId,
+      cursor,
+      watch_list: watchlist,
+      lease_seconds: leaseSeconds,
+      timeout: 25
+    })
+    return {
+      events: response.events,
+      lastSeq: response.last_seq,
+      reset: response.reset,
+      gap: response.gap
+    }
   }
 
   private async ensureMailbox(): Promise<MailboxIdentity> {

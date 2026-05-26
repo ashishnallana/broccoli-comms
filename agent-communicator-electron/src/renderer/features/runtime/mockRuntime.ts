@@ -105,6 +105,19 @@ export class MockRuntimeClient {
     return '/mock/local/projects/broccoli-comms'
   }
 
+  async waitEvents(_clientId: string, _cursor: number, _watchlist: string[], _leaseSeconds: number): Promise<{ events: any[]; lastSeq: number; reset?: boolean; gap?: boolean }> {
+    await latency()
+    return { events: [], lastSeq: 0 }
+  }
+
+  updateWatchlist(_watchlist: string[]): void {
+    // Mock no-op
+  }
+
+  onTrackerResetRequired(_callback: () => void): () => void {
+    return () => {}
+  }
+
   onTrackerEvents(_callback: (events: any[]) => void): () => void {
     return () => {}
   }

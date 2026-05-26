@@ -17,7 +17,7 @@ class TestRpcHandler(unittest.TestCase):
         state.name_index = {}
         state.pane_index = {}
         state.events = []
-        state.event_seq = 0
+        state.event_sequence_id = 0
         state.INBOX_DIR = "/tmp/test-agent-inboxes"
 
     @mock.patch("tmux_util.set_agent_no_registry")
@@ -1392,6 +1392,65 @@ class TestRpcHandler(unittest.TestCase):
         finally:
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
+
+    def test_wait_events_with_custom_watchlist_and_lease(self):
+        state.events = []
+        state.event_sequence_id = 0
+        state.active_watchlists = {}
+        
+        # Call wait_events with custom watchlist and client_id
+        params = {
+            "client_id": "client1",
+            "cursor": 0,
+            "watch_list": ["target-agent"],
+            "lease_seconds": 5.0,
+            "timeout": 0
+        }
+        result = rpc_handler.handle_wait_events(params)
+        
+        self.assertEqual(result["events"], [])
+        self.assertIn("client1", state.active_watchlists)
+        self.assertEqual(state.active_watchlists["client1"]["watch_list"], {"target-agent"})
+        
+        # Publish an event that doesn't match target-agent
+        state.publish_event("dummy", {"target_agent_id": "other-agent"})
+        result = rpc_handler.handle_wait_events(params)
+        self.assertEqual(result["events"], [])
+        
+        # Publish an event matching target-agent
+        state.publish_event("dummy", {"target_agent_id": "target-agent"})
+        # Re-request wait_events
+        result = rpc_handler.handle_wait_events(params)
+        self.assertEqual(len(result["events"]), 1)
+        self.assertEqual(result["events"][0]["target_agent_id"], "target-agent")
+
+    def test_wait_events_cursor_expired_error(self):
+        state.events = []
+        state.event_sequence_id = 0
+        
+        # Temporarily cap MAX_EVENTS to 3 to trigger eviction quickly
+        old_max = state.MAX_EVENTS
+        try:
+            state.MAX_EVENTS = 3
+            state.publish_event("dummy", {"data": 1})
+            state.publish_event("dummy", {"data": 2})
+            state.publish_event("dummy", {"data": 3})
+            state.publish_event("dummy", {"data": 4})
+            state.publish_event("dummy", {"data": 5})
+            
+            # Oldest event is now seq 3. Cursor 1 is evicted!
+            params = {
+                "client_id": "client1",
+                "cursor": 1,
+                "watch_list": ["target-agent"],
+                "lease_seconds": 5.0,
+                "timeout": 0
+            }
+            # Calling this should raise CursorExpiredError
+            with self.assertRaises(rpc_handler.CursorExpiredError):
+                rpc_handler.handle_wait_events(params)
+        finally:
+            state.MAX_EVENTS = old_max
 
 
 if __name__ == "__main__":

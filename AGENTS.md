@@ -2,24 +2,24 @@
 
 ## Overview
 - **Workspace ID**: `7473ae6d-06a8-444d-8a9f-c50788f3f465`
-- **Last Updated**: `2026-05-26T15:30:00Z`
-- **Goal**: Refactor the Electron app to be 100% push-based, running background long-poll wait_events loops and bridging them over WebContents IPC events.
+- **Last Updated**: `2026-05-26T21:31:00Z`
+- **Goal**: Implement the refined Decoupled, Lease-Based Push message Updates & client-side Group Channels aggregation system.
 - **Links**: [README.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/README.md)
 
 ## Active Agents
 | Agent ID | Agent Name | Role / Purpose | Process Info | Status | Last Active |
 |---|---|---|---|---|---|
-| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Working | 2026-05-26T15:30:00Z |
+| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Working | 2026-05-26T15:55:00Z |
+| ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 (active) | Idle | 2026-05-26T21:31:00Z |
 
 ## Task Allocation & Progress
 | Task ID | Description | Assigned Agent ID | Status | Priority | Dependencies | Notes / Artifacts |
 |---|---|---|---|---|---|---|
-| task-01 | Add onTrackerEvents subscription contracts and preload context bridges | b58eb4c9-7601-4038-b3af-eb73f99ae069 | In Progress | P0 | | Contracts & preload updates |
-| task-02 | Implement background wait_events long-poll loop inside main process (ipc.ts) | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-01 | IPC event loops |
-| task-03 | Trigger event loop startup when mainWindow is initialized in main.ts | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-02 | Window main.ts updates |
-| task-04 | Remove setInterval polling inside App.tsx and bind onTrackerEvents reactive reloaders | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-03 | App.tsx hook updates |
-| task-05 | Verify compiler checks and Vitest integration suites pass cleanly | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-04 | Compiler check |
-| task-06 | Commit all modifications to main branch | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-05 | Code merge |
+| task-01 | Refine and finalize v2 Design and Phased Implementation Plan | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | | [Plan](file:///usr/local/google/home/tanmayvijay/.gemini/jetski/brain/7473ae6d-06a8-444d-8a9f-c50788f3f465/implementation_plan_push_events.md) |
+| task-02 | Dispatch Phase A Coding instructions to coding-agent | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-01 | send-message delivered |
+| task-03 | Implement Phase A Daemon: state.py cursored events & wait_events RPC | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-02 | Upgraded and verified daemon wait_events |
+| task-04 | Implement Phase A Client: preload context bridges & WebContents IPC loops | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-03 | Context bridges and IPC event loop implemented |
+| task-05 | Implement Phase A React: client-side Group Channels timeline aggregation | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-04 | Client chronological timeline aggregation complete |
 
 ## Active Blockers & Dependencies
 | Blocked Agent ID | Blocked Task ID | Blocking Task ID | Blocking Agent ID | Reason |
@@ -27,7 +27,7 @@
 | None | | | | |
 
 ## Decisions & Design Notes Log
-- **2026-05-26T15:30:00Z** [tanmayvijay]: DECISION: Approved replacing React polling loops with high-performance background wait_events long-poll push systems.
+- **2026-05-26T15:55:00Z** [tanmayvijay]: DECISION: Approved spinning up a specialized coding-agent inside pane %4 to implement Phase A (Local Push streams & React client-side Group Channel aggregation).
 
 ## Running the Electron App
 
@@ -52,7 +52,7 @@ AGENT_TRACKER_SOCKET=~/.cache/agent-tracker/agent-tracker.sock npm run dev
 ```
 
 ### 3. Running in Mock / Developer Mode
-If you want to explore or develop the UI without running any active background services or socket daemons, run:
+If you want to explore or develop the UI without running any active backend services or socket daemons, run:
 ```bash
 cd agent-communicator-electron
 npm run dev
@@ -116,3 +116,5 @@ Verify that the mailbox is globally addressable and connected:
 - Main Redesigned Stylesheet: [styles.css](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-electron/src/renderer/styles.css)
 - Markdown Renderer Component: [MessageBubble.tsx](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-electron/src/renderer/components/MessageBubble.tsx)
 - Launch Agent Dialog: [LaunchAgentModal.tsx](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-electron/src/renderer/components/LaunchAgentModal.tsx)
+- Refined v2 Push Updates Design: [push_updates_design_proposal_v2.md](file:///usr/local/google/home/tanmayvijay/.gemini/jetski/brain/7473ae6d-06a8-444d-8a9f-c50788f3f465/push_updates_design_proposal_v2.md)
+- Detailed Phased Implementation Plan: [implementation_plan_push_events.md](file:///usr/local/google/home/tanmayvijay/.gemini/jetski/brain/7473ae6d-06a8-444d-8a9f-c50788f3f465/implementation_plan_push_events.md)

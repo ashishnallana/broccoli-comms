@@ -81,5 +81,8 @@ export interface CommunicatorRuntimeClient {
   listSavedAgents(): Promise<SavedAgent[]>
   spinAgent(configName: string, directory: string): Promise<ActionResult>
   selectLocalDirectory(): Promise<string | null>
+  waitEvents(clientId: string, cursor: number, watchlist: string[], leaseSeconds: number): Promise<{ events: any[]; lastSeq: number; reset?: boolean; gap?: boolean }>
+  updateWatchlist(watchlist: string[]): void
+  onTrackerResetRequired(callback: () => void): () => void
   onTrackerEvents(callback: (events: any[]) => void): () => void
 }
