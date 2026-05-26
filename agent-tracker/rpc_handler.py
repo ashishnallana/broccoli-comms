@@ -295,7 +295,7 @@ def handle_ensure_mailbox(params: dict) -> dict:
         "agent_type": existing.get("agent_type", "agent-communicator-ui"),
         "agent_cmd": existing.get("agent_cmd", "agent-communicator-electron"),
         "no_notify_with_send_keys": True,
-        "no_registry": True,
+        "no_registry": params.get("no_registry", False),
         "cwd": params.get("cwd") or existing.get("cwd"),
         "last_heartbeat": time.time(),
         "recovered_at": None,

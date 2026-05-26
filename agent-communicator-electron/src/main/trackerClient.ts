@@ -442,7 +442,7 @@ export class LocalTrackerClient {
           agent_id: mailboxId,
           uuid: mailboxId,
           no_notify_with_send_keys: true,
-          no_registry: true,
+          no_registry: false,
           cwd: '/tmp',
         })
         this.mailboxReady = true
