@@ -54,7 +54,7 @@ let
     // optionalEnv "AGENT_TRACKER_TMUX_SOCKET" cfg.tracker.tmuxSocketPath
     // optionalEnv "AGENT_REGISTRY_TOKEN" cfg.tracker.registryToken
     // lib.optionalAttrs (cfg.tracker.registries != []) {
-      AGENT_REGISTRIES_JSON = builtins.replaceStrings ["\""] ["\\\\\""] (builtins.toJSON cfg.tracker.registries);
+      AGENT_REGISTRIES_JSON = builtins.replaceStrings ["\""] ["'"] (builtins.toJSON cfg.tracker.registries);
     }
     // lib.optionalAttrs cfg.tracker.remotePaneInput.enable {
       BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED = "1";
