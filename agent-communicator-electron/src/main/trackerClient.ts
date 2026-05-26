@@ -1,5 +1,6 @@
 import { connect } from 'node:net'
 import { basename, join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
 import type { ActionResult, AgentStatus, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef, GroupWatchParams } from '../shared/contracts'
@@ -51,6 +52,8 @@ export const DEFAULT_ELECTRON_SELF_AGENT = 'agent-communicator'
 export function resolveTrackerSocket(env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (env.AGENT_TRACKER_SOCKET) return env.AGENT_TRACKER_SOCKET
   if (env.BROCCOLI_COMMS_RUNTIME_DIR) return join(env.BROCCOLI_COMMS_RUNTIME_DIR, 'agent-tracker.sock')
+  const defaultHomeManagerSocket = join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'agent-tracker', 'agent-tracker.sock')
+  if (existsSync(defaultHomeManagerSocket)) return defaultHomeManagerSocket
   return undefined
 }
 

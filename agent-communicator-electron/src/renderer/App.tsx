@@ -643,7 +643,7 @@ export function App() {
     }
 
     // Message mode
-    const pending = optimisticMessage(selectedAgent.conversationKey, body)
+    const pending = { ...optimisticMessage(selectedAgent.conversationKey, body), recipient: target.address }
     setMessages((current) => [...current, pending])
     setComposerStatus(status?.mode === 'tracker' ? 'Sending tracker message…' : 'Sending mock message…')
 
