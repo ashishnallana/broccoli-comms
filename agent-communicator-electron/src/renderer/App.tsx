@@ -46,8 +46,45 @@ function initials(name: string): string {
 function statusDotClass(status: string): string {
   if (status === 'offline') return 'error'
   if (status === 'waiting' || status === 'busy') return 'warn'
-  if (status === 'idle') return ''
+  if (status === 'idle') return 'idle'
   return 'idle'
+}
+
+function senderParts(sender: string): { bare: string; host?: string } {
+  const match = sender.match(/^(.*) \(via ([^)]+)\)$/)
+  if (match) return { bare: match[1], host: match[2] }
+  return { bare: sender }
+}
+
+function agentMatchesSender(agent: AgentSummary, sender: string): boolean {
+  const { bare, host } = senderParts(sender)
+  const candidates = [agent.name, agent.displayName, agent.address, agent.conversationKey]
+  if (candidates.includes(sender) || candidates.includes(bare)) return true
+  if (agent.scope === 'remote') {
+    const hostAndBare = host ? `${host}/${bare}` : undefined
+    return candidates.some((candidate) =>
+      candidate.endsWith(`/${bare}`) && (!hostAndBare || candidate.includes(hostAndBare)),
+    )
+  }
+  return false
+}
+
+function trackerEventType(event: any): string | undefined {
+  return event.event_type ?? event.type
+}
+
+function eventPayloadValue(event: any, key: string): string | undefined {
+  return event[key] ?? event.payload?.[key]
+}
+
+function incomingSenderFromEvent(event: any, selfName: string): string | undefined {
+  const type = trackerEventType(event)
+  if (type !== 'message_delivered' && type !== 'remote_agent_event') return undefined
+  const target = eventPayloadValue(event, 'target_agent_name') ?? eventPayloadValue(event, 'recipient')
+  const sender = eventPayloadValue(event, 'sender')
+  if (!sender || sender === selfName) return undefined
+  if (target && target !== selfName) return undefined
+  return sender
 }
 
 export function avatarBg(name: string): string {
@@ -71,6 +108,7 @@ export function App() {
   const runtime = useMemo(() => createRuntimeClient(), [])
   const [status, setStatus] = useState<RuntimeStatus | null>(null)
   const [rawAgents, setRawAgents] = useState<AgentSummary[]>([])
+  const [unreadByAgentId, setUnreadByAgentId] = useState<Record<string, number>>({})
   const [selectedId, setSelectedId] = useState<string>()
   const [messages, setMessages] = useState<Message[]>([])
   const [mode, setMode] = useState<ComposerMode>('message')
@@ -133,9 +171,13 @@ export function App() {
     return () => clearDirectStatusReset()
   }, [])
 
+  const rawAgentsWithUnread = useMemo<AgentSummary[]>(() => {
+    return rawAgents.map((agent) => ({ ...agent, unread: unreadByAgentId[agent.id] ?? 0 }))
+  }, [rawAgents, unreadByAgentId])
+
   const hostnameGroups = useMemo<GroupChannel[]>(() => {
     const hosts: Record<string, string[]> = {}
-    for (const a of rawAgents) {
+    for (const a of rawAgentsWithUnread) {
       const host = parseHostname(a)
       if (host === 'unknown-host') continue
       if (!hosts[host]) {
@@ -152,7 +194,7 @@ export function App() {
         memberIds,
         isHostGroup: true
       }))
-  }, [rawAgents])
+  }, [rawAgentsWithUnread])
 
   const allGroups = useMemo<GroupChannel[]>(() => {
     const customList = Object.values(groups)
@@ -199,9 +241,12 @@ export function App() {
   }, [])
 
   const agents = useMemo<AgentSummary[]>(() => {
-    const groupSummaries = allGroups.map(groupToAgentSummary)
-    return [mailboxChannel, ...groupSummaries, ...rawAgents]
-  }, [mailboxChannel, allGroups, rawAgents, groupToAgentSummary])
+    const groupSummaries = allGroups.map((group) => ({
+      ...groupToAgentSummary(group),
+      unread: group.memberIds.reduce((total, memberId) => total + (unreadByAgentId[memberId] ?? 0), 0),
+    }))
+    return [mailboxChannel, ...groupSummaries, ...rawAgentsWithUnread]
+  }, [mailboxChannel, allGroups, rawAgentsWithUnread, unreadByAgentId, groupToAgentSummary])
 
   const selectedAgent = agents.find((agent) => agent.id === selectedId)
 
@@ -403,8 +448,6 @@ export function App() {
     if (status?.mode !== 'tracker') return
 
     const unsubscribe = window.broccoliCommsMock?.onTrackerEvents(async (events) => {
-      const trackerEventType = (event: any) => event.event_type ?? event.type
-
       const hasMessages = events.some((event) => {
         const type = trackerEventType(event)
         return type === 'message_delivered' || type === 'remote_agent_event' || type === 'message_notified' || type === 'message_read'
@@ -420,6 +463,21 @@ export function App() {
         setRawAgents(nextAgents)
       }
       if (hasMessages) {
+        const selfName = 'agent-communicator'
+        const activeId = selectedIdRef.current
+        setUnreadByAgentId((current) => {
+          let changed = false
+          const next = { ...current }
+          for (const event of events) {
+            const sender = incomingSenderFromEvent(event, selfName)
+            if (!sender) continue
+            const matchingAgent = rawAgents.find((agent) => agentMatchesSender(agent, sender))
+            if (!matchingAgent || matchingAgent.id === activeId) continue
+            next[matchingAgent.id] = 1
+            changed = true
+          }
+          return changed ? next : current
+        })
         void reloadActiveMessages()
       }
     })
@@ -427,7 +485,7 @@ export function App() {
     return () => {
       if (unsubscribe) unsubscribe()
     }
-  }, [runtime, status, reloadActiveMessages])
+  }, [runtime, status, reloadActiveMessages, rawAgents])
 
   // Tracker Reset Handler: handle cursor expired notifications gracefully from the daemon
   useEffect(() => {
@@ -467,9 +525,15 @@ export function App() {
   function selectAgent(agent: AgentSummary) {
     clearDirectStatusReset()
     setSelectedId(agent.id)
-    setRawAgents((current) =>
-      current.map((candidate) => (candidate.id === agent.id && candidate.unread > 0 ? { ...candidate, unread: 0 } : candidate)),
-    )
+    setUnreadByAgentId((current) => {
+      const next = { ...current }
+      delete next[agent.id]
+      const group = allGroups.find((candidate) => candidate.id === agent.id)
+      if (group) {
+        for (const memberId of group.memberIds) delete next[memberId]
+      }
+      return next
+    })
   }
 
   const updateVisibleAgents = useCallback((nextVisibleAgents: AgentSummary[], filterActive: boolean) => {

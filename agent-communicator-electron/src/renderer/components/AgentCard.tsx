@@ -16,7 +16,7 @@ function initials(name: string): string {
 function statusDotClass(status: string): string {
   if (status === 'offline') return 'error'
   if (status === 'waiting' || status === 'busy') return 'warn'
-  if (status === 'idle') return ''
+  if (status === 'idle') return 'idle'
   return 'idle'
 }
 
@@ -40,7 +40,7 @@ export function avatarBg(name: string): string {
 export function AgentCard({ agent, selected, onSelect, onContextMenu }: Props) {
   return (
     <button
-      className={`channel ${selected ? 'active' : ''}`}
+      className={`channel ${selected ? 'active' : ''} ${agent.unread > 0 ? 'unread' : ''}`}
       aria-pressed={selected}
       onClick={onSelect}
       onContextMenu={(e) => onContextMenu?.(e, agent.id)}
@@ -51,7 +51,7 @@ export function AgentCard({ agent, selected, onSelect, onContextMenu }: Props) {
       <span className="channel-name">{agent.displayName}</span>
       <span className="channel-meta">
         <span className={`channel-status-dot ${statusDotClass(agent.status)}`} />
-        {agent.unread > 0 && <span className="channel-badge">{agent.unread}</span>}
+        {agent.unread > 0 && <span className="channel-unread-dot" title="Unread messages" />}
       </span>
     </button>
   )

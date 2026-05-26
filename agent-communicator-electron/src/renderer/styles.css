@@ -251,6 +251,25 @@ kbd {
   color: var(--on-dark);
 }
 .channel.active .channel-name { font-weight: 600; }
+.channel.unread:not(.active) {
+  background: var(--surface-card);
+  color: var(--on-dark);
+}
+.channel.unread .channel-name {
+  font-weight: 800;
+  color: var(--on-dark);
+}
+.channel.unread .agent-avatar-sm {
+  box-shadow: 0 0 0 1px var(--primary), 0 0 12px rgba(250, 255, 105, 0.18);
+}
+.channel-unread-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 8px rgba(250, 255, 105, 0.5);
+  flex-shrink: 0;
+}
 
 .channel-sigil {
   width: 14px;
