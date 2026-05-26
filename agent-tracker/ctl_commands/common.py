@@ -191,11 +191,27 @@ def _read_token_config(config: dict) -> str:
     return os.environ.get("AGENT_REGISTRY_TOKEN", "")
 
 
-def registry_configs() -> list[dict]:
-    raw = os.environ.get("AGENT_REGISTRIES_JSON", "").strip()
+def _normalize_registries_json(raw: str) -> str:
+    raw = (raw or "").strip().replace('\\"', '"')
+    for _ in range(2):
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+            if raw[0] == '"':
+                try:
+                    decoded = json.loads(raw)
+                    if isinstance(decoded, str):
+                        raw = decoded.strip()
+                        continue
+                except json.JSONDecodeError:
+                    pass
+            raw = raw[1:-1].strip()
+        break
     if "'" in raw and '"' not in raw:
         raw = raw.replace("'", '"')
-    raw = raw.replace('\\"', '"')
+    return raw
+
+
+def registry_configs() -> list[dict]:
+    raw = _normalize_registries_json(os.environ.get("AGENT_REGISTRIES_JSON", ""))
     if not raw:
         return []
     try:

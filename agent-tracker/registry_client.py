@@ -123,11 +123,30 @@ def _read_token_config(config):
     return TOKEN
 
 
-def load_registry_clients():
-    raw = os.environ.get("AGENT_REGISTRIES_JSON", "").strip()
+def _normalize_registries_json(raw: str) -> str:
+    raw = (raw or "").strip().replace('\\"', '"')
+    # Some launchd/Home Manager paths can preserve shell-style quoting as part of
+    # the environment value, e.g. '"[{\'name\':\'local\',...}]"'.  Unwrap a
+    # JSON string wrapper before parsing the actual registry list.
+    for _ in range(2):
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+            if raw[0] == '"':
+                try:
+                    decoded = json.loads(raw)
+                    if isinstance(decoded, str):
+                        raw = decoded.strip()
+                        continue
+                except json.JSONDecodeError:
+                    pass
+            raw = raw[1:-1].strip()
+        break
     if "'" in raw and '"' not in raw:
         raw = raw.replace("'", '"')
-    raw = raw.replace('\\"', '"')
+    return raw
+
+
+def load_registry_clients():
+    raw = _normalize_registries_json(os.environ.get("AGENT_REGISTRIES_JSON", ""))
     configs = []
     if raw:
         try:
