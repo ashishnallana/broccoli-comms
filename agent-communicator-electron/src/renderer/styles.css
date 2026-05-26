@@ -1159,7 +1159,13 @@ kbd {
   border-radius: var(--r-pill);
   border: 2px solid var(--canvas);
 }
-::-webkit-scrollbar-thumb:hover { background: var(--hairline-strong); }
+.conversation-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  flex: 1;
+}
 
 @media (max-width: 1180px) {
   .app.details-open { grid-template-columns: 260px 1fr; }

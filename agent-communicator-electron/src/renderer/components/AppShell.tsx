@@ -56,7 +56,7 @@ export function AppShell({
 
       <div className={`app ${detailsOpen ? 'details-open' : ''}`}>
         {agents}
-        <main className="conv">{main}</main>
+        <main className="main">{main}</main>
         <aside className="details" aria-hidden={!detailsOpen}>
           <div className="details-head">
             <h3>Agent details</h3>
