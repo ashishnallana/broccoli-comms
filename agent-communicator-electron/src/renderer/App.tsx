@@ -94,12 +94,7 @@ export function App() {
     }
   }, [runtime, selectedAgent])
 
-  useEffect(() => {
-    if (selectedAgent && mode !== 'message') {
-      setMode('message')
-      setComposerStatus('Direct pane control is locked; reset to Message mode.')
-    }
-  }, [mode, selectedAgent])
+
 
   function updateMode(nextMode: ComposerMode) {
     clearDirectStatusReset()
