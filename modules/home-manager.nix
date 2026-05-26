@@ -178,7 +178,7 @@ in {
         AGENT_TRACKER_SOCKET = trackerSocket;
         AGENT_TRACKER_HOSTNAME = cfg.tracker.hostname;
       } // lib.optionalAttrs (cfg.tracker.registries != []) {
-        AGENT_REGISTRIES_JSON = builtins.toJSON cfg.tracker.registries;
+        AGENT_REGISTRIES_JSON = builtins.replaceStrings ["\""] ["\\\""] (builtins.toJSON cfg.tracker.registries);
       };
     })
 
