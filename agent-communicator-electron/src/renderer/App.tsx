@@ -652,17 +652,10 @@ export function App() {
       style={{
         position: 'absolute',
         top: `${contextMenu.y}px`,
-        left: `${contextMenu.x}px`,
-        zIndex: 1000,
-        background: 'var(--bg-surface)',
-        border: '1px solid var(--border-dark)',
-        borderRadius: '6px',
-        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)',
-        padding: '4px 0',
-        minWidth: '160px'
+        left: `${contextMenu.x}px`
       }}
     >
-      <div className="menu-section-title" style={{ padding: '4px 12px', fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>Add to group</div>
+      <div className="menu-section-title">Add to group</div>
       {Object.entries(groups).map(([gId, group]) => {
         const alreadyMember = group.memberIds.includes(contextMenu.agentId)
         if (alreadyMember) return null
@@ -675,45 +668,51 @@ export function App() {
               addAgentToGroup(contextMenu.agentId, gId)
               setContextMenu(null)
             }}
-            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: '12px', color: 'var(--text-light)', background: 'none', border: 'none', cursor: 'pointer' }}
           >
             + #{group.name}
           </button>
         )
       })}
       <button
-        className="menu-item"
+        className="menu-item create"
         onClick={(event) => {
           event.stopPropagation()
           const name = window.prompt('Enter new group channel name:')
           if (name) {
-            const gId = `group:${name.trim()}`
-            createGroup(name)
-            addAgentToGroup(contextMenu.agentId, gId)
+            const cleanName = name.trim().replace(/[^A-Za-z0-9_-]/g, '_')
+            if (cleanName) {
+              const gId = `group:${cleanName}`
+              setGroups((current) => ({
+                ...current,
+                [gId]: {
+                  id: gId,
+                  name: cleanName,
+                  memberIds: [...new Set([...(current[gId]?.memberIds ?? []), contextMenu.agentId])]
+                }
+              }))
+            }
           }
           setContextMenu(null)
         }}
-        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: '12px', color: 'var(--accent-blue)', background: 'none', border: 'none', cursor: 'pointer', borderTop: '1px solid var(--border-light)' }}
       >
         [+] Create New Group...
       </button>
 
       {Object.entries(groups).some(([_, g]) => g.memberIds.includes(contextMenu.agentId)) && (
         <>
-          <div className="menu-section-title" style={{ padding: '6px 12px 4px', fontSize: '10px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', borderTop: '1px solid var(--border-light)' }}>Remove from group</div>
+          <div className="menu-section-title" style={{ borderTop: '1px solid var(--hairline)', marginTop: '4px' }}>Remove from group</div>
           {Object.entries(groups).map(([gId, group]) => {
             const isMember = group.memberIds.includes(contextMenu.agentId)
             if (!isMember) return null
             return (
               <button
                 key={gId}
-                className="menu-item"
+                className="menu-item destructive"
                 onClick={(event) => {
                   event.stopPropagation()
                   removeAgentFromGroup(contextMenu.agentId, gId)
                   setContextMenu(null)
                 }}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', fontSize: '12px', color: 'var(--accent-red)', background: 'none', border: 'none', cursor: 'pointer' }}
               >
                 - #{group.name}
               </button>
@@ -750,6 +749,10 @@ export function App() {
             onSelect={selectAgent}
             onVisibleAgentsChange={updateVisibleAgents}
             onOpenLaunch={() => setLaunchModalOpen(true)}
+            onOpenCreateGroup={() => {
+              const name = window.prompt('Enter new group channel name:')
+              if (name) createGroup(name)
+            }}
             onAgentContextMenu={handleAgentContextMenu}
           />
         }

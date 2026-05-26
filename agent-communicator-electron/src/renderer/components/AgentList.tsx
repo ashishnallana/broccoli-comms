@@ -9,12 +9,13 @@ interface Props {
   onSelect: (agent: AgentSummary) => void
   onVisibleAgentsChange?: (agents: AgentSummary[], filterActive: boolean) => void
   onOpenLaunch: () => void
+  onOpenCreateGroup?: () => void
   onAgentContextMenu?: (e: React.MouseEvent, agentId: string) => void
 }
 
-const scopes: AgentScope[] = ['local', 'remote']
+const categories = ['groups', 'agents'] as const
 
-export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch, onAgentContextMenu }: Props) {
+export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch, onOpenCreateGroup, onAgentContextMenu }: Props) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filterActive = normalizedQuery.length > 0
@@ -74,12 +75,22 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange,
         {visibleAgents.length === 0 ? (
           <div className="empty-card">No agents match this filtered view.</div>
         ) : (
-          scopes.map((scope) => (
-            <div className="agent-section" key={scope}>
+          categories.map((cat) => (
+            <div className="agent-section" key={cat}>
               <div className="section-head">
-                <span className="section-head-title">{scope} Agents</span>
+                <span className="section-head-title" style={{ textTransform: 'capitalize' }}>{cat}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {scope === 'local' && (
+                  {cat === 'groups' && onOpenCreateGroup && (
+                    <button
+                      className="section-head-add"
+                      title="Create custom group channel"
+                      onClick={onOpenCreateGroup}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      +
+                    </button>
+                  )}
+                  {cat === 'agents' && (
                     <button
                       className="section-head-add"
                       title="Launch saved agent configuration"
@@ -89,13 +100,13 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange,
                       +
                     </button>
                   )}
-                  <span className="section-head-count">{grouped[scope].length}</span>
+                  <span className="section-head-count">{grouped[cat].length}</span>
                 </div>
               </div>
-              {grouped[scope].length === 0 ? (
-                <div className="empty-card">No {scope} agents match filters.</div>
+              {grouped[cat].length === 0 ? (
+                <div className="empty-card">No {cat} match filters.</div>
               ) : (
-                grouped[scope].map((agent) => (
+                grouped[cat].map((agent) => (
                   <AgentCard key={agent.id} agent={agent} selected={agent.id === selectedId} onSelect={() => onSelect(agent)} onContextMenu={onAgentContextMenu} />
                 ))
               )}

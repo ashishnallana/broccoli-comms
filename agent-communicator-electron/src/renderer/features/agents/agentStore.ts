@@ -1,9 +1,9 @@
 import type { AgentSummary } from '../../../shared/contracts'
 
-export function groupAgents(agents: AgentSummary[]): Record<'local' | 'remote', AgentSummary[]> {
+export function groupAgents(agents: AgentSummary[]): Record<'groups' | 'agents', AgentSummary[]> {
   return {
-    local: agents.filter((agent) => agent.scope === 'local'),
-    remote: agents.filter((agent) => agent.scope === 'remote'),
+    groups: agents.filter((agent) => agent.id.startsWith('group:')),
+    agents: agents.filter((agent) => !agent.id.startsWith('group:')),
   }
 }
 
