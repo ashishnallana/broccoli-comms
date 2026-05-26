@@ -125,6 +125,8 @@ def _read_token_config(config):
 
 def load_registry_clients():
     raw = os.environ.get("AGENT_REGISTRIES_JSON", "").strip()
+    # Strip backslash escapes introduced by systemd/shell serialization
+    raw = raw.replace('\\"', '"')
     configs = []
     if raw:
         try:
