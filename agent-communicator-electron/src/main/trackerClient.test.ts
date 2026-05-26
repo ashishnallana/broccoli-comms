@@ -108,9 +108,9 @@ describe('resolveSelfAgentName', () => {
     ).toBe('desktop-user')
   })
 
-  it('falls back through legacy Electron env, agent pane env, then agent-communicator', () => {
+  it('falls back through legacy Electron env, ignores launching pane AGENT_NAME, then uses agent-communicator', () => {
     expect(resolveSelfAgentName(env({ AGENT_COMMUNICATOR_ELECTRON_AGENT_NAME: 'desktop' }))).toBe('desktop')
-    expect(resolveSelfAgentName(env({ AGENT_NAME: 'pane-agent' }))).toBe('pane-agent')
+    expect(resolveSelfAgentName(env({ AGENT_NAME: 'pane-agent' }))).toBe('agent-communicator')
     expect(resolveSelfAgentName(env({}))).toBe('agent-communicator')
   })
 })
@@ -140,6 +140,10 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
   it('lists local targets while excluding the configured Electron inbox identity', async () => {
     await withFakeTracker(
       (method, params) => {
+        if (method === 'ensure_mailbox') {
+          expect(params).toEqual({ agent_name: 'desktop' })
+          return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        }
         expect(method).toBe('list')
         expect(params).toEqual({ agent_name: 'desktop' })
         return {
@@ -162,6 +166,7 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
     await withFakeTracker(
       (method, params) => {
         calls.push({ method, params })
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
         if (method === 'list') {
           return {
             desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local', cwd: '/repo/app' },

@@ -54,15 +54,13 @@ AGENT_TRACKER_SOCKET=/run/user/1000/broccoli-comms/agent-tracker.sock npm run de
 BROCCOLI_COMMS_RUNTIME_DIR=/run/user/1000/broccoli-comms npm run dev
 ```
 
-To receive replies in the Electron app, also choose a registered local agent name as the Electron inbox identity:
+By default, tracker mode uses the shared communicator identity `agent-communicator` and ensures a local no-pane mailbox for that identity before listing/sending/receiving:
 
 ```sh
-BROCCOLI_COMMS_ELECTRON_AGENT_NAME=agent-communicator \
-  BROCCOLI_COMMS_RUNTIME_DIR=/run/user/1000/broccoli-comms \
-  npm run dev
+BROCCOLI_COMMS_RUNTIME_DIR=/run/user/1000/broccoli-comms npm run dev
 ```
 
-Agents will see messages as coming from that identity. When they reply to the same name, the app polls that inbox and shows matching messages in the selected local conversation. `AGENT_COMMUNICATOR_ELECTRON_AGENT_NAME` and `AGENT_NAME` are accepted fallbacks for the inbox identity.
+Agents will see messages as coming from `agent-communicator`. When they reply to `agent-communicator`, the app polls that shared communicator inbox and shows matching messages in the selected local conversation. To use a different local UI identity, set `BROCCOLI_COMMS_ELECTRON_AGENT_NAME`; `AGENT_COMMUNICATOR_ELECTRON_AGENT_NAME` is accepted as a legacy fallback. The app intentionally ignores inherited `AGENT_NAME` from the launching shell/pane so it does not impersonate the coding agent that started it.
 
 Without explicit tracker runtime env vars, the app shows local fixture data from mock/dev mode.
 
@@ -105,6 +103,7 @@ Mock runtime data lives in `src/test/fixtures.ts` and remains useful for UI deve
 The main-process tracker client is in `src/main/trackerClient.ts`.
 
 - `resolveTrackerSocket()` only accepts explicit Broccoli runtime env.
+- `ensure_mailbox` creates/refreshes the shared local communicator mailbox identity without a pane, registry advertisement, or tmux notifications.
 - `listAgents()` calls tracker `list`, maps local rows only, filters remote/host-qualified rows, and excludes the configured Electron inbox identity from targets.
 - `listMessages()` polls tracker `get_inbox` for the configured Electron identity with `mark_read: false` and a selected-agent sender filter, then merges matching received messages with session-local sent messages without marking unrelated inbox entries read.
 - `sendMessage()` rejects non-local or host-qualified targets at the main-process boundary, then calls tracker `send_message` with `agent_id` when stable local identity is available and `sender_name` set to the configured Electron identity.

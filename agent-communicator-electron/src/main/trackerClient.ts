@@ -7,6 +7,12 @@ interface RpcResponse<T> {
   error?: { code: number; message: string }
 }
 
+interface MailboxIdentity {
+  name: string
+  agent_id?: string
+  uuid?: string
+}
+
 interface TrackerAgent {
   name?: string
   agent_id?: string
@@ -45,7 +51,10 @@ export function resolveTrackerSocket(env: NodeJS.ProcessEnv = process.env): stri
 }
 
 export function resolveSelfAgentName(env: NodeJS.ProcessEnv = process.env): string {
-  return env.BROCCOLI_COMMS_ELECTRON_AGENT_NAME || env.AGENT_COMMUNICATOR_ELECTRON_AGENT_NAME || env.AGENT_NAME || DEFAULT_ELECTRON_SELF_AGENT
+  // Do not inherit AGENT_NAME from the launching coding-agent pane: the
+  // Electron app is a UI for the shared communicator identity, not the pane
+  // that happened to start it.
+  return env.BROCCOLI_COMMS_ELECTRON_AGENT_NAME || env.AGENT_COMMUNICATOR_ELECTRON_AGENT_NAME || DEFAULT_ELECTRON_SELF_AGENT
 }
 
 export function hasExplicitTrackerRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -130,6 +139,7 @@ export function mergeConversationMessages(inbound: Message[], sent: Message[]): 
 export class LocalTrackerClient {
   private readonly sentMessagesByConversation = new Map<string, Message[]>()
   private readonly agentsByConversation = new Map<string, TrackerAgent>()
+  private mailboxReady = false
 
   constructor(
     private readonly socketPath: string,
@@ -139,6 +149,7 @@ export class LocalTrackerClient {
   async getStatus(): Promise<RuntimeStatus> {
     let agents: Record<string, TrackerAgent> | undefined
     try {
+      await this.ensureMailbox()
       agents = await this.call<Record<string, TrackerAgent>>('list', { agent_name: this.selfAgentName }, 1500)
     } catch {
       agents = undefined
@@ -170,6 +181,7 @@ export class LocalTrackerClient {
   }
 
   async listAgents(): Promise<AgentSummary[]> {
+    await this.ensureMailbox()
     const agents = await this.call<Record<string, TrackerAgent>>('list', { agent_name: this.selfAgentName })
     this.agentsByConversation.clear()
     return Object.entries(agents)
@@ -232,6 +244,7 @@ export class LocalTrackerClient {
   async sendMessage(target: TargetRef, body: string): Promise<SendResult> {
     const conversationKey = target.id || target.address
     try {
+      await this.ensureMailbox()
       await this.call('send_message', { ...trackerMessageTargetParams(target), sender_name: this.selfAgentName, message: body })
       const message = {
         id: `tracker-out-${Date.now()}`,
@@ -246,6 +259,22 @@ export class LocalTrackerClient {
       return { ok: true, message }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  private async ensureMailbox(): Promise<MailboxIdentity> {
+    if (this.mailboxReady) return { name: this.selfAgentName }
+    try {
+      const mailbox = await this.call<MailboxIdentity>('ensure_mailbox', { agent_name: this.selfAgentName })
+      this.mailboxReady = true
+      return mailbox
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes('Method not found')) throw error
+      // Compatibility with already-running trackers from before ensure_mailbox:
+      // continue so manually/pre-existing agent-communicator identities still work.
+      this.mailboxReady = true
+      return { name: this.selfAgentName }
     }
   }
 

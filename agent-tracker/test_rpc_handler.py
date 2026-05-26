@@ -672,6 +672,47 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    def test_ensure_mailbox_creates_local_no_notify_identity(self):
+        result = rpc_handler.handle_ensure_mailbox({"agent_name": "agent-communicator"})
+        self.assertEqual(result["name"], "agent-communicator")
+        info = state.get_agent("agent-communicator")
+        self.assertEqual(info.get("agent_id"), result["agent_id"])
+        self.assertTrue(info.get("is_mailbox"))
+        self.assertTrue(info.get("no_notify_with_send_keys"))
+        self.assertTrue(info.get("no_registry"))
+        self.assertEqual(info.get("agent_type"), "agent-communicator-ui")
+        self.assertIsNone(info.get("session"))
+        self.assertIsNone(info.get("tmux_pane"))
+        self.assertIsNone(info.get("tmux_socket"))
+        self.assertIsNone(info.get("wrapper_pid"))
+        self.assertIsNone(info.get("pid"))
+
+    def test_ensure_mailbox_clears_existing_pane_metadata_and_blocks_direct_input(self):
+        state.set_agent("agent-communicator", {
+            "agent_id": "ui-id",
+            "uuid": "ui-id",
+            "session": "old-session",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "wrapper_pid": 123,
+            "pid": 456,
+        })
+        rpc_handler.handle_ensure_mailbox({"agent_name": "agent-communicator"})
+        info = state.get_agent("agent-communicator")
+        self.assertIsNone(info.get("session"))
+        self.assertIsNone(info.get("tmux_pane"))
+        self.assertIsNone(info.get("tmux_socket"))
+        self.assertIsNone(info.get("wrapper_pid"))
+        self.assertIsNone(info.get("pid"))
+        with self.assertRaisesRegex(RuntimeError, "no registered tmux pane"):
+            rpc_handler.handle_send_input({"agent_name": "agent-communicator", "input_type": "text", "text": "unsafe"})
+
+    def test_ensure_mailbox_rejects_remote_names(self):
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_ensure_mailbox({"agent_name": "host/agent-communicator"})
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_ensure_mailbox({"agent_name": "registry:host/agent-communicator"})
+
     @mock.patch("state.publish_event")
     def test_get_inbox_publishes_message_read_event_once(self, publish_event):
         inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
