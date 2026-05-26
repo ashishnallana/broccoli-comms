@@ -161,8 +161,11 @@ in {
   };
 
   config = lib.mkMerge [
-    (lib.mkIf (pcfg.enable || cfg.tracker.enable || cfg.registry.enable || cfg.electron.enable) {
+    (lib.mkIf (cfg.tracker.enable || cfg.registry.enable || cfg.electron.enable) {
       programs.broccoli-comms.enable = lib.mkDefault true;
+    })
+
+    (lib.mkIf pcfg.enable {
       home.packages = installedPackages;
     })
 
