@@ -1,7 +1,7 @@
 import { connect } from 'node:net'
 import { basename, join } from 'node:path'
 import { readdir, readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import type { ActionResult, AgentStatus, AgentSummary, Message, RuntimeStatus, SavedAgent, SendResult, TargetRef } from '../shared/contracts'
 
 interface RpcResponse<T> {
@@ -295,10 +295,13 @@ export class LocalTrackerClient {
         const targetTrackerId = targetAgent?.tracker_id
         if (!targetTrackerId) throw new Error(`Tracker ID not found for remote source ${cleanSource}`)
 
+        const localHost = process.env.AGENT_TRACKER_HOSTNAME || hostname()
+        const qualifiedTarget = `${localHost}/${this.selfAgentName}`
+
         const requestPayload = {
           request_id: `electron-req-${Date.now()}`,
           source: cleanSource.split('/', 2)[1],
-          target: `${this.selfAgentName}`,
+          target: qualifiedTarget,
           requester: this.selfAgentName,
           format: 'markdown',
           last: 25,

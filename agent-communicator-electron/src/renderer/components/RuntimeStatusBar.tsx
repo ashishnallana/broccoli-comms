@@ -16,14 +16,6 @@ function dotClass(health: RuntimeHealth | undefined): string {
 
 export function RuntimeStatusBar({ status, onOpenShortcuts }: Props) {
   const [open, setOpen] = useState(false)
-  const [watchdog, setWatchdog] = useState(131)
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setWatchdog((current) => (current <= 0 ? 131 : current - 1))
-    }, 1000)
-    return () => window.clearInterval(timer)
-  }, [])
 
   const runtimeHealth = status?.health ?? 'offline'
   const trackerHealth = status?.tracker ?? 'offline'
@@ -75,11 +67,7 @@ export function RuntimeStatusBar({ status, onOpenShortcuts }: Props) {
         <span className="sb-label">Registry</span>
         <span className={`sb-value ${dotClass(registryHealth)}`}>{healthLabel(registryHealth)}</span>
       </div>
-      <div className="sb-divider" />
-      <div className="sb-item" title="Watchdog timer">
-        <span className="sb-label">Watchdog</span>
-        <span className="sb-value">{watchdog}s · 4/∞</span>
-      </div>
+
       <div className="sb-spacer" />
       <div className="sb-item" title="Active view">
         <span className="sb-value">{status?.label ?? 'Loading runtime'}</span>

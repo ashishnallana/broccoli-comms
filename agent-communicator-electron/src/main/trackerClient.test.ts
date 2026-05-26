@@ -315,12 +315,13 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
           }
         }
         if (method === 'publish_tracker_event') {
+          const localHost = process.env.AGENT_TRACKER_HOSTNAME || require('node:os').hostname()
           expect(params).toMatchObject({
             target_tracker_id: 'track-z',
             event_type: 'pane_capture_request',
             payload: {
               source: 'reviewer',
-              target: 'desktop',
+              target: `${localHost}/desktop`,
               requester: 'desktop',
             },
           })
