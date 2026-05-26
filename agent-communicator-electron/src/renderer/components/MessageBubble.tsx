@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { Message } from '../../shared/contracts'
 import { formatTime } from '../lib/time'
 import { avatarBg } from './AgentCard'
+import { marked } from 'marked'
 
 interface Props {
   message: Message
@@ -34,220 +35,15 @@ function inferKind(body: string): 'tool' | 'handoff' | 'commit' | 'error' | null
   return null
 }
 
-function renderInlineFormatting(text: string): ReactNode {
-  let parts: any[] = [text]
-
-  // A. Bold processing (split by **)
-  if (text.includes('**')) {
-    const boldParts = text.split('**')
-    parts = boldParts.map((part, idx) => {
-      if (idx % 2 === 1) return <strong key={`b-${idx}`} style={{ fontWeight: 700, color: 'var(--on-dark)' }}>{part}</strong>
-      return part
-    })
-  }
-
-  // B. Inline code processing (split by `)
-  const partsWithCode: any[] = []
-  parts.forEach((part, pIdx) => {
-    if (typeof part !== 'string') {
-      partsWithCode.push(part)
-      return
-    }
-    if (!part.includes('`')) {
-      partsWithCode.push(part)
-      return
-    }
-    const codeParts = part.split('`')
-    codeParts.forEach((cPart, idx) => {
-      if (idx % 2 === 1) {
-        partsWithCode.push(
-          <code
-            key={`c-${pIdx}-${idx}`}
-            style={{
-              background: 'var(--surface-soft)',
-              border: '1px solid var(--hairline)',
-              borderRadius: 'var(--r-sm)',
-              padding: '1px 4px',
-              fontSize: '11.5px',
-              color: 'var(--primary)',
-              fontFamily: 'var(--mono)',
-            }}
-          >
-            {cPart}
-          </code>
-        )
-      } else {
-        partsWithCode.push(cPart)
-      }
-    })
-  })
-  parts = partsWithCode
-
-  // C. Markdown Links [text](url)
-  const finalParts: any[] = []
-  parts.forEach((part, pIdx) => {
-    if (typeof part !== 'string') {
-      finalParts.push(part)
-      return
-    }
-    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g
-    const matches = [...part.matchAll(linkRegex)]
-    if (matches.length === 0) {
-      finalParts.push(part)
-      return
-    }
-
-    let lastIndex = 0
-    matches.forEach((match, mIdx) => {
-      const matchIndex = match.index ?? 0
-      const linkText = match[1]
-      const url = match[2]
-
-      if (matchIndex > lastIndex) {
-        finalParts.push(part.slice(lastIndex, matchIndex))
-      }
-
-      finalParts.push(
-        <a
-          key={`link-${pIdx}-${mIdx}`}
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => {
-            if (url.startsWith('file://')) {
-              e.preventDefault()
-              window.open(url, '_blank')
-            }
-          }}
-          style={{
-            color: 'var(--accent-blue)',
-            textDecoration: 'underline',
-            cursor: 'pointer',
-          }}
-        >
-          {linkText}
-        </a>
-      )
-      lastIndex = matchIndex + match[0].length
-    })
-
-    if (lastIndex < part.length) {
-      finalParts.push(part.slice(lastIndex))
-    }
-  })
-
-  return <>{finalParts}</>
+// Custom link renderer in marked to enforce target="_blank" and link color styling
+const renderer = new marked.Renderer()
+renderer.link = (href: string, title: string | null | undefined, text: string): string => {
+  return `<a href="${href}" title="${title || ''}" target="_blank" rel="noreferrer" style="color: var(--accent-blue); text-decoration: underline; cursor: pointer;">${text}</a>`
 }
 
 function renderMarkdown(text: string): ReactNode {
-  const lines = text.split('\n')
-  let inList = false
-  const listElements: ReactNode[] = []
-  const resultElements: ReactNode[] = []
-
-  function flushList() {
-    if (listElements.length > 0) {
-      resultElements.push(
-        <ul key={`list-${resultElements.length}`} style={{ margin: '4px 0 8px 20px', padding: 0 }}>
-          {listElements.map((el, i) => (
-            <li key={i} style={{ marginBottom: '4px' }}>
-              {el}
-            </li>
-          ))}
-        </ul>
-      )
-      listElements.length = 0
-      inList = false
-    }
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // 1. Fenced Code Blocks
-    if (line.startsWith('```')) {
-      flushList()
-      const codeLines: string[] = []
-      i++
-      while (i < lines.length && !lines[i].startsWith('```')) {
-        codeLines.push(lines[i])
-        i++
-      }
-      resultElements.push(
-        <pre
-          key={`code-${i}`}
-          style={{
-            background: 'var(--surface-soft)',
-            border: '1px solid var(--hairline)',
-            borderRadius: 'var(--r-md)',
-            padding: '10px 12px',
-            overflowX: 'auto',
-            fontSize: '12.5px',
-            fontFamily: 'var(--mono)',
-            margin: '8px 0',
-          }}
-        >
-          {codeLines.join('\n')}
-        </pre>
-      )
-      continue
-    }
-
-    // 2. Headings
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/)
-    if (headingMatch) {
-      flushList()
-      const level = headingMatch[1].length
-      const title = renderInlineFormatting(headingMatch[2])
-      const fontSize = level === 1 ? '18px' : level === 2 ? '16px' : '14px'
-      const marginTop = level === 1 ? '16px' : '12px'
-      resultElements.push(
-        <div
-          key={`h-${i}`}
-          style={{
-            fontSize,
-            fontWeight: 700,
-            color: 'var(--on-dark)',
-            marginTop,
-            marginBottom: '6px',
-            fontFamily: 'inherit',
-          }}
-        >
-          {title}
-        </div>
-      )
-      continue
-    }
-
-    // 3. Bullet List Items
-    const listMatch = line.match(/^[-*]\s+(.+)$/)
-    if (listMatch) {
-      inList = true
-      listElements.push(renderInlineFormatting(listMatch[1]))
-      continue
-    }
-
-    // Empty line flushes bullet lists
-    if (inList && line.trim() === '') {
-      flushList()
-      continue
-    }
-
-    // 4. Regular Paragraphs
-    if (line.trim() !== '') {
-      flushList()
-      resultElements.push(
-        <p key={`p-${i}`} style={{ margin: '4px 0 6px', lineHeight: '1.5' }}>
-          {renderInlineFormatting(line)}
-        </p>
-      )
-    } else {
-      flushList()
-    }
-  }
-  flushList()
-
-  return <>{resultElements}</>
+  const rawHtml = marked.parse(text, { renderer }) as string
+  return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: rawHtml }} />
 }
 
 function parsePaneCapture(body: string): PaneCaptureDetails | null {
