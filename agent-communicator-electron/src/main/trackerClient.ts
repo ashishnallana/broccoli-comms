@@ -312,7 +312,7 @@ export class LocalTrackerClient {
           target: qualifiedTarget,
           requester: this.selfAgentName,
           format: 'markdown',
-          last: 25,
+          last: 20,
           include_ansi: false,
           note: 'Requested from Electron communicator',
         }
@@ -331,7 +331,7 @@ export class LocalTrackerClient {
             : { agent_name: sourceAgent.name }
           : { agent_name: cleanSource }
 
-        snapshot = await this.call<any>('capture_pane', { ...captureParams, last_lines: 25, include_ansi: false })
+        snapshot = await this.call<any>('capture_pane', { ...captureParams, last_lines: 20, include_ansi: false })
         if (!snapshot) throw new Error('Failed to capture pane snapshot')
 
         const messageText = `### Pane Capture Snapshot from ${snapshot.agent_name || sourceAgent?.name || cleanSource}\n` +

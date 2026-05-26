@@ -267,7 +267,7 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
           }
         }
         if (method === 'capture_pane') {
-          expect(params).toMatchObject({ agent_id: 'alpha-id', last_lines: 25, include_ansi: false })
+          expect(params).toMatchObject({ agent_id: 'alpha-id', last_lines: 20, include_ansi: false })
           return {
             agent_name: 'alpha',
             agent_id: 'alpha-id',

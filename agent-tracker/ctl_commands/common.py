@@ -16,7 +16,7 @@ SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET", os.path.join(CACHE_DIR, "ag
 LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
 REGISTRY_STATUS_PATH = os.path.join(CACHE_DIR, "registry-status.json")
 DEFAULT_STARTUP_TIMEOUT = 5.0
-DEFAULT_CAPTURE_PANE_LINES = 25
+DEFAULT_CAPTURE_PANE_LINES = 20
 
 
 def default_capture_pane_lines() -> int:

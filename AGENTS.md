@@ -2,22 +2,23 @@
 
 ## Overview
 - **Workspace ID**: `7473ae6d-06a8-444d-8a9f-c50788f3f465`
-- **Last Updated**: `2026-05-26T14:56:00Z`
-- **Goal**: Enable full rich Markdown syntax rendering inside the React Electron desktop application chat feed timeline.
+- **Last Updated**: `2026-05-26T15:27:00Z`
+- **Goal**: Change the default tmux pane capture scrollback history lines limit from 25 to 20 inside both the Electron client and the background tracker python daemon.
 - **Links**: [README.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/README.md)
 
 ## Active Agents
 | Agent ID | Agent Name | Role / Purpose | Process Info | Status | Last Active |
 |---|---|---|---|---|---|
-| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Registry & Systems Engineer | Pane %1 | Idle | 2026-05-26T14:56:00Z |
+| b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & UI Developer | Pane %1 | Working | 2026-05-26T15:27:00Z |
 
 ## Task Allocation & Progress
 | Task ID | Description | Assigned Agent ID | Status | Priority | Dependencies | Notes / Artifacts |
 |---|---|---|---|---|---|---|
-| task-01 | Implement 'register' fallback in ensureMailbox inside trackerClient.ts | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | | Code updates |
-| task-02 | Update trackerClient.test.ts to mock and assert register fallback | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-01 | Test updates |
-| task-03 | Verify typecheck and Vitest tests pass successfully | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-02 | Verified compiler and tests |
-| task-04 | Commit all changes to main branch | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-03 | Committed to main branch |
+| task-01 | Change default capture lines to 20 in trackerClient.ts | b58eb4c9-7601-4038-b3af-eb73f99ae069 | In Progress | P0 | | Code updates |
+| task-02 | Update trackerClient.test.ts unit tests mock assertions to expect 20 lines | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-01 | Test updates |
+| task-03 | Change DEFAULT_CAPTURE_PANE_LINES to 20 in agent-tracker/ctl_commands/common.py | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-02 | Daemon updates |
+| task-04 | Verify tsc compilers and Vitest tests pass successfully | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-03 | Compiler check |
+| task-05 | Commit all modifications to main branch | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Pending | P0 | task-04 | Committed to main branch |
 
 ## Active Blockers & Dependencies
 | Blocked Agent ID | Blocked Task ID | Blocking Task ID | Blocking Agent ID | Reason |
@@ -25,9 +26,7 @@
 | None | | | | |
 
 ## Decisions & Design Notes Log
-- **2026-05-26T14:55:00Z** [tanmayvijay]: DECISION: Approved integrating a custom, zero-dependency React-based Markdown parsing and rendering pipeline directly inside MessageBubble.tsx.
-
----
+- **2026-05-26T15:27:00Z** [tanmayvijay]: DECISION: Approved changing default scrollback capture lines limit from 25 to 20 inside Electron and Daemon to optimize payload sizes.
 
 ## Running the Electron App
 
@@ -115,3 +114,4 @@ Verify that the mailbox is globally addressable and connected:
 - Command Palette: [CommandPalette.tsx](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-electron/src/renderer/components/CommandPalette.tsx)
 - Main Redesigned Stylesheet: [styles.css](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-electron/src/renderer/styles.css)
 - Markdown Renderer Component: [MessageBubble.tsx](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-electron/src/renderer/components/MessageBubble.tsx)
+- Launch Agent Dialog: [LaunchAgentModal.tsx](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-electron/src/renderer/components/LaunchAgentModal.tsx)
