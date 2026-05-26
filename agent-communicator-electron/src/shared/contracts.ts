@@ -45,6 +45,7 @@ export interface Message {
   conversationKey: string
   direction: MessageDirection
   author: string
+  recipient: string
   body: string
   createdAt: string
   deliveryState: MessageDeliveryState

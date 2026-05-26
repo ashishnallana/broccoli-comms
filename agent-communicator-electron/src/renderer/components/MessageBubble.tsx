@@ -110,7 +110,7 @@ export function MessageBubble({ message, grouped = false, focused = false, onFoc
             <span className="msg-author-name">{displayAuthor}</span>
             <span className="msg-author-arrow">→</span>
             <span className="msg-author-recipient">
-              {message.direction === 'outbound' ? `@${message.conversationKey}` : '#group'}
+              {message.recipient ? `@${message.recipient}` : message.direction === 'outbound' ? `@${message.conversationKey}` : '#group'}
             </span>
             <span
               className="msg-kind tool"
@@ -212,7 +212,7 @@ export function MessageBubble({ message, grouped = false, focused = false, onFoc
             <span className="msg-author-name">{displayAuthor}</span>
             <span className="msg-author-arrow">→</span>
             <span className="msg-author-recipient">
-              {message.direction === 'outbound' ? `@${message.conversationKey}` : '#group'}
+              {message.recipient ? `@${message.recipient}` : message.direction === 'outbound' ? `@${message.conversationKey}` : '#group'}
             </span>
             {kind && <span className={`msg-kind ${kind}`}>{kind}</span>}
             <span className="msg-author-time">{fullTimeStr}</span>

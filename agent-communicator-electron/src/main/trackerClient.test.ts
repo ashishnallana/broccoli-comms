@@ -435,7 +435,7 @@ describe('tracker Simple View mapping', () => {
         timestamp: '2026-05-25T00:00:00.000Z',
         message: 'hello',
         message_id: 'm1',
-      }),
+      }, 'you'),
     ).toMatchObject({
       id: 'm1',
       conversationKey: 'local:id-1',
@@ -451,7 +451,8 @@ describe('tracker Simple View mapping', () => {
       trackerMessageToMessage(
         'local:id-1',
         { sender: 'desktop-user', timestamp: '2026-05-25T00:00:00.000Z', message: 'sent', message_id: 'm2' },
-        'desktop-user',
+        'alpha', // Recipient target
+        'desktop-user', // selfAgentName matching sender
       ),
     ).toMatchObject({ direction: 'outbound', author: 'you', deliveryState: 'delivered' })
   })
@@ -470,6 +471,7 @@ describe('tracker Simple View mapping', () => {
           conversationKey: 'local:id-1',
           direction: 'inbound',
           author: 'alpha',
+          recipient: 'you',
           body: 'reply',
           createdAt: '2026-05-25T00:00:02.000Z',
           deliveryState: 'received',
@@ -481,6 +483,7 @@ describe('tracker Simple View mapping', () => {
           conversationKey: 'local:id-1',
           direction: 'outbound',
           author: 'you',
+          recipient: 'alpha',
           body: 'hello',
           createdAt: '2026-05-25T00:00:01.000Z',
           deliveryState: 'delivered',

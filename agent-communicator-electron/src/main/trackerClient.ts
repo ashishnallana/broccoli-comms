@@ -121,7 +121,7 @@ export function trackerAgentToSummary(name: string, agent: TrackerAgent): AgentS
   }
 }
 
-export function trackerMessageToMessage(conversationKey: string, message: TrackerMessage, selfAgentName = DEFAULT_ELECTRON_SELF_AGENT): Message {
+export function trackerMessageToMessage(conversationKey: string, message: TrackerMessage, recipient: string, selfAgentName = DEFAULT_ELECTRON_SELF_AGENT): Message {
   const author = message.sender || 'agent'
   const outbound = author === selfAgentName || author === 'you'
   return {
@@ -129,6 +129,7 @@ export function trackerMessageToMessage(conversationKey: string, message: Tracke
     conversationKey,
     direction: outbound ? 'outbound' : 'inbound',
     author: outbound ? 'you' : author,
+    recipient,
     body: message.message || '',
     createdAt: message.timestamp || new Date().toISOString(),
     deliveryState: message.delivered || outbound ? 'delivered' : 'received',
@@ -253,7 +254,7 @@ export class LocalTrackerClient {
       })
       const inbound = (result.messages || [])
         .filter((message) => messageMatchesConversation(message, selectedAgent))
-        .map((message) => trackerMessageToMessage(conversationKey, message, this.selfAgentName))
+        .map((message) => trackerMessageToMessage(conversationKey, message, 'you', this.selfAgentName))
       return mergeConversationMessages(inbound, sent)
     } catch (error) {
       return mergeConversationMessages(
@@ -263,6 +264,7 @@ export class LocalTrackerClient {
             conversationKey,
             direction: 'system',
             author: 'system',
+            recipient: 'system',
             body: `Unable to read Electron inbox '${this.selfAgentName}'. Set BROCCOLI_COMMS_ELECTRON_AGENT_NAME to a registered local agent name to receive replies. ${
               error instanceof Error ? error.message : String(error)
             }`,
@@ -285,6 +287,7 @@ export class LocalTrackerClient {
         conversationKey,
         direction: 'outbound' as const,
         author: 'you',
+        recipient: target.address,
         body,
         createdAt: new Date().toISOString(),
         deliveryState: 'delivered' as const,
