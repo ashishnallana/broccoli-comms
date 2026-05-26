@@ -109,16 +109,8 @@ export function ConversationView({ agent, messages, detailsOpen, onToggleDetails
       )
     }
 
-    // 2. Grouping logic (consecutive from same author within 5 minutes)
-    let grouped = false
-    if (lastMessage) {
-      const timeDiff = new Date(message.createdAt).getTime() - new Date(lastMessage.createdAt).getTime()
-      const sameAuthor = lastMessage.author === message.author
-      const sameDirection = lastMessage.direction === message.direction
-      if (sameAuthor && sameDirection && timeDiff < 5 * 60 * 1000) {
-        grouped = true
-      }
-    }
+    // 2. Grouping logic disabled (each message is rendered independently with full avatars and heading meta-headers)
+    const grouped = false
 
     const isFocused = focusedId === message.id
 
