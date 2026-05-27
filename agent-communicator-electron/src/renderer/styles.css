@@ -544,6 +544,32 @@ kbd {
 .msg-row.grouped:hover .msg-gutter,
 .msg-row.grouped.has-delivery .msg-gutter { visibility: visible; }
 .msg-row.grouped .msg-author { display: none; }
+.msg-row.outbound:not(.pane-capture) {
+  grid-template-columns: 1fr 60px;
+}
+.msg-row.outbound:not(.pane-capture) .msg-gutter {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: left;
+}
+.msg-row.outbound:not(.pane-capture) .msg-content {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
+  max-width: min(720px, 78%);
+}
+.msg-row.outbound:not(.pane-capture) .msg-author {
+  justify-content: flex-end;
+}
+.msg-row.outbound:not(.pane-capture) .msg-body {
+  background: var(--surface-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  padding: 8px 11px;
+}
+.msg-row.outbound:not(.pane-capture).grouped .msg-body {
+  margin-top: 1px;
+}
 
 .msg-gutter {
   text-align: right;

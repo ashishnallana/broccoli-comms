@@ -123,7 +123,7 @@ export function MessageBubble({ message, grouped = false, focused = false, onFoc
 
   if (details) {
     return (
-      <div className={`msg-row pane-capture ${focused ? 'focused' : ''}`} tabIndex={0} onFocus={onFocus}>
+      <div className={`msg-row pane-capture ${message.direction} ${focused ? 'focused' : ''}`} tabIndex={0} onFocus={onFocus}>
         <div className="msg-gutter">
           <div className="msg-avatar-wrap">
             <div className="msg-avatar" style={{ background: 'var(--hairline-strong)', border: '1px solid var(--hairline)' }}>
@@ -222,7 +222,7 @@ export function MessageBubble({ message, grouped = false, focused = false, onFoc
   const marker = deliveryMarker(message)
 
   return (
-    <div className={`msg-row ${grouped ? 'grouped' : ''} ${marker ? 'has-delivery' : ''} ${focused ? 'focused' : ''}`} tabIndex={0} onFocus={onFocus}>
+    <div className={`msg-row ${message.direction} ${grouped ? 'grouped' : ''} ${marker ? 'has-delivery' : ''} ${focused ? 'focused' : ''}`} tabIndex={0} onFocus={onFocus}>
       <div className="msg-gutter">
         {grouped ? (
           <span className="msg-time">{marker ? marker.label : shortTime}</span>

@@ -113,6 +113,7 @@ export function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [mode, setMode] = useState<ComposerMode>('message')
   const [composerStatus, setComposerStatus] = useState(defaultComposerStatus('message'))
+  const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [refreshingAgents, setRefreshingAgents] = useState(false)
   const [securityWarning, setSecurityWarning] = useState<string | null>(null)
@@ -250,6 +251,23 @@ export function App() {
   }, [mailboxChannel, allGroups, rawAgentsWithUnread, unreadByAgentId, groupToAgentSummary])
 
   const selectedAgent = agents.find((agent) => agent.id === selectedId)
+  const selectedDraft = selectedAgent ? composerDrafts[selectedAgent.conversationKey] ?? '' : ''
+
+  const updateSelectedDraft = useCallback((body: string) => {
+    if (!selectedIdRef.current) return
+    const agent = agents.find((candidate) => candidate.id === selectedIdRef.current)
+    if (!agent) return
+    setComposerDrafts((current) => {
+      const key = agent.conversationKey
+      if (!body) {
+        if (!(key in current)) return current
+        const next = { ...current }
+        delete next[key]
+        return next
+      }
+      return { ...current, [key]: body }
+    })
+  }, [agents])
 
   useEffect(() => {
     if (agents.length > 0 && !selectedId) {
@@ -1125,7 +1143,15 @@ export function App() {
                   }
                 </div>
               ) : (
-                <Composer agent={selectedAgent} mode={mode} status={composerStatus} onModeChange={updateMode} onSubmit={submit} />
+                <Composer
+                  agent={selectedAgent}
+                  mode={mode}
+                  status={composerStatus}
+                  body={selectedDraft}
+                  onBodyChange={updateSelectedDraft}
+                  onModeChange={updateMode}
+                  onSubmit={submit}
+                />
               )}
             </div>
           ) : (

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 import type { AgentSummary, ComposerMode } from '../../shared/contracts'
 import { composerActionLabel, composerPlaceholder } from '../features/composer/composerActions'
 import { ActionModePicker } from './ActionModePicker'
@@ -7,12 +7,13 @@ interface Props {
   agent: AgentSummary
   mode: ComposerMode
   status: string
+  body: string
+  onBodyChange: (body: string) => void
   onModeChange: (mode: ComposerMode) => void
   onSubmit: (body: string) => Promise<void>
 }
 
-export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props) {
-  const [body, setBody] = useState('')
+export function Composer({ agent, mode, status, body, onBodyChange, onModeChange, onSubmit }: Props) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
   useLayoutEffect(() => {
@@ -31,7 +32,7 @@ export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props)
     } else {
       await onSubmit(trimmed)
     }
-    setBody('')
+    onBodyChange('')
   }
 
   async function handleSendDirectKey(keyName: string) {
@@ -89,7 +90,7 @@ export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props)
           className="composer-input"
           value={body}
           placeholder={composerPlaceholder(mode)}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => onBodyChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
