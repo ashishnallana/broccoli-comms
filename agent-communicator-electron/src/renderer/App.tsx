@@ -127,6 +127,16 @@ export function App() {
     } catch {}
     return DEFAULT_GROUPS
   })
+  const [disabledAgentIds, setDisabledAgentIds] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem('agent-communicator-disabled-agents')
+      if (!stored) return []
+      const parsed = JSON.parse(stored)
+      return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []
+    } catch {
+      return []
+    }
+  })
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean
     x: number
@@ -142,6 +152,7 @@ export function App() {
   const [detailsOpen, setDetailsOpen] = useState(true)
   const [visibleAgents, setVisibleAgents] = useState<AgentSummary[]>([])
   const [agentFilterActive, setAgentFilterActive] = useState(false)
+  const disabledAgentIdSet = useMemo(() => new Set(disabledAgentIds), [disabledAgentIds])
 
   // Modal & overlay visibility states
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
@@ -397,6 +408,10 @@ export function App() {
     localStorage.setItem('agent-communicator-groups', JSON.stringify(groups))
   }, [groups])
 
+  useEffect(() => {
+    localStorage.setItem('agent-communicator-disabled-agents', JSON.stringify(disabledAgentIds))
+  }, [disabledAgentIds])
+
   // Global click listener to dismiss custom context menu on clicks
   useEffect(() => {
     const handleGlobalClick = () => {
@@ -579,16 +594,29 @@ export function App() {
     setAgentFilterActive(filterActive)
   }, [])
 
+  const isNavigationDisabled = useCallback(
+    (agent: AgentSummary) => disabledAgentIdSet.has(agent.id),
+    [disabledAgentIdSet],
+  )
+
+  const toggleAgentDisabled = useCallback((agentId: string, disabled: boolean) => {
+    setDisabledAgentIds((current) => {
+      const hasAgent = current.includes(agentId)
+      if (disabled) return hasAgent ? current : [...current, agentId]
+      return hasAgent ? current.filter((id) => id !== agentId) : current
+    })
+  }, [])
+
   const moveSelection = useCallback(
     (delta: 1 | -1) => {
-      const navigationAgents = agentFilterActive ? visibleAgents : agents
+      const navigationAgents = (agentFilterActive ? visibleAgents : agents).filter((agent) => !isNavigationDisabled(agent))
       if (navigationAgents.length === 0) return
       const currentIndex = navigationAgents.findIndex((agent) => agent.id === selectedIdRef.current)
       const fallbackIndex = delta > 0 ? 0 : navigationAgents.length - 1
       const nextIndex = currentIndex === -1 ? fallbackIndex : (currentIndex + delta + navigationAgents.length) % navigationAgents.length
       selectAgent(navigationAgents[nextIndex])
     },
-    [agentFilterActive, agents, visibleAgents],
+    [agentFilterActive, agents, visibleAgents, isNavigationDisabled],
   )
 
   // Global keyboard shortcut listener
@@ -875,6 +903,12 @@ export function App() {
           <dt className="detail-key">Direct control</dt>
           <dd className="detail-val" style={{ color: 'var(--accent-emerald)', fontWeight: 700 }}>Unlocked / Operational</dd>
         </div>
+        <div className="detail-row">
+          <dt className="detail-key">Navigation</dt>
+          <dd className="detail-val" style={{ color: disabledAgentIdSet.has(selectedAgent.id) ? 'var(--accent-amber)' : 'var(--text-light)', fontWeight: 700 }}>
+            {disabledAgentIdSet.has(selectedAgent.id) ? 'Disabled for Ctrl-N / Ctrl-P' : 'Enabled'}
+          </dd>
+        </div>
       </dl>
 
       <div className="info-note">
@@ -915,7 +949,7 @@ export function App() {
 
   const handleAgentContextMenu = useCallback((e: React.MouseEvent, agentId: string) => {
     e.preventDefault()
-    if (agentId.startsWith('group:') || agentId.startsWith('host:')) return
+    if (agentId.startsWith('group:') || agentId.startsWith('host:') || agentId.startsWith('mailbox:')) return
     setContextMenu({
       visible: true,
       x: e.clientX,
@@ -1010,7 +1044,19 @@ export function App() {
         left: `${contextMenu.x}px`
       }}
     >
-      <div className="menu-section-title">Add to group</div>
+      <div className="menu-section-title">Navigation</div>
+      <button
+        className={`menu-item ${disabledAgentIdSet.has(contextMenu.agentId) ? '' : 'destructive'}`}
+        onClick={(event) => {
+          event.stopPropagation()
+          toggleAgentDisabled(contextMenu.agentId, !disabledAgentIdSet.has(contextMenu.agentId))
+          setContextMenu(null)
+        }}
+      >
+        {disabledAgentIdSet.has(contextMenu.agentId) ? 'Enable in Ctrl-N / Ctrl-P' : 'Disable in Ctrl-N / Ctrl-P'}
+      </button>
+
+      <div className="menu-section-title" style={{ borderTop: '1px solid var(--hairline)', marginTop: '4px' }}>Add to group</div>
       {Object.entries(groups).map(([gId, group]) => {
         const alreadyMember = group.memberIds.includes(contextMenu.agentId)
         if (alreadyMember) return null
@@ -1104,6 +1150,7 @@ export function App() {
         agents={
           <AgentList
             agents={agents}
+            disabledAgentIds={disabledAgentIdSet}
             selectedId={selectedId}
             onSelect={selectAgent}
             onVisibleAgentsChange={updateVisibleAgents}

@@ -5,6 +5,7 @@ import { AgentCard } from './AgentCard'
 
 interface Props {
   agents: AgentSummary[]
+  disabledAgentIds?: ReadonlySet<string>
   selectedId?: string
   onSelect: (agent: AgentSummary) => void
   onVisibleAgentsChange?: (agents: AgentSummary[], filterActive: boolean) => void
@@ -15,9 +16,9 @@ interface Props {
   refreshing?: boolean
 }
 
-const categories = ['mailbox', 'groups', 'agents'] as const
+const categories = ['mailbox', 'groups', 'agents', 'disabled'] as const
 
-export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch, onOpenCreateGroup, onAgentContextMenu, onRefresh, refreshing = false }: Props) {
+export function AgentList({ agents, disabledAgentIds = new Set(), selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch, onOpenCreateGroup, onAgentContextMenu, onRefresh, refreshing = false }: Props) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filterActive = normalizedQuery.length > 0
@@ -30,7 +31,7 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange,
         .includes(normalizedQuery),
     )
   }, [agents, filterActive, normalizedQuery])
-  const grouped = groupAgents(visibleAgents)
+  const grouped = groupAgents(visibleAgents, disabledAgentIds)
   const unreadTotal = agents.reduce((total, agent) => total + agent.unread, 0)
 
   useEffect(() => {
@@ -136,7 +137,7 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange,
 
       <div className="agents-col-footer">
         <div className="footer-label">Safety boundary</div>
-        <div className="footer-body">Registry-aware inbox messaging. Ctrl-N / Ctrl-P follows the filtered agent list.</div>
+        <div className="footer-body">Registry-aware inbox messaging. Ctrl-N / Ctrl-P follows the filtered list and skips disabled agents.</div>
       </div>
     </section>
   )

@@ -1,10 +1,19 @@
 import type { AgentSummary } from '../../../shared/contracts'
 
-export function groupAgents(agents: AgentSummary[]): Record<'mailbox' | 'groups' | 'agents', AgentSummary[]> {
+export function groupAgents(
+  agents: AgentSummary[],
+  disabledAgentIds: ReadonlySet<string> = new Set(),
+): Record<'mailbox' | 'groups' | 'agents' | 'disabled', AgentSummary[]> {
+  const isMailbox = (agent: AgentSummary) => agent.id.startsWith('mailbox:')
+  const isGroup = (agent: AgentSummary) => agent.id.startsWith('group:') || agent.id.startsWith('host:')
+  const isDisabled = (agent: AgentSummary) => disabledAgentIds.has(agent.id)
+  const isRegularAgent = (agent: AgentSummary) => !isMailbox(agent) && !isGroup(agent)
+
   return {
-    mailbox: agents.filter((agent) => agent.id.startsWith('mailbox:')),
-    groups: agents.filter((agent) => agent.id.startsWith('group:') || agent.id.startsWith('host:')),
-    agents: agents.filter((agent) => !agent.id.startsWith('group:') && !agent.id.startsWith('host:') && !agent.id.startsWith('mailbox:')),
+    mailbox: agents.filter(isMailbox),
+    groups: agents.filter(isGroup),
+    agents: agents.filter((agent) => isRegularAgent(agent) && !isDisabled(agent)),
+    disabled: agents.filter((agent) => isRegularAgent(agent) && isDisabled(agent)),
   }
 }
 
