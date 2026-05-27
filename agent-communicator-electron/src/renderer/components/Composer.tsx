@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { AgentSummary, ComposerMode } from '../../shared/contracts'
 import { composerActionLabel, composerPlaceholder } from '../features/composer/composerActions'
 import { ActionModePicker } from './ActionModePicker'
@@ -22,6 +22,13 @@ export function Composer({ agent, mode, status, body, onBodyChange, onModeChange
     input.style.height = '0px'
     input.style.height = `${Math.min(input.scrollHeight, 116)}px`
   }, [body])
+
+  useEffect(() => {
+    const input = inputRef.current
+    if (!input) return
+    input.focus({ preventScroll: true })
+    input.setSelectionRange(input.value.length, input.value.length)
+  }, [agent.conversationKey])
 
   async function submit() {
     const trimmed = body.trim()
