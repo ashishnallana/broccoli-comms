@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import type { Message } from '../../shared/contracts'
 import { formatTime } from '../lib/time'
 import { avatarBg } from './AgentCard'
@@ -110,10 +110,16 @@ function parsePaneCapture(body: string): PaneCaptureDetails | null {
 
 export function MessageBubble({ message, grouped = false, focused = false, onFocus }: Props) {
   const details = parsePaneCapture(message.body)
+  const paneOutputRef = useRef<HTMLPreElement | null>(null)
   const displayAuthor = message.direction === 'outbound' ? 'you' : message.author
   const fullTimeStr = formatTime(message.createdAt)
   const timeParts = fullTimeStr.split(' ')
   const shortTime = timeParts[timeParts.length - 1]
+
+  useEffect(() => {
+    if (!details || !paneOutputRef.current) return
+    paneOutputRef.current.scrollTop = paneOutputRef.current.scrollHeight
+  }, [details?.content, message.id])
 
   if (details) {
     return (
@@ -188,6 +194,7 @@ export function MessageBubble({ message, grouped = false, focused = false, onFoc
               </div>
             </div>
             <pre
+              ref={paneOutputRef}
               className="terminal-screen"
               style={{
                 padding: '12px 14px',
