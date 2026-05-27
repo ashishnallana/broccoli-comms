@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
@@ -8,6 +8,7 @@ import {
   mergeConversationMessages,
   messageMatchesConversation,
   resolveSelfAgentName,
+  resolveTmuxSocket,
   resolveTrackerSocket,
   trackerAgentToSummary,
   trackerMessageTargetParams,
@@ -66,6 +67,19 @@ async function withFakeTracker<T>(
   }
 }
 
+async function withFakeSocket<T>(socketPath: string, run: () => Promise<T>): Promise<T> {
+  const server = createServer((socket) => socket.end())
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(socketPath, resolve)
+  })
+  try {
+    return await run()
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+}
+
 describe('resolveTrackerSocket', () => {
   it('prefers explicit AGENT_TRACKER_SOCKET', () => {
     expect(
@@ -92,6 +106,15 @@ describe('resolveTrackerSocket', () => {
 
   it('returns undefined when no explicit tracker runtime is provided', () => {
     expect(resolveTrackerSocket(env({ XDG_CACHE_HOME: '/tmp/cache', TMUX: '/tmp/tmux,1,0' }))).toBeUndefined()
+  })
+})
+
+describe('resolveTmuxSocket', () => {
+  it('prefers explicit tmux env vars and only infers a sibling socket for broccoli private runtimes', () => {
+    expect(resolveTmuxSocket('/tmp/runtime/agent-tracker.sock', env({ AGENT_TRACKER_TMUX_SOCKET: '/tmp/explicit.sock' }))).toBe('/tmp/explicit.sock')
+    expect(resolveTmuxSocket('/tmp/runtime/agent-tracker.sock', env({ BROCCOLI_COMMS_TMUX_SOCKET: '/tmp/broccoli.sock' }))).toBe('/tmp/broccoli.sock')
+    expect(resolveTmuxSocket('/run/user/1000/broccoli-comms/agent-tracker.sock', env({}))).toBe('/run/user/1000/broccoli-comms/tmux.sock')
+    expect(resolveTmuxSocket('/tmp/cache/agent-tracker/agent-tracker.sock', env({}))).toBeUndefined()
   })
 })
 
@@ -137,6 +160,82 @@ describe('tracker identity and target params', () => {
 })
 
 describe('LocalTrackerClient tracker Simple View behavior', () => {
+  it('reports live tmux and registry health instead of hardcoding them offline', async () => {
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local', tmux_socket: 'none' },
+            alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local', tmux_socket: params.agent_name === 'desktop' ? undefined : undefined },
+          }
+        }
+        if (method === 'tracker_info') return { tracker_id: 'track-1', hostname: 'host-1' }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const dir = await mkdtemp(join(tmpdir(), 'electron-status-cache-'))
+        tempDirs.push(dir)
+        const cacheDir = join(dir, 'cache')
+        const tmuxSocket = join(dir, 'tmux.sock')
+        await mkdir(join(cacheDir, 'agent-tracker'), { recursive: true })
+        await writeFile(
+          join(cacheDir, 'agent-tracker', 'registry-status.json'),
+          JSON.stringify({
+            tracker_id: 'track-1',
+            hostname: 'host-1',
+            registries: {
+              local: { connected: true, tracker_id: 'track-1', hostname: 'host-1', last_success: Date.now() / 1000 },
+              mundus: { connected: true, tracker_id: 'track-1', hostname: 'host-1', last_success: Date.now() / 1000 },
+            },
+          }),
+        )
+
+        const previousCacheDir = process.env.BROCCOLI_COMMS_CACHE_DIR
+        const previousTmuxSocket = process.env.AGENT_TRACKER_TMUX_SOCKET
+        process.env.BROCCOLI_COMMS_CACHE_DIR = cacheDir
+        process.env.AGENT_TRACKER_TMUX_SOCKET = tmuxSocket
+        try {
+          await withFakeSocket(tmuxSocket, async () => {
+            const client = new LocalTrackerClient(socketPath, 'desktop')
+            const status = await client.getStatus()
+            expect(status.tracker).toBe('healthy')
+            expect(status.tmux).toBe('healthy')
+            expect(status.registry).toBe('healthy')
+            expect(status.health).toBe('healthy')
+          })
+        } finally {
+          if (previousCacheDir === undefined) delete process.env.BROCCOLI_COMMS_CACHE_DIR
+          else process.env.BROCCOLI_COMMS_CACHE_DIR = previousCacheDir
+          if (previousTmuxSocket === undefined) delete process.env.AGENT_TRACKER_TMUX_SOCKET
+          else process.env.AGENT_TRACKER_TMUX_SOCKET = previousTmuxSocket
+        }
+      },
+    )
+  })
+
+  it('treats default tracker tmux integration as healthy even without an explicit tmux.sock sibling', async () => {
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local' },
+            alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local' },
+          }
+        }
+        if (method === 'tracker_info') return { tracker_id: 'track-1', hostname: 'host-1' }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        const status = await client.getStatus()
+        expect(status.tracker).toBe('healthy')
+        expect(status.tmux).toBe('healthy')
+      },
+    )
+  })
+
   it('lists both local and remote targets while excluding the configured Electron inbox identity', async () => {
     await withFakeTracker(
       (method, params) => {

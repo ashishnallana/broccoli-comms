@@ -1,9 +1,9 @@
 import { connect } from 'node:net'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { homedir, hostname } from 'node:os'
-import type { ActionResult, AgentStatus, AgentSummary, Message, MessageDeliveryState, RuntimeStatus, SavedAgent, SendResult, TargetRef, GroupWatchParams } from '../shared/contracts'
+import type { ActionResult, AgentStatus, AgentSummary, Message, MessageDeliveryState, RuntimeHealth, RuntimeStatus, SavedAgent, SendResult, TargetRef, GroupWatchParams } from '../shared/contracts'
 
 interface RpcResponse<T> {
   result?: T
@@ -32,6 +32,7 @@ interface TrackerAgent {
   target_address?: string
   tracker_id?: string
   registry_name?: string
+  tmux_socket?: string
 }
 
 interface TrackerMessage {
@@ -55,12 +56,124 @@ interface ReadInboxResult {
 const allowedStatuses = new Set<AgentStatus>(['idle', 'busy', 'waiting', 'offline'])
 export const DEFAULT_ELECTRON_SELF_AGENT = 'agent-communicator'
 
+interface RegistryStatusEntry {
+  connected?: boolean
+  last_success?: number
+  tracker_id?: string
+  hostname?: string
+}
+
+interface RegistryStatusFile extends RegistryStatusEntry {
+  registries?: Record<string, RegistryStatusEntry>
+}
+
 export function resolveTrackerSocket(env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (env.AGENT_TRACKER_SOCKET) return env.AGENT_TRACKER_SOCKET
   if (env.BROCCOLI_COMMS_RUNTIME_DIR) return join(env.BROCCOLI_COMMS_RUNTIME_DIR, 'agent-tracker.sock')
   const defaultHomeManagerSocket = join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'agent-tracker', 'agent-tracker.sock')
   if (existsSync(defaultHomeManagerSocket)) return defaultHomeManagerSocket
   return undefined
+}
+
+export function resolveTmuxSocket(trackerSocket?: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.AGENT_TRACKER_TMUX_SOCKET) return env.AGENT_TRACKER_TMUX_SOCKET
+  if (env.BROCCOLI_COMMS_TMUX_SOCKET) return env.BROCCOLI_COMMS_TMUX_SOCKET
+  if (!trackerSocket) return undefined
+  if (trackerSocket.includes('/broccoli-comms/')) {
+    return join(dirname(trackerSocket), 'tmux.sock')
+  }
+  return undefined
+}
+
+function registryStatusEntries(status?: RegistryStatusFile): RegistryStatusEntry[] {
+  if (!status) return []
+  const entries = Object.values(status.registries || {})
+  return entries.length > 0 ? entries : [status]
+}
+
+function registryEntryFresh(entry: RegistryStatusEntry, now: number, maxAge: number): boolean {
+  return Boolean(entry.connected && typeof entry.last_success === 'number' && now - entry.last_success <= maxAge)
+}
+
+function registryHeartbeatMaxAge(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number.parseInt(env.AGENT_REGISTRY_HEARTBEAT_SECONDS || '30', 10)
+  const heartbeatSeconds = Number.isFinite(raw) && raw > 0 ? raw : 30
+  return Math.max(heartbeatSeconds * 2 + 5, 15)
+}
+
+function registryStatusLastSuccess(status?: RegistryStatusFile): number {
+  return registryStatusEntries(status).reduce((latest, entry) => {
+    return typeof entry.last_success === 'number' && entry.last_success > latest ? entry.last_success : latest
+  }, 0)
+}
+
+function trackerInfoMatchesRegistryStatus(status: RegistryStatusFile, trackerInfo?: TrackerInfo): boolean {
+  if (!trackerInfo?.tracker_id && !trackerInfo?.hostname) return true
+  const entries = registryStatusEntries(status)
+  if (trackerInfo.tracker_id && entries.some((entry) => entry.tracker_id === trackerInfo.tracker_id)) return true
+  if (trackerInfo.hostname && entries.some((entry) => entry.hostname === trackerInfo.hostname)) return true
+  return false
+}
+
+function registryHealthFromStatus(status?: RegistryStatusFile, env: NodeJS.ProcessEnv = process.env): RuntimeHealth {
+  const entries = registryStatusEntries(status)
+  if (entries.length === 0) return 'offline'
+  const now = Date.now() / 1000
+  const maxAge = registryHeartbeatMaxAge(env)
+  const fresh = entries.filter((entry) => registryEntryFresh(entry, now, maxAge)).length
+  if (fresh === 0) return 'offline'
+  if (fresh === entries.length) return 'healthy'
+  return 'degraded'
+}
+
+function resolveRegistryStatusPaths(trackerSocket: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const cacheHome = env.XDG_CACHE_HOME || join(homedir(), '.cache')
+  const candidates: string[] = []
+  if (env.BROCCOLI_COMMS_CACHE_DIR) {
+    candidates.push(join(env.BROCCOLI_COMMS_CACHE_DIR, 'agent-tracker', 'registry-status.json'))
+  }
+  const broccoliDefault = join(cacheHome, 'broccoli-comms', 'agent-tracker', 'registry-status.json')
+  const legacyDefault = join(cacheHome, 'agent-tracker', 'registry-status.json')
+  if (trackerSocket.includes('/broccoli-comms/')) {
+    candidates.push(broccoliDefault, legacyDefault)
+  } else {
+    candidates.push(legacyDefault, broccoliDefault)
+  }
+  return [...new Set(candidates)]
+}
+
+async function resolveRegistryHealth(trackerSocket: string, trackerInfo?: TrackerInfo): Promise<RuntimeHealth> {
+  let best: RegistryStatusFile | undefined
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (const path of resolveRegistryStatusPaths(trackerSocket)) {
+    try {
+      const status = JSON.parse(await readFile(path, 'utf8')) as RegistryStatusFile
+      const score = (trackerInfoMatchesRegistryStatus(status, trackerInfo) ? 1_000_000_000 : 0) + registryStatusLastSuccess(status)
+      if (score > bestScore) {
+        best = status
+        bestScore = score
+      }
+    } catch {
+      // Ignore missing/invalid status files.
+    }
+  }
+  return registryHealthFromStatus(best)
+}
+
+async function socketReachable(socketPath: string, timeoutMs = 500): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const socket = connect(socketPath)
+    let settled = false
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(ok)
+    }
+    socket.once('connect', () => finish(true))
+    socket.once('error', () => finish(false))
+    socket.setTimeout(timeoutMs, () => finish(false))
+  })
 }
 
 export function resolveSelfAgentName(env: NodeJS.ProcessEnv = process.env): string {
@@ -235,14 +348,27 @@ export class LocalTrackerClient {
 
   async getStatus(): Promise<RuntimeStatus> {
     let agents: Record<string, TrackerAgent> | undefined
+    let trackerInfo: TrackerInfo | undefined
     try {
       await this.ensureMailbox()
       agents = await this.call<Record<string, TrackerAgent>>('list', { agent_name: this.selfAgentName }, 1500)
+      try {
+        trackerInfo = await this.call<TrackerInfo>('tracker_info', {}, 1500)
+      } catch {
+        trackerInfo = undefined
+      }
     } catch {
       agents = undefined
     }
     const up = Boolean(agents)
     const selfRegistered = Boolean(agents?.[this.selfAgentName])
+    const registeredTmuxSocket = Object.values(agents || {}).map((agent) => agent.tmux_socket).find((socket) => socket && socket !== 'none')
+    const tmuxSocket = registeredTmuxSocket || resolveTmuxSocket(this.socketPath)
+    const [tmuxUp, registryHealth] = await Promise.all([
+      tmuxSocket ? socketReachable(tmuxSocket) : Promise.resolve(up),
+      resolveRegistryHealth(this.socketPath, trackerInfo),
+    ])
+
     return {
       mode: 'tracker',
       label: up
@@ -250,19 +376,23 @@ export class LocalTrackerClient {
           ? 'Local tracker connected'
           : 'Local tracker connected; reply inbox identity not registered'
         : 'Local tracker unavailable',
-      health: up ? (selfRegistered ? 'healthy' : 'degraded') : 'offline',
+      health: up ? (selfRegistered && tmuxUp ? 'healthy' : 'degraded') : 'offline',
       tracker: up ? 'healthy' : 'offline',
-      registry: 'offline',
-      tmux: 'offline',
+      registry: registryHealth,
+      tmux: tmuxUp ? 'healthy' : 'offline',
       updatedAt: new Date().toISOString(),
       notes: [
         `Using explicit tracker socket: ${this.socketPath}`,
+        tmuxSocket ? `Using tmux socket: ${tmuxSocket}` : 'No explicit tmux socket detected; using tracker-backed default tmux integration.',
         `Electron inbox identity: ${this.selfAgentName}`,
         selfRegistered
           ? 'Replies addressed to this identity can be read from its tracker inbox.'
           : 'Set BROCCOLI_COMMS_ELECTRON_AGENT_NAME to a registered local agent name to receive replies in this app.',
-        'Simple View only: local tracker agents and one-to-one inbox messaging.',
-        'Registry, remote protocol, and inherited tmux state are not used.',
+        registryHealth === 'healthy'
+          ? 'Registry heartbeat is fresh for this tracker runtime.'
+          : registryHealth === 'degraded'
+            ? 'Some configured registries are connected, but at least one heartbeat is stale or offline.'
+            : 'No fresh registry heartbeat found for this tracker runtime.',
       ],
     }
   }
