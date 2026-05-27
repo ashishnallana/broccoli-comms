@@ -494,6 +494,37 @@ describe('tracker Simple View mapping', () => {
     expect(merged.map((message) => message.id)).toEqual(['out-1', 'in-1'])
   })
 
+  it('deduplicates mirrored sent messages by message id and keeps the strongest delivery state', () => {
+    const merged = mergeConversationMessages(
+      [
+        {
+          id: 'out-1',
+          conversationKey: 'local:id-1',
+          direction: 'outbound',
+          author: 'you',
+          recipient: 'alpha',
+          body: 'hello',
+          createdAt: '2026-05-25T00:00:02.000Z',
+          deliveryState: 'notified',
+        },
+      ],
+      [
+        {
+          id: 'out-1',
+          conversationKey: 'local:id-1',
+          direction: 'outbound',
+          author: 'you',
+          recipient: 'alpha',
+          body: 'hello',
+          createdAt: '2026-05-25T00:00:01.000Z',
+          deliveryState: 'delivered',
+        },
+      ],
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: 'out-1', deliveryState: 'notified', createdAt: '2026-05-25T00:00:01.000Z' })
+  })
+
   it('listMessages() passes optional inboxOwnerName through socket call params', async () => {
     await withFakeTracker(
       (method, params) => {

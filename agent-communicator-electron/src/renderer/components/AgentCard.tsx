@@ -20,6 +20,30 @@ function statusDotClass(status: string): string {
   return 'idle'
 }
 
+function agentDisplayParts(agent: AgentSummary): { primary: string; secondary?: string } {
+  if (agent.id.startsWith('group:') || agent.id.startsWith('host:') || agent.id.startsWith('mailbox:')) {
+    return { primary: agent.displayName, secondary: agent.address }
+  }
+
+  let hostCandidate = agent.address || agent.name || agent.displayName
+  if (hostCandidate.startsWith('registry:')) {
+    hostCandidate = hostCandidate.slice('registry:'.length)
+  }
+  if (hostCandidate.includes(':')) {
+    hostCandidate = hostCandidate.slice(hostCandidate.indexOf(':') + 1)
+  }
+
+  const slashIndex = hostCandidate.indexOf('/')
+  if (slashIndex !== -1) {
+    const host = hostCandidate.slice(0, slashIndex)
+    const agentName = hostCandidate.slice(slashIndex + 1) || agent.displayName
+    return { primary: agentName, secondary: host }
+  }
+
+  const displayName = agent.displayName.includes('/') ? agent.displayName.split('/').pop() || agent.displayName : agent.displayName
+  return { primary: displayName, secondary: agent.scope === 'local' ? 'local-host' : undefined }
+}
+
 export function avatarBg(name: string): string {
   const colors = [
     'var(--accent-blue)',
@@ -38,6 +62,8 @@ export function avatarBg(name: string): string {
 }
 
 export function AgentCard({ agent, selected, onSelect, onContextMenu }: Props) {
+  const { primary, secondary } = agentDisplayParts(agent)
+
   return (
     <button
       className={`channel ${selected ? 'active' : ''} ${agent.unread > 0 ? 'unread' : ''}`}
@@ -45,10 +71,13 @@ export function AgentCard({ agent, selected, onSelect, onContextMenu }: Props) {
       onClick={onSelect}
       onContextMenu={(e) => onContextMenu?.(e, agent.id)}
     >
-      <span className="agent-avatar-sm" style={{ background: avatarBg(agent.displayName) }}>
-        {initials(agent.displayName)}
+      <span className="agent-avatar-sm" style={{ background: avatarBg(primary) }}>
+        {initials(primary)}
       </span>
-      <span className="channel-name">{agent.displayName}</span>
+      <span className="channel-copy">
+        <span className="channel-name">{primary}</span>
+        {secondary && <span className="channel-host">{secondary}</span>}
+      </span>
       <span className="channel-meta">
         <span className={`channel-status-dot ${statusDotClass(agent.status)}`} />
         {agent.unread > 0 && <span className="channel-unread-dot" title="Unread messages" />}

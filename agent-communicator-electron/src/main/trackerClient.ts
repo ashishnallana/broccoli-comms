@@ -162,7 +162,21 @@ export function messageMatchesConversation(message: TrackerMessage, target: Pick
 }
 
 export function mergeConversationMessages(inbound: Message[], sent: Message[]): Message[] {
-  return [...inbound, ...sent].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+  const byId = new Map<string, Message>()
+  for (const message of [...inbound, ...sent]) {
+    const existing = byId.get(message.id)
+    if (!existing) {
+      byId.set(message.id, message)
+      continue
+    }
+    byId.set(message.id, {
+      ...existing,
+      ...message,
+      createdAt: existing.createdAt <= message.createdAt ? existing.createdAt : message.createdAt,
+      deliveryState: advanceDeliveryState(existing.deliveryState, message.deliveryState),
+    })
+  }
+  return Array.from(byId.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
 }
 
 function deliveryStateForTrackerEvent(type: string | undefined): MessageDeliveryState | undefined {
