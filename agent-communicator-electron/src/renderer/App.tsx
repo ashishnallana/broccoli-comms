@@ -114,6 +114,7 @@ export function App() {
   const [mode, setMode] = useState<ComposerMode>('message')
   const [composerStatus, setComposerStatus] = useState(defaultComposerStatus('message'))
   const [loading, setLoading] = useState(true)
+  const [refreshingAgents, setRefreshingAgents] = useState(false)
   const [securityWarning, setSecurityWarning] = useState<string | null>(null)
   const [groups, setGroups] = useState<Record<string, GroupChannel>>(() => {
     try {
@@ -274,6 +275,25 @@ export function App() {
     void load()
     return () => {
       cancelled = true
+    }
+  }, [runtime])
+
+  const refreshAgentList = useCallback(async () => {
+    setRefreshingAgents(true)
+    try {
+      const [runtimeStatus, agentList] = await Promise.all([
+        runtime.getStatus(),
+        runtime.listAgents(),
+      ])
+      setStatus(runtimeStatus)
+      setRawAgents(agentList)
+      setComposerStatus(`Agent list refreshed: ${agentList.length} local/remote entries.`)
+    } catch (error) {
+      console.warn('Failed to refresh agent list:', error)
+      setComposerStatus('Failed to refresh agent list.')
+    } finally {
+      setRefreshingAgents(false)
+      setLoading(false)
     }
   }, [runtime])
 
@@ -1070,6 +1090,8 @@ export function App() {
             onSelect={selectAgent}
             onVisibleAgentsChange={updateVisibleAgents}
             onOpenLaunch={() => setLaunchModalOpen(true)}
+            onRefresh={refreshAgentList}
+            refreshing={refreshingAgents}
             onOpenCreateGroup={() => {
               setPromptModal({
                 isOpen: true,

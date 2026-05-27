@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { AgentSummary, ComposerMode } from '../../shared/contracts'
 import { composerActionLabel, composerPlaceholder } from '../features/composer/composerActions'
 import { ActionModePicker } from './ActionModePicker'
@@ -13,6 +13,14 @@ interface Props {
 
 export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props) {
   const [body, setBody] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useLayoutEffect(() => {
+    const input = inputRef.current
+    if (!input) return
+    input.style.height = '0px'
+    input.style.height = `${Math.min(input.scrollHeight, 116)}px`
+  }, [body])
 
   async function submit() {
     const trimmed = body.trim()
@@ -77,6 +85,7 @@ export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props)
 
       <div className="composer-input-row">
         <textarea
+          ref={inputRef}
           className="composer-input"
           value={body}
           placeholder={composerPlaceholder(mode)}

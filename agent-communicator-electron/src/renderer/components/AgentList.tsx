@@ -11,11 +11,13 @@ interface Props {
   onOpenLaunch: () => void
   onOpenCreateGroup?: () => void
   onAgentContextMenu?: (e: React.MouseEvent, agentId: string) => void
+  onRefresh?: () => void
+  refreshing?: boolean
 }
 
 const categories = ['mailbox', 'groups', 'agents'] as const
 
-export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch, onOpenCreateGroup, onAgentContextMenu }: Props) {
+export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange, onOpenLaunch, onOpenCreateGroup, onAgentContextMenu, onRefresh, refreshing = false }: Props) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filterActive = normalizedQuery.length > 0
@@ -38,14 +40,31 @@ export function AgentList({ agents, selectedId, onSelect, onVisibleAgentsChange,
   return (
     <section className="sidebar">
       <div className="sidebar-header">
-        <div className="workspace">
-          <div className="workspace-icon">A</div>
-          <div>
-            <div className="workspace-name">Agent Monitor</div>
-            <div className="workspace-sub">
-              {agents.length} agents · {unreadTotal} unread
+        <div className="sidebar-header-row">
+          <div className="workspace">
+            <div className="workspace-icon">A</div>
+            <div>
+              <div className="workspace-name">Agent Monitor</div>
+              <div className="workspace-sub">
+                {agents.length} agents · {unreadTotal} unread
+              </div>
             </div>
           </div>
+          {onRefresh && (
+            <button
+              type="button"
+              className={`agent-refresh-button ${refreshing ? 'spinning' : ''}`}
+              title="Refresh local and remote agents"
+              aria-label="Refresh local and remote agents"
+              onClick={onRefresh}
+              disabled={refreshing}
+            >
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M13 8a5 5 0 1 1-1.46-3.54" />
+                <path d="M13 3.5v3h-3" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
