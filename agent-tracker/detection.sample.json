@@ -12,7 +12,13 @@
       "permission",
       "approve",
       "allow",
-      "blocked"
+      "blocked",
+      "would you like to run the following command",
+      "requires approval",
+      "do you want to proceed",
+      "yes, proceed",
+      "what would you like to work on today",
+      "type something"
     ]
   },
   "agents": {
@@ -27,7 +33,10 @@
         "do you want to proceed",
         "wants to use bash",
         "do you want to allow",
-        "allow this command"
+        "allow this command",
+        "what would you like to work on today",
+        "type something",
+        "chat about this"
       ]
     },
     "codex-1": {
@@ -36,6 +45,10 @@
       "notify_cooldown_seconds": 300,
       "keyword_matches_required": 2,
       "keywords": [
+        "would you like to run the following command",
+        "yes, proceed",
+        "don't ask again",
+        "no, and tell codex",
         "approve",
         "allow command",
         "command execution",

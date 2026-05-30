@@ -103,6 +103,12 @@ class TestTmuxUtil(unittest.TestCase):
         self.assertEqual(res, "Hello \x1b[31mWorld\x1b[0m!")
 
     @mock.patch("tmux_util.run_tmux_cmd")
+    def test_get_pane_title(self, mock_run):
+        mock_run.return_value = "Codex approval required"
+        self.assertEqual(tmux_util.get_pane_title("%100", "/tmp/tmux.sock"), "Codex approval required")
+        mock_run.assert_called_once_with(["-S", "/tmp/tmux.sock", "display-message", "-p", "-t", "%100", "#{pane_title}"])
+
+    @mock.patch("tmux_util.run_tmux_cmd")
     def test_is_pane_in_copy_mode_true(self, mock_run):
         mock_run.return_value = "1"
         self.assertTrue(tmux_util.is_pane_in_copy_mode("%0"))

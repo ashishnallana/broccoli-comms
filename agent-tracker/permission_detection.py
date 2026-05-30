@@ -58,6 +58,7 @@ class BlockingDetection:
     matched_keywords: tuple[str, ...]
     excerpt: str
     fingerprint: str
+    pane_title: str = ""
 
 
 _config_cache: tuple[str, float | None, DetectionConfig] | None = None
@@ -192,10 +193,11 @@ def normalize_text(text: str) -> str:
     return " ".join((text or "").lower().split())
 
 
-def detect_blocking_prompt(agent_name: str, info: dict[str, Any], pane_text: str, cfg: AgentDetectionConfig) -> BlockingDetection | None:
+def detect_blocking_prompt(agent_name: str, info: dict[str, Any], pane_text: str, cfg: AgentDetectionConfig, pane_title: str = "") -> BlockingDetection | None:
     if not cfg.enabled or not cfg.keywords:
         return None
-    normalized = normalize_text(pane_text)
+    title = (pane_title or "").strip()
+    normalized = normalize_text("\n".join(part for part in (title, pane_text) if part))
     matched = tuple(keyword for keyword in cfg.keywords if keyword in normalized)
     if len(matched) < cfg.keyword_matches_required:
         return None
@@ -204,7 +206,7 @@ def detect_blocking_prompt(agent_name: str, info: dict[str, Any], pane_text: str
         excerpt = excerpt[-cfg.max_excerpt_chars:]
     pane_id = str(info.get("tmux_pane") or "")
     agent_id = str(info.get("agent_id") or info.get("uuid") or agent_name)
-    fingerprint_material = "\0".join([agent_id, pane_id, normalize_text(excerpt), ",".join(matched)])
+    fingerprint_material = "\0".join([agent_id, pane_id, normalize_text(title), normalize_text(excerpt), ",".join(matched)])
     fingerprint = hashlib.sha256(fingerprint_material.encode()).hexdigest()
     return BlockingDetection(
         agent_name=agent_name,
@@ -214,14 +216,17 @@ def detect_blocking_prompt(agent_name: str, info: dict[str, Any], pane_text: str
         matched_keywords=matched,
         excerpt=excerpt,
         fingerprint=fingerprint,
+        pane_title=title,
     )
 
 
 def _format_detection_message(detection: BlockingDetection) -> str:
     matched = "\n".join(f"- {keyword}" for keyword in detection.matched_keywords)
+    pane_title = f"Pane title: `{detection.pane_title}`\n" if detection.pane_title else ""
     return (
         f"Agent `{detection.agent_name}` appears blocked on a permission/approval prompt.\n\n"
         f"Pane: `{detection.pane_id}`\n"
+        f"{pane_title}"
         f"Captured with `capture-pane` last {detection.capture_lines} lines.\n\n"
         f"Matched keywords:\n{matched}\n\n"
         f"Recent capture-pane output:\n\n"
@@ -283,8 +288,13 @@ def detection_monitor_once(now: float | None = None) -> int:
         except Exception as e:
             logging.debug("Skipping detection for %s; pane capture failed: %s", agent_name, e)
             continue
+        try:
+            pane_title = tmux_util.get_pane_title(info.get("tmux_pane"), info.get("tmux_socket"))
+        except Exception as e:
+            logging.debug("Continuing detection for %s without pane title; title lookup failed: %s", agent_name, e)
+            pane_title = ""
 
-        detection = detect_blocking_prompt(agent_name, info, pane_text, agent_cfg)
+        detection = detect_blocking_prompt(agent_name, info, pane_text, agent_cfg, pane_title=pane_title)
         if not detection:
             continue
 
@@ -337,7 +347,7 @@ _SAMPLE_CONFIG = {
         "scan_interval_seconds": 5,
         "notify_cooldown_seconds": 300,
         "keyword_matches_required": 2,
-        "keywords": ["permission", "approve", "allow", "blocked"],
+        "keywords": ["permission", "approve", "allow", "blocked", "would you like to run the following command", "requires approval", "do you want to proceed", "yes, proceed", "what would you like to work on today", "type something"],
     },
     "agents": {
         "claude-1": {
@@ -346,7 +356,7 @@ _SAMPLE_CONFIG = {
             "scan_interval_seconds": 3,
             "notify_cooldown_seconds": 300,
             "keyword_matches_required": 2,
-            "keywords": ["bash command", "requires approval", "do you want to proceed", "wants to use bash", "do you want to allow", "allow this command"],
+            "keywords": ["bash command", "requires approval", "do you want to proceed", "wants to use bash", "do you want to allow", "allow this command", "what would you like to work on today", "type something", "chat about this"],
         },
         "codex-1": {
             "enabled": True,
@@ -354,7 +364,7 @@ _SAMPLE_CONFIG = {
             "scan_interval_seconds": 3,
             "notify_cooldown_seconds": 300,
             "keyword_matches_required": 2,
-            "keywords": ["approve", "allow command", "command execution", "accept", "decline"],
+            "keywords": ["would you like to run the following command", "yes, proceed", "don't ask again", "no, and tell codex", "approve", "allow command", "command execution", "accept", "decline"],
         },
     },
 }

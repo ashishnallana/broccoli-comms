@@ -180,6 +180,16 @@ def set_pane_title(pane_id, title, socket_path=None):
 def set_pane_title_sync(pane_id, title, socket_path=None):
     run_tmux_cmd(tmux_command(["select-pane", "-t", pane_id, "-T", title], socket_path)[1:])
 
+
+def get_pane_title(pane_id, socket_path=None):
+    """Returns the current tmux pane title, including title updates set by terminal apps."""
+    cmd = []
+    if socket_path:
+        cmd.extend(["-S", socket_path])
+    cmd.extend(["display-message", "-p", "-t", pane_id, "#{pane_title}"])
+    return run_tmux_cmd(cmd)
+
+
 def unset_pane_title(pane_id, socket_path=None):
     cmd = tmux_command(["select-pane", "-t", pane_id, "-T", ""], socket_path)
     enqueue_tmux_cmd(cmd)

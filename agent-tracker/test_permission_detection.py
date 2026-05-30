@@ -156,6 +156,118 @@ class PermissionDetectionConfigTests(unittest.TestCase):
         self.assertIsNotNone(hit)
         self.assertEqual(hit.matched_keywords, ("bash command", "requires approval", "do you want to proceed"))
 
+    def test_real_codex_command_prompt_is_detected_by_generic_keywords(self):
+        cfg = permission_detection.AgentDetectionConfig(
+            enabled=True,
+            capture_lines=10,
+            scan_interval_seconds=1,
+            notify_cooldown_seconds=300,
+            keyword_matches_required=2,
+            max_excerpt_chars=2000,
+            keywords=(
+                "would you like to run the following command",
+                "yes, proceed",
+                "don't ask again",
+                "no, and tell codex",
+            ),
+        )
+        prompt = """Would you like to run the following command?
+
+  Reason: Allow ICMP ping to check whether 8.8.8.8 is reachable from this machine?
+
+  $ ping -c 4 8.8.8.8
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `ping` (p)
+  3. No, and tell Codex what to do differently (esc)"""
+        hit = permission_detection.detect_blocking_prompt("codex-1", {"agent_id": "a1", "tmux_pane": "%1"}, prompt, cfg)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.matched_keywords, (
+            "would you like to run the following command",
+            "yes, proceed",
+            "don't ask again",
+            "no, and tell codex",
+        ))
+
+    def test_real_claude_task_prompt_is_detected_by_type_something(self):
+        cfg = permission_detection.AgentDetectionConfig(
+            enabled=True,
+            capture_lines=10,
+            scan_interval_seconds=1,
+            notify_cooldown_seconds=300,
+            keyword_matches_required=2,
+            max_excerpt_chars=2000,
+            keywords=("what would you like to work on today", "type something"),
+        )
+        prompt = """☐ Task
+
+What would you like to work on today?
+
+  1. Bug fix
+     Track down and fix an existing issue in the codebase
+  2. New feature
+     Implement something new
+  3. Refactor
+     Clean up or restructure existing code
+❯ 4. Code review
+     Review recent changes or a pull request
+  5. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  6. Chat about this"""
+        hit = permission_detection.detect_blocking_prompt("claude-1", {"agent_id": "a1", "tmux_pane": "%1"}, prompt, cfg)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.matched_keywords, ("what would you like to work on today", "type something"))
+
+    def test_pane_title_contributes_to_detection(self):
+        cfg = permission_detection.AgentDetectionConfig(
+            enabled=True,
+            capture_lines=10,
+            scan_interval_seconds=1,
+            notify_cooldown_seconds=300,
+            keyword_matches_required=2,
+            max_excerpt_chars=2000,
+            keywords=("codex", "approval required"),
+        )
+        hit = permission_detection.detect_blocking_prompt(
+            "codex-1",
+            {"agent_id": "a1", "tmux_pane": "%100"},
+            "ordinary pane text",
+            cfg,
+            pane_title="Codex approval required",
+        )
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.pane_title, "Codex approval required")
+        self.assertEqual(hit.matched_keywords, ("codex", "approval required"))
+        self.assertIn("Pane title: `Codex approval required`", permission_detection._format_detection_message(hit))
+
+    def test_monitor_can_detect_from_pane_title(self):
+        cfg = permission_detection.DetectionConfig(
+            enabled=True,
+            notify_target="agent-communicator",
+            sender_name="permission-monitor",
+            default=None,
+            agents={
+                "codex-1": permission_detection.AgentDetectionConfig(
+                    enabled=True,
+                    capture_lines=10,
+                    scan_interval_seconds=1,
+                    notify_cooldown_seconds=300,
+                    keyword_matches_required=2,
+                    max_excerpt_chars=2000,
+                    keywords=("codex", "approval required"),
+                )
+            },
+        )
+        with mock.patch.object(permission_detection, "load_detection_config", return_value=cfg), \
+             mock.patch.object(permission_detection.state, "get_all_agents", return_value={"codex-1": {"agent_id": "a1", "tmux_pane": "%100"}}), \
+             mock.patch.object(permission_detection.tmux_util, "capture_pane_visible_text", return_value="ordinary pane text"), \
+             mock.patch.object(permission_detection.tmux_util, "get_pane_title", return_value="Codex approval required"), \
+             mock.patch.object(permission_detection, "_send_detection_notification") as send:
+            self.assertEqual(permission_detection.detection_monitor_once(now=1000.0), 1)
+            detection = send.call_args.args[1]
+            self.assertEqual(detection.pane_title, "Codex approval required")
+            self.assertEqual(detection.matched_keywords, ("codex", "approval required"))
+
     def test_monitor_sends_notification_once_with_cooldown(self):
         cfg = permission_detection.DetectionConfig(
             enabled=True,
@@ -177,6 +289,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
         with mock.patch.object(permission_detection, "load_detection_config", return_value=cfg), \
              mock.patch.object(permission_detection.state, "get_all_agents", return_value={"claude-1": {"agent_id": "a1", "tmux_pane": "%1"}}), \
              mock.patch.object(permission_detection.tmux_util, "capture_pane_visible_text", return_value="Claude wants to use Bash\nDo you want to allow this?"), \
+             mock.patch.object(permission_detection.tmux_util, "get_pane_title", return_value=""), \
              mock.patch.object(permission_detection, "_send_detection_notification") as send:
             self.assertEqual(permission_detection.detection_monitor_once(now=1000.0), 1)
             self.assertEqual(permission_detection.detection_monitor_once(now=1001.1), 0)
