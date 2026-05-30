@@ -9,7 +9,7 @@ func (m *model) scrollSelectedMessageIntoView() {
 	if start < 0 {
 		return
 	}
-	if start < m.messageOffset {
+	if start < m.messageOffset || end-start+1 >= visible {
 		m.messageOffset = start
 		return
 	}

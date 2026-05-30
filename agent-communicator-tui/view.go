@@ -15,6 +15,13 @@ var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(palette.Sky)
 var selectedStyle = lipgloss.NewStyle().Foreground(palette.Green).Bold(true)
 var mutedStyle = lipgloss.NewStyle().Foreground(palette.Overlay0)
 var readStatusStyle = lipgloss.NewStyle().Foreground(palette.Blue)
+var shellTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(palette.Mauve)
+var sectionHeaderStyle = lipgloss.NewStyle().Foreground(palette.Subtext0).Bold(true)
+var badgeStyle = lipgloss.NewStyle().Foreground(palette.Base).Background(palette.Blue).Bold(true).Padding(0, 1)
+var modeTabStyle = lipgloss.NewStyle().Foreground(palette.Subtext0)
+var activeModeTabStyle = lipgloss.NewStyle().Foreground(palette.Base).Background(palette.Green).Bold(true).Padding(0, 1)
+var statusBarStyle = lipgloss.NewStyle().Foreground(palette.Teal)
+var errorBarStyle = lipgloss.NewStyle().Foreground(palette.Red).Bold(true)
 var composerBoxStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(palette.Surface0).Padding(0, 1)
 var panelBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(palette.Surface0).Padding(0, 1)
 var mobileComposerBoxStyle = lipgloss.NewStyle().Border(lipgloss.Border{Top: "─"}).BorderTop(true).BorderForeground(palette.Surface0).Padding(0, 0)
@@ -46,7 +53,7 @@ func (m model) View() string {
 
 	leftW, midW, rightW := m.layoutWidths()
 	_ = rightW
-	left := box(m.agentListTitle()+"\n"+m.agentList(leftW-4, panelInnerHeight(bodyH)-1), leftW, bodyH)
+	left := box(m.sidebarView(panelInnerWidth(leftW), panelInnerHeight(bodyH)), leftW, bodyH)
 	mid := m.conversationPanel(midW, bodyH)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid) + "\n" + footer
 }
@@ -60,26 +67,35 @@ func (m model) layoutWidths() (int, int, int) {
 	return left, mid, 0
 }
 
+func (m model) sidebarView(width, height int) string {
+	if m.mode == savedView {
+		body := shellTitleStyle.Render("Agent Communicator") + "\n" + sectionHeaderStyle.Render("Saved") + "\n" + m.savedAgentList(width, max(1, height-2))
+		return truncateLines(body, height)
+	}
+	title := shellTitleStyle.Render("Agent Communicator")
+	total, hidden := len(m.rows), len(m.rows)-m.hiddenStartIndex()
+	header := fmt.Sprintf("Agents %d", total)
+	if hidden > 0 {
+		header = fmt.Sprintf("Agents %d · Hidden %d", total, hidden)
+	}
+	body := title + "\n" + sectionHeaderStyle.Render(header) + "\n" + m.agentList(width, max(1, height-2))
+	return truncateLines(body, height)
+}
+
 func (m model) conversationPanel(width, height int) string {
 	defer debugSince("conversation_panel", time.Now())
 	innerW := panelInnerWidth(width)
 	innerH := panelInnerHeight(height)
-	titleText := "Conversation 🤖"
-	if m.mode == advancedView {
-		titleText = "Conversation 🤖🤖🤖"
-	}
-	if m.mode == savedView {
-		titleText = "Saved Messages ⭐"
-	}
+	titleText := m.conversationTitle()
 
 	if width < 70 { // Mobile / Narrow view header overrides
 		innerW = max(1, width-2)
 		innerH = max(1, height)
-		viewName := "Chat 🤖"
+		viewName := "Chat"
 		if m.mode == advancedView {
-			viewName = "Advanced Chat 🤖"
+			viewName = "Advanced Chat"
 		} else if m.mode == savedView {
-			viewName = "Saved Messages ⭐"
+			viewName = "Saved Messages"
 		}
 
 		if m.mode == savedView {
@@ -101,7 +117,7 @@ func (m model) conversationPanel(width, height int) string {
 	if width < 70 {
 		messageH = max(1, innerH-lineCount(title)-lineCount(composer))
 	}
-	body := title + "\n" + composer + "\n" + m.messageViewWithHeight(innerW, messageH)
+	body := title + "\n" + m.messageViewWithHeight(innerW, messageH) + "\n" + composer
 
 	if width < 70 {
 		return lipgloss.NewStyle().
@@ -113,6 +129,25 @@ func (m model) conversationPanel(width, height int) string {
 			Render(body)
 	}
 	return box(body, width, height)
+}
+
+func (m model) conversationTitle() string {
+	if m.mode == savedView {
+		return "Saved Messages ⭐"
+	}
+	label := "Conversation"
+	if m.mode == advancedView {
+		label = "Advanced Conversation"
+	}
+	row := m.currentRow()
+	if row.Name == "" {
+		return label + " · no agent selected"
+	}
+	parts := []string{label, statusDot(row.Status), modelBadge(row), row.Name}
+	if machine := rowMachineLabel(row); machine != "" {
+		parts = append(parts, "@ "+machine)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (m model) composerBox(width int) string {
@@ -128,34 +163,33 @@ func (m model) footer(width int) string {
 	if m.runtime.RemoteDirectInputEnabled {
 		directScope = "local+remote enabled"
 	}
+	status := m.runtimeStatusLine()
+	if status == "" {
+		status = fmt.Sprintf("rpc · local · agents %d", len(m.rows))
+	}
 	lines := []string{
+		statusBarStyle.Render(status),
 		"c-t view · tab section · c-n/p agent · c-a read · c-o prompts · c-h hide · c-f save · c-s save agent",
 		fmt.Sprintf("↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · /msg message · /text, /key pane control (%s) · c-q quit · c-x debug capture", directScope),
 	}
-	if status := m.runtimeStatusLine(); status != "" {
-		lines = append([]string{status}, lines...)
-	}
 	if m.paneCaptureStatus != "" {
-		lines = []string{m.paneCaptureStatus}
+		lines = append([]string{m.paneCaptureStatus}, lines...)
 	} else if m.directInputStatus != "" {
-		lines = []string{m.directInputStatus}
-	} else if m.err != nil {
-		lines = append([]string{}, lines...)
-		lines = append(lines, m.err.Error())
+		statusLine := m.directInputStatus
+		if m.directInputStatusErr {
+			statusLine = errorBarStyle.Render(statusLine)
+		}
+		lines = append([]string{statusLine}, lines...)
+	}
+	if m.err != nil {
+		lines = append(lines, errorBarStyle.Render("error · "+m.err.Error()))
 	}
 	for i, text := range lines {
 		if lipgloss.Width(text) > width {
 			lines[i] = truncateCells(text, max(1, width-1)) + "…"
 		}
 	}
-	text := strings.Join(lines, "\n")
-	if m.directInputStatus != "" && m.directInputStatusErr {
-		return lipgloss.NewStyle().Foreground(palette.Red).Render(text)
-	}
-	if m.err != nil && m.directInputStatus == "" {
-		return lipgloss.NewStyle().Foreground(palette.Red).Render(text)
-	}
-	return mutedStyle.Render(text)
+	return mutedStyle.Render(strings.Join(lines, "\n"))
 }
 
 func (m model) runtimeStatusLine() string {
@@ -196,26 +230,22 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	cardWidth := max(8, width)
 	hidden := m.isHiddenAgent(row)
 	inner := max(4, cardWidth-4)
-	badge := ""
+	unread := ""
 	if m.hasUnread(row) {
-		badge = "●"
+		unread = " " + lipgloss.NewStyle().Foreground(palette.Yellow).Render("●")
 	}
-	nameText := truncateCells(row.Name, inner)
-	if badge != "" {
-		left := truncateCells(row.Name, max(1, inner-2))
-		nameText = left + strings.Repeat(" ", max(1, inner-lipgloss.Width(left)-1)) + badge
-	}
-	detail := row.Scope
-	if row.Scope == "remote" {
-		detail += " · " + fallback(row.Hostname, splitHost(row.TargetAddress))
-	}
-	if cwd := compactCWD(row.CWD); cwd != "" {
-		detail += " · " + cwd
-	}
-	nameLine := agentStyle(row.Name, true).Bold(true).Render(nameText)
+	prefix := statusDot(row.Status) + " " + badgeStyle.Render(modelBadge(row)) + " "
+	nameBudget := max(1, inner-lipgloss.Width(prefix)-lipgloss.Width(unread))
+	nameText := agentStyle(row.Name, true).Render(truncateCells(row.Name, nameBudget))
+	nameLine := prefix + nameText + unread
 	if lipgloss.Width(nameLine) > inner {
-		nameLine = nameText
+		nameLine = truncateCells(statusDot(row.Status)+" "+modelBadge(row)+" "+row.Name, inner)
 	}
+	detailParts := []string{statusLabel(row.Status), rowMachineLabel(row)}
+	if cwd := compactCWD(row.CWD); cwd != "" {
+		detailParts = append(detailParts, cwd)
+	}
+	detail := strings.Join(nonEmpty(detailParts), " · ")
 	lines := nameLine + "\n" + mutedStyle.Render(truncateCells(detail, inner))
 	border := lipgloss.RoundedBorder()
 	if selected {
@@ -233,7 +263,8 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 }
 
 func (m model) hiddenSeparator(width int) string {
-	text := " hidden "
+	hidden := max(0, len(m.rows)-m.hiddenStartIndex())
+	text := fmt.Sprintf(" hidden / Filtered %d ", hidden)
 	lineWidth := max(0, width-lipgloss.Width(text)-2)
 	return mutedStyle.Render(strings.Repeat("─", lineWidth/2) + text + strings.Repeat("─", lineWidth-lineWidth/2))
 }
@@ -241,6 +272,69 @@ func (m model) hiddenSeparator(width int) string {
 func splitHost(target string) string {
 	host, _ := splitRemoteTarget(target)
 	return host
+}
+
+func (m model) agentGroupHeader(row agentRow) string {
+	scope := strings.Title(fallback(row.Scope, "local"))
+	machine := rowMachineLabel(row)
+	if machine == "" {
+		return scope
+	}
+	return scope + " · " + machine
+}
+
+func rowMachineLabel(row agentRow) string {
+	if row.Hostname != "" {
+		return shortHost(row.Hostname)
+	}
+	if host := splitHost(row.TargetAddress); host != "" {
+		return shortHost(host)
+	}
+	if row.Scope == "remote" {
+		return "remote"
+	}
+	return shortHost(localHostname())
+}
+
+func modelBadge(row agentRow) string {
+	cmd := strings.ToLower(strings.TrimSpace(row.AgentCmd))
+	switch {
+	case strings.Contains(cmd, "claude"):
+		return "Cl"
+	case strings.Contains(cmd, "codex"):
+		return "Cx"
+	case strings.Contains(cmd, "pi"):
+		return "Pi"
+	default:
+		return "??"
+	}
+}
+
+func statusDot(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "active", "online", "idle", "ready":
+		return lipgloss.NewStyle().Foreground(palette.Green).Render("●")
+	case "waiting", "pending", "paused":
+		return lipgloss.NewStyle().Foreground(palette.Yellow).Render("●")
+	case "error", "failed", "stopped", "offline", "dead":
+		return lipgloss.NewStyle().Foreground(palette.Red).Render("●")
+	default:
+		return lipgloss.NewStyle().Foreground(palette.Overlay0).Render("●")
+	}
+}
+
+func statusLabel(status string) string {
+	return fallback(strings.TrimSpace(status), "unknown")
+}
+
+func nonEmpty(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func compactCWD(cwd string) string {
@@ -280,9 +374,22 @@ func (m model) agentList(width, height int) string {
 	end := min(len(m.rows), offset+visible)
 	hiddenStart := m.hiddenStartIndex()
 	var b strings.Builder
+	lastGroup := ""
 	for i := offset; i < end; i++ {
 		if i == hiddenStart && hiddenStart > 0 {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
 			b.WriteString(m.hiddenSeparator(width) + "\n")
+			lastGroup = ""
+		}
+		group := m.agentGroupHeader(m.rows[i])
+		if group != "" && group != lastGroup {
+			if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+				b.WriteString("\n")
+			}
+			b.WriteString(sectionHeaderStyle.Render(truncateCells(group, max(1, width-1))) + "\n")
+			lastGroup = group
 		}
 		b.WriteString(m.agentCard(m.rows[i], i == m.selected, width-2))
 		if i < end-1 {
@@ -454,13 +561,14 @@ func (m model) composerLines(width int) []string {
 		prompt = prefix + cursor + mutedStyle.Render(placeholder)
 	}
 	wrapped := wrapLine(prompt, max(1, width-1))
-	if len(wrapped) > composerMaxLines {
-		wrapped = wrapped[len(wrapped)-composerMaxLines:]
+	bodyMaxLines := max(1, composerMaxLines-1)
+	if len(wrapped) > bodyMaxLines {
+		wrapped = wrapped[len(wrapped)-bodyMaxLines:]
 	}
 	for i := range wrapped {
 		wrapped[i] = truncateCells(wrapped[i], max(1, width-1))
 	}
-	return wrapped
+	return append([]string{m.composerModeHint(width)}, wrapped...)
 }
 
 func (m model) composerPrefix() string {
@@ -469,6 +577,26 @@ func (m model) composerPrefix() string {
 		return agentStyle(name, true).Render("@"+name) + mutedStyle.Render(": ")
 	}
 	return mutedStyle.Render("> ")
+}
+
+func (m model) composerModeHint(width int) string {
+	action := parseComposerAction(string(m.composer))
+	active := "msg"
+	if action.Kind == "direct_text" {
+		active = "text"
+	} else if action.Kind == "direct_keys" {
+		active = "key"
+	}
+	tab := func(name, label string) string {
+		if active == name {
+			return activeModeTabStyle.Render(label)
+		}
+		return modeTabStyle.Render(label)
+	}
+	target := fallback(m.currentRow().Name, "no target")
+	context := mutedStyle.Render(" target " + target)
+	line := tab("msg", "/msg inbox") + " " + tab("text", "/text pane") + " " + tab("key", "/key pane") + context
+	return truncateCells(line, max(1, width-1))
 }
 
 func truncateLines(s string, height int) string {
