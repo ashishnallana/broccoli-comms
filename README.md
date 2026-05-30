@@ -371,6 +371,183 @@ broccoli-comms registry start --host 0.0.0.0 --port 8080 --name home --auth --to
 
 Unauthenticated non-loopback binds are refused for safety. Starting a registry does not automatically point a tracker at it; use `broccoli-comms registry add --name local --url http://127.0.0.1:8080 --noauth` (or `--auth --token-file ...`) when you want the private tracker to publish/consume that registry URL after restart. Use `registry list/remove/enable/disable/env` to manage saved URLs. Registry URL configuration does not enable remote direct pane input; the separate remote pane-input gates remain required.
 
+## Start on boot/login
+
+You can start the Broccoli Comms tracker/managed agents and a Broccoli-managed registry automatically with your OS service manager.
+
+Use full paths in service files because boot/login services often have a minimal `PATH`:
+
+```sh
+command -v broccoli-comms
+```
+
+Also make sure any agent commands in your config, such as `pi`, `claude`, or `codex`, are either on the service `PATH` or written as absolute paths in `broccoli-comms agent add --command ...`.
+
+### Linux systemd user services
+
+This example uses user services, so it starts when the user session starts. Enable lingering if you want user services to start at boot before interactive login:
+
+```sh
+loginctl enable-linger "$USER"
+```
+
+Create `~/.config/systemd/user/broccoli-comms.service` for the private tracker and managed agents:
+
+```ini
+[Unit]
+Description=Broccoli Comms private tracker and managed agents
+After=default.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/.nix-profile/bin/broccoli-comms start
+ExecStop=%h/.nix-profile/bin/broccoli-comms stop
+Environment=PATH=%h/.nix-profile/bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+```
+
+Create `~/.config/systemd/user/broccoli-comms-registry.service` if this machine should also host a central registry:
+
+```ini
+[Unit]
+Description=Broccoli Comms agent registry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.nix-profile/bin/broccoli-comms registry start --foreground --host 0.0.0.0 --port 8080 --name home --auth --token-file %h/.config/broccoli-comms/registry-token
+Restart=on-failure
+Environment=PATH=%h/.nix-profile/bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now broccoli-comms.service
+systemctl --user enable --now broccoli-comms-registry.service
+systemctl --user status broccoli-comms.service
+systemctl --user status broccoli-comms-registry.service
+```
+
+If you do not want this machine to host a registry, omit `broccoli-comms-registry.service`. Client machines only need `broccoli-comms registry add ...` plus `broccoli-comms start`.
+
+### macOS LaunchAgent
+
+A LaunchAgent starts when the user logs in. This is usually safer than a system LaunchDaemon because Broccoli Comms is a user-level tmux/tracker runtime and needs access to the user's home directory and agent commands.
+
+First choose a stable runtime directory. macOS does not always provide `XDG_RUNTIME_DIR`, so this example uses `/tmp/broccoli-comms-$USER`.
+
+Create `~/Library/LaunchAgents/in.broccoli.comms.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>in.broccoli.comms</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOU/.nix-profile/bin/broccoli-comms</string>
+    <string>start</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BROCCOLI_COMMS_RUNTIME_DIR</key>
+    <string>/tmp/broccoli-comms-YOU</string>
+    <key>PATH</key>
+    <string>/Users/YOU/.nix-profile/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/broccoli-comms.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/broccoli-comms.err.log</string>
+</dict>
+</plist>
+```
+
+Create `~/Library/LaunchAgents/in.broccoli.comms.registry.plist` if this Mac should host a registry:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>in.broccoli.comms.registry</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/YOU/.nix-profile/bin/broccoli-comms</string>
+    <string>registry</string>
+    <string>start</string>
+    <string>--foreground</string>
+    <string>--host</string>
+    <string>0.0.0.0</string>
+    <string>--port</string>
+    <string>8080</string>
+    <string>--name</string>
+    <string>home</string>
+    <string>--auth</string>
+    <string>--token-file</string>
+    <string>/Users/YOU/.config/broccoli-comms/registry-token</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>BROCCOLI_COMMS_RUNTIME_DIR</key>
+    <string>/tmp/broccoli-comms-YOU</string>
+    <key>PATH</key>
+    <string>/Users/YOU/.nix-profile/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/broccoli-comms-registry.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/broccoli-comms-registry.err.log</string>
+</dict>
+</plist>
+```
+
+Replace `YOU` and the `broccoli-comms` path with your actual username/path. Then load the services:
+
+```sh
+launchctl unload ~/Library/LaunchAgents/in.broccoli.comms.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/in.broccoli.comms.plist
+launchctl start in.broccoli.comms
+
+launchctl unload ~/Library/LaunchAgents/in.broccoli.comms.registry.plist 2>/dev/null || true
+launchctl load ~/Library/LaunchAgents/in.broccoli.comms.registry.plist
+launchctl start in.broccoli.comms.registry
+```
+
+Check logs and status:
+
+```sh
+tail -f /tmp/broccoli-comms.err.log
+broccoli-comms status --json
+broccoli-comms registry status --json
+```
+
 Runtime/frontend JSON contracts are documented in `docs/RUNTIME_API.md`:
 
 ```sh
