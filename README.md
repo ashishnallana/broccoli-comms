@@ -15,11 +15,12 @@ Broccoli Comms is a standalone agent workspace runtime. It runs terminal-based c
 Typical local workflow:
 
 ```sh
-broccoli-comms start       # start private tracker plus default-tmux Broccoli session
-broccoli-comms ui          # open the terminal UI; alias: open
+broccoli-comms ui          # starts/reconciles runtime if needed, then opens the TUI; alias: open
 broccoli-comms status      # inspect runtime state
-broccoli-comms stop        # stop Broccoli session and private tracker
+broccoli-comms stop        # stop Broccoli-owned windows/session state and private tracker
 ```
+
+Use `broccoli-comms start` when you want to start/reconcile agents without opening the UI.
 
 Default paths/mode:
 
@@ -48,7 +49,6 @@ Run directly from a checkout:
 git clone https://github.com/tanmayv/broccoli-comms.git
 cd broccoli-comms
 nix run .#broccoli-comms -- doctor
-nix run .#broccoli-comms -- start
 nix run .#broccoli-comms -- ui
 ```
 
@@ -64,7 +64,6 @@ Install persistently with Nix:
 ```sh
 nix profile install github:tanmayv/broccoli-comms#broccoli-comms
 broccoli-comms doctor
-broccoli-comms start
 broccoli-comms ui
 ```
 
@@ -91,7 +90,6 @@ git clone https://github.com/tanmayv/broccoli-comms.git
 cd broccoli-comms
 make build
 ./bin/broccoli-comms doctor
-./bin/broccoli-comms start
 ./bin/broccoli-comms ui
 ```
 
@@ -169,23 +167,21 @@ Exposed Nix packages:
 This is the simplest mode. Agents on the same machine communicate through the private local tracker only. No central registry is needed.
 
 ```sh
-broccoli-comms start
 broccoli-comms ui
 ```
 
-Use this when all agents you care about are running under the same Broccoli Comms runtime.
+`ui` starts the private tracker, reconciles configured agents, creates/reuses the `broccoli-comms-agents` tmux session, and opens the TUI. Use this when all agents you care about are running under the same Broccoli Comms runtime.
 
 ### 2. Use an existing central registry
 
 A central `agent-registry` is required for multi-device communication. Each machine runs its own local `broccoli-comms`/`agent-tracker`, and all trackers publish to and poll the same registry for discovery and queued messages.
 
-Configure an existing registry URL, then restart/start Broccoli Comms so the private tracker receives it:
+Configure an existing registry URL before opening the UI so the private tracker receives it:
 
 ```sh
 broccoli-comms registry add --name home --url https://registry.example.com --auth --token-file ~/.config/broccoli-comms/registry-token
 broccoli-comms registry list
 broccoli-comms registry env
-broccoli-comms start
 broccoli-comms ui
 broccoli-comms agent-tracker registry-status
 ```
@@ -194,10 +190,15 @@ For an unauthenticated local/dev registry:
 
 ```sh
 broccoli-comms registry add --name local --url http://127.0.0.1:8080 --noauth
-broccoli-comms start
+broccoli-comms ui
 ```
 
-Saved registry URLs live in `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` (default `~/.config/broccoli-comms/registries.json`). Token contents are not stored; use `token-file`. If `AGENT_REGISTRIES_JSON` is explicitly set in the environment, it overrides saved registry URLs for that invocation.
+Saved registry URLs live in `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` (default `~/.config/broccoli-comms/registries.json`). Token contents are not stored; use `token-file`. If `AGENT_REGISTRIES_JSON` is explicitly set in the environment, it overrides saved registry URLs for that invocation. If Broccoli Comms is already running when you add or change registry URLs, stop and reopen it so the tracker starts with the new config:
+
+```sh
+broccoli-comms stop
+broccoli-comms ui
+```
 
 ### 3. Run a standalone registry with Broccoli Comms
 
@@ -208,9 +209,9 @@ One machine can host the central registry service, while every participating mac
 broccoli-comms registry start --host 0.0.0.0 --port 8080 --name home --auth --token-file ~/.config/broccoli-comms/registry-token
 broccoli-comms registry status
 
-# On each client machine:
+# On each client machine before opening the UI:
 broccoli-comms registry add --name home --url http://REGISTRY_HOST:8080 --auth --token-file ~/.config/broccoli-comms/registry-token
-broccoli-comms start
+broccoli-comms ui
 broccoli-comms agent-tracker registry-status
 ```
 
@@ -253,14 +254,24 @@ broccoli-comms agent restart main
 broccoli-comms agent remove reviewer
 ```
 
-Then run:
+Then run one of:
 
 ```sh
-broccoli-comms start
-broccoli-comms attach
+broccoli-comms ui      # reconcile agents and open the TUI
+broccoli-comms start   # reconcile agents without opening the TUI
 ```
 
 `start` reconciles configured agents into the `broccoli-comms-agents` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker environment. By default this session is created in your normal tmux server, and an already-existing `broccoli-comms-agents` session is reused. `broccoli-comms stop` removes only Broccoli-owned windows plus the private tracker, leaving unrelated tmux sessions/windows alone. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/ui/stop` to use the Broccoli-owned private tmux socket behavior with the same session name.
+
+### Which agent launch command should I use?
+
+Use the higher-level Broccoli commands for most workflows:
+
+| Use case | Command | Notes |
+| --- | --- | --- |
+| Persistent named agent that should come back on every `start`/`ui` | `broccoli-comms agent add NAME --cwd DIR --command 'COMMAND'` | Saves to Broccoli config and reconciles into the `broccoli-comms-agents` session. Best for coder/reviewer teams. |
+| One-off command in the current terminal/tmux pane that should appear in Agent Communicator | `broccoli-comms track --name NAME -- COMMAND [ARGS...]` | Does not create a new tmux window. It wraps the current process with Broccoli's bundled `agent-wrapper`. |
+| One-off new tmux pane/window through the lower-level tracker | `broccoli-comms agent-tracker spin DIR COMMAND [ARGS...]` | Useful for tracker-level experiments; for durable agents prefer `agent add`. |
 
 ### Track an ad-hoc command in the current pane
 
