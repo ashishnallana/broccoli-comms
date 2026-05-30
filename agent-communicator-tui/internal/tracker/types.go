@@ -35,6 +35,11 @@ type Message struct {
 	Sender          string       `json:"sender"`
 	SenderAgentID   string       `json:"sender_agent_id,omitempty"`
 	SenderTrackerID string       `json:"sender_tracker_id,omitempty"`
+	SenderHostname  string       `json:"sender_hostname,omitempty"`
+	SenderModelType string       `json:"sender_model_type,omitempty"`
+	SenderAgentType string       `json:"sender_agent_type,omitempty"`
+	SenderAgentCmd  string       `json:"sender_agent_cmd,omitempty"`
+	Kind            string       `json:"kind,omitempty"`
 	Timestamp       string       `json:"timestamp"`
 	Body            string       `json:"message"`
 	ContentType     string       `json:"content_type,omitempty"`

@@ -69,7 +69,8 @@ func (m model) messageHeader(msg tracker.Message, index int, colorKey string, wi
 	if m.isSavedMessage(msg) {
 		saved = lipgloss.NewStyle().Foreground(palette.Yellow).Render("★ ")
 	}
-	header := saved + sentReadMarker(msg) + agentStyle(colorKey, true).Render(truncateCells(sender, max(1, width-25)))
+	label := messageSenderLabel(msg, sender)
+	header := saved + sentReadMarker(msg) + agentStyle(colorKey, true).Render(truncateCells(label, max(1, width-25)))
 	if ts := formatDisplayTime(msg.Timestamp); ts != "" && lipgloss.Width(header)+1 < width {
 		if m.isSavedMessage(msg) {
 			ts += " ★"
@@ -77,6 +78,25 @@ func (m model) messageHeader(msg tracker.Message, index int, colorKey string, wi
 		header += " " + mutedStyle.Render(truncateCells(ts, width-lipgloss.Width(header)-1))
 	}
 	return header
+}
+
+func messageSenderLabel(msg tracker.Message, fallbackSender string) string {
+	if isSentMessage(msg) {
+		return fallbackSender
+	}
+	parts := []string{}
+	if badge := messageSenderBadge(msg); badge != "??" {
+		parts = append(parts, badge)
+	}
+	parts = append(parts, fallback(fallbackSender, "unknown"))
+	if host := strings.TrimSpace(msg.SenderHostname); host != "" {
+		parts = append(parts, "@ "+shortHost(host))
+	}
+	return strings.Join(parts, " ")
+}
+
+func messageSenderBadge(msg tracker.Message) string {
+	return modelBadge(agentRow{ModelType: msg.SenderModelType, AgentCmd: fallback(msg.SenderAgentCmd, msg.SenderAgentType)})
 }
 
 func renderBubble(lines []string, innerWidth int, color lipgloss.Color, outgoing, selected bool) []string {

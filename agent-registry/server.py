@@ -847,16 +847,21 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 if tracker.get("status") != "active":
                     LOG.warning("message target tracker not active target_tracker_id=%s status=%s target_agent_id=%s", target["tracker_id"], tracker.get("status", "gone"), target["agent_id"])
                     return self._json(503, {"error": "tracker_offline", "message": "target tracker is stale or gone", "tracker_status": tracker.get("status", "gone")})
+                sender_tracker = store.get_tracker(body.get("sender_tracker_id")) or {}
                 entry = store.enqueue_delivery(target["tracker_id"], {
                     "delivery_type": "message",
                     "target_agent_id": target["agent_id"],
                     "sender_name": body.get("sender_agent_name", "unknown"),
                     "sender_agent_id": body.get("sender_agent_id"),
-                    "sender_tracker": (store.get_tracker(body.get("sender_tracker_id")) or {}).get("hostname", body.get("sender_tracker_id")),
+                    "sender_tracker": sender_tracker.get("hostname", body.get("sender_tracker_id")),
                     "message": body.get("message"),
                     "attachments": body.get("attachments"),
-                    "sender_agent_id": body.get("sender_agent_id"),
                     "sender_tracker_id": body.get("sender_tracker_id"),
+                    "sender_hostname": body.get("sender_hostname") or sender_tracker.get("hostname"),
+                    "sender_model_type": body.get("sender_model_type"),
+                    "sender_agent_type": body.get("sender_agent_type"),
+                    "sender_agent_cmd": body.get("sender_agent_cmd"),
+                    "kind": body.get("kind"),
                     "message_id": body.get("message_id"),
                     "sent_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
                 })

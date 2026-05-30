@@ -57,3 +57,26 @@ func TestOutgoingAndIncomingUseDifferentBorderColors(t *testing.T) {
 		t.Fatalf("incoming and outgoing colors should differ: %s", incoming)
 	}
 }
+
+func TestMessageHeaderUsesSenderMetadataWhenPresent(t *testing.T) {
+	m := model{messages: []tracker.Message{{
+		Sender:          "alice",
+		SenderHostname:  "workstation-long",
+		SenderModelType: "pi",
+		Body:            "hello",
+	}}}
+	view := strings.Join(m.messageLinesForWidth(90), "\n")
+	for _, want := range []string{"Pi alice @ works", "hello"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("message view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestLegacyMessageHeaderStillRendersSender(t *testing.T) {
+	m := model{messages: []tracker.Message{{Sender: "legacy-agent", Body: "hello"}}}
+	view := strings.Join(m.messageLinesForWidth(90), "\n")
+	if !strings.Contains(view, "legacy-agent") || strings.Contains(view, "??") {
+		t.Fatalf("legacy message header changed unexpectedly:\n%s", view)
+	}
+}

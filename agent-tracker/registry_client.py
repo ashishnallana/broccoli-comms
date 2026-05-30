@@ -83,8 +83,8 @@ class RegistryClient:
     def push_agent_update(self, agent_id, status):
         return self.request("POST", f"/trackers/{self.tracker_id}/agent-update", {"agent_id": agent_id, "status": status})[0]
 
-    def send_remote_message(self, sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None):
-        return self.request("POST", "/messages", _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id))
+    def send_remote_message(self, sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None, sender_metadata=None):
+        return self.request("POST", "/messages", _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id, sender_metadata))
 
     def send_remote_pane_input(self, payload):
         return self.request("POST", "/pane-inputs", payload)
@@ -221,8 +221,9 @@ def push_agent_update(agent_id, status):
         threading.Thread(target=lambda c=client: c.push_agent_update(agent_id, status), daemon=True).start()
 
 
-def _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None):
+def _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None, sender_metadata=None):
     payload = {
+        **(sender_metadata or {}),
         "sender_agent_id": sender_agent_id,
         "sender_agent_name": sender_name,
         "sender_tracker_id": sender_tracker_id,
@@ -307,24 +308,24 @@ def _client_has_hostname(client, hostname):
     return any(agent.get("hostname") == hostname for agent in (body or {}).get("agents") or [])
 
 
-def send_remote_message(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None):
+def send_remote_message(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None, sender_metadata=None):
     clients = load_registry_clients()
     if clients:
         if len(clients) == 1:
-            return clients[0].send_remote_message(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id)
+            return clients[0].send_remote_message(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id, sender_metadata)
         matches = [client for client in clients if _client_has_hostname(client, target_hostname)]
         if len(matches) > 1:
             choices = ", ".join(f"{client.name}:{target_hostname}/{target_name_or_id}" for client in matches)
             return 409, {"message": f"Ambiguous remote target; use one of: {choices}"}
         client = matches[0] if matches else clients[0]
-        return client.send_remote_message(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id)
+        return client.send_remote_message(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id, sender_metadata)
     return 404, {"message": "registry not configured"}
 
 
-def send_remote_message_to_registry(registry_name, sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None):
+def send_remote_message_to_registry(registry_name, sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message=None, attachments=None, message_id=None, sender_metadata=None):
     for client in load_registry_clients():
         if client.name == registry_name:
-            return client.request("POST", "/messages", _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id))
+            return client.request("POST", "/messages", _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id, sender_metadata))
     return 404, {"message": f"registry not configured: {registry_name}"}
 
 
@@ -877,6 +878,11 @@ def _delivery_loop(client=None):
                         "message_id": delivery.get("message_id"),
                         "sender_agent_id": delivery.get("sender_agent_id"),
                         "sender_tracker_id": delivery.get("sender_tracker_id"),
+                        "sender_hostname": delivery.get("sender_hostname") or delivery.get("sender_tracker"),
+                        "sender_model_type": delivery.get("sender_model_type"),
+                        "sender_agent_type": delivery.get("sender_agent_type"),
+                        "sender_agent_cmd": delivery.get("sender_agent_cmd"),
+                        "kind": delivery.get("kind"),
                     },
                 )
                 ack_status = _ack(client, delivery["message_id"])

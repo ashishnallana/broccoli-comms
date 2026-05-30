@@ -17,7 +17,7 @@ class TestRegistryClientRouting(unittest.TestCase):
              mock.patch.object(client, "send_remote_message", fake_send):
             status, body = registry_client.send_remote_message("sender", "s1", "t1", "host1", "agent1", "hello")
         self.assertEqual((status, body), (202, {"sent_by": "r1"}))
-        self.assertEqual(sent, [("sender", "s1", "t1", "host1", "agent1", "hello", None, None)])
+        self.assertEqual(sent, [("sender", "s1", "t1", "host1", "agent1", "hello", None, None, None)])
 
     def test_unqualified_send_routes_to_single_matching_registry(self):
         clients = [

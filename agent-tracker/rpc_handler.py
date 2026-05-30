@@ -791,6 +791,17 @@ def handle_send_input(params: dict, caller_pid: int = None) -> dict:
         raise RuntimeError(f"Failed to send direct pane input: {e}")
 
 
+def _sender_metadata(sender_name: str, sender_info: dict, sender_id: str | None) -> dict:
+    return {
+        "sender_agent_id": sender_id,
+        "sender_hostname": registry_client.HOSTNAME,
+        "sender_model_type": state.normalize_model_type(sender_info.get("model_type"), sender_info.get("agent_type"), sender_info.get("agent_cmd")),
+        "sender_agent_type": sender_info.get("agent_type"),
+        "sender_agent_cmd": sender_info.get("agent_cmd"),
+        "kind": "text",
+    }
+
+
 def handle_send_message(params: dict, caller_pid: int = None) -> bool:
     """Sends a message locally or routes it remotely via the registry when target_address is hostname-qualified."""
     sender_name = params.get("sender_name") or _identify_agent(params, caller_pid) or "cli-user"
@@ -799,6 +810,7 @@ def handle_send_message(params: dict, caller_pid: int = None) -> bool:
     target_address = params.get("target_address")
     sender_info = state.get_agent(params.get("sender_id") or sender_name) or {}
     sender_id = sender_info.get("agent_id") or params.get("sender_id")
+    sender_metadata = _sender_metadata(sender_name, sender_info, sender_id)
 
     if target_address and "/" in target_address:
         registry_name = None
@@ -810,7 +822,7 @@ def handle_send_message(params: dict, caller_pid: int = None) -> bool:
         if hostname not in {"local", LOCAL_HOSTNAME}:
             if registry_name:
                 status, body = registry_client.send_remote_message_to_registry(
-                    registry_name, sender_name, sender_id, registry_client.TRACKER_ID, hostname, target, msg, attachments, params.get("message_id")
+                    registry_name, sender_name, sender_id, registry_client.TRACKER_ID, hostname, target, msg, attachments, params.get("message_id"), sender_metadata
                 )
             else:
                 status, body = registry_client.send_remote_message(
@@ -822,6 +834,7 @@ def handle_send_message(params: dict, caller_pid: int = None) -> bool:
                     msg,
                     attachments,
                     params.get("message_id"),
+                    sender_metadata,
                 )
             if status == 202:
                 return True
@@ -845,7 +858,7 @@ def handle_send_message(params: dict, caller_pid: int = None) -> bool:
         "attachments": attachments,
         "read": False,
         "message_id": params.get("message_id"),
-        "sender_agent_id": sender_id,
+        **sender_metadata,
         "sender_tracker_id": registry_client.TRACKER_ID,
     }
     logging.info("local delivery payload target=%s sender=%s message_id=%s sender_agent_id=%s sender_tracker_id=%s", agent_name, sender_name, payload.get("message_id"), payload.get("sender_agent_id"), payload.get("sender_tracker_id"))
