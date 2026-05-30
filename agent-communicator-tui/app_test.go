@@ -17,6 +17,9 @@ type fakeLocal struct {
 	agents       map[string]tracker.Agent
 	inbox        []tracker.Message
 	lastLimit    int
+	lastSenderID string
+	lastTracker  string
+	lastSender   string
 	sentTo       string
 	sentBody     string
 	sentSender   string
@@ -28,6 +31,7 @@ type fakeLocal struct {
 	directTarget string
 	directErr    error
 	events       tracker.WaitEventsResult
+	unreadCounts map[string]int
 	ensureName   string
 	ensureErr    error
 }
@@ -40,6 +44,20 @@ func (f *fakeLocal) List(context.Context) (map[string]tracker.Agent, error) { re
 func (f *fakeLocal) ReadInbox(_ context.Context, _ string, limit int, _ bool) (tracker.ReadInboxResult, error) {
 	f.lastLimit = limit
 	return tracker.ReadInboxResult{Mode: "history", Messages: f.inbox}, nil
+}
+func (f *fakeLocal) ReadInboxForSender(_ context.Context, _ string, limit int, _ bool, senderAgentID, senderTrackerID, senderName string) (tracker.ReadInboxResult, error) {
+	f.lastLimit = limit
+	f.lastSenderID = senderAgentID
+	f.lastTracker = senderTrackerID
+	f.lastSender = senderName
+	return tracker.ReadInboxResult{Mode: "history", Messages: f.inbox}, nil
+}
+func (f *fakeLocal) GetUnreadCounts(context.Context, string) (tracker.UnreadCountsResult, error) {
+	total := 0
+	for _, count := range f.unreadCounts {
+		total += count
+	}
+	return tracker.UnreadCountsResult{Counts: f.unreadCounts, Total: total}, nil
 }
 func (f *fakeLocal) SendMessage(_ context.Context, target, body string, _ []tracker.Attachment) error {
 	f.sentTo, f.sentBody = target, body
@@ -550,6 +568,35 @@ func TestLoadInboxUsesOwnInboxAndFiltersBySelectedAgent(t *testing.T) {
 	}
 	if local.lastLimit != simpleInboxFetchLimit {
 		t.Fatalf("ReadInbox limit = %d, want %d", local.lastLimit, simpleInboxFetchLimit)
+	}
+	if local.lastSender != "alpha" {
+		t.Fatalf("ReadInbox sender filter = %q, want alpha", local.lastSender)
+	}
+}
+
+func TestLoadInboxUsesStableRemoteSenderFilters(t *testing.T) {
+	local := &fakeLocal{inbox: []tracker.Message{{Sender: "alpha", SenderAgentID: "agent-1", SenderTrackerID: "tracker-1", Body: "from remote"}}}
+	row := agentRow{Name: "host/alpha", Scope: "remote", AgentID: "agent-1", TrackerID: "tracker-1", Hostname: "host", AgentName: "alpha", TargetAddress: "host/alpha"}
+	msg := loadInbox(local, "agent-communicator", row)()
+	loaded := msg.(inboxLoaded)
+	if len(loaded.Messages) != 1 {
+		t.Fatalf("loaded messages = %+v", loaded.Messages)
+	}
+	if local.lastSenderID != "agent-1" || local.lastTracker != "tracker-1" || local.lastSender != "" {
+		t.Fatalf("sender filters id=%q tracker=%q name=%q", local.lastSenderID, local.lastTracker, local.lastSender)
+	}
+}
+
+func TestLoadInboxAvoidsExactSenderFilterForLegacyRemoteRows(t *testing.T) {
+	local := &fakeLocal{inbox: []tracker.Message{{Sender: "alpha (via host.example)", Body: "legacy remote"}}}
+	row := agentRow{Name: "host/alpha", Scope: "remote", Hostname: "host.example", AgentName: "alpha", TargetAddress: "host.example/alpha"}
+	msg := loadInbox(local, "agent-communicator", row)()
+	loaded := msg.(inboxLoaded)
+	if len(loaded.Messages) != 1 {
+		t.Fatalf("loaded messages = %+v", loaded.Messages)
+	}
+	if local.lastSenderID != "" || local.lastTracker != "" || local.lastSender != "" {
+		t.Fatalf("legacy remote filters id=%q tracker=%q name=%q", local.lastSenderID, local.lastTracker, local.lastSender)
 	}
 }
 

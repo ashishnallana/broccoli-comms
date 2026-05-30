@@ -19,6 +19,8 @@ type localClient interface {
 	EnsureMailbox(context.Context, string) (tracker.EnsureMailboxResult, error)
 	List(context.Context) (map[string]tracker.Agent, error)
 	ReadInbox(context.Context, string, int, bool) (tracker.ReadInboxResult, error)
+	ReadInboxForSender(context.Context, string, int, bool, string, string, string) (tracker.ReadInboxResult, error)
+	GetUnreadCounts(context.Context, string) (tracker.UnreadCountsResult, error)
 	SendMessage(context.Context, string, string, []tracker.Attachment) error
 	SendMessageFrom(context.Context, string, string, string, []tracker.Attachment) error
 	SendText(context.Context, string, string, bool) error
@@ -46,6 +48,10 @@ type inboxLoaded struct {
 type allInboxLoaded struct {
 	Messages []tracker.Message
 	Err      error
+}
+type unreadCountsLoaded struct {
+	Counts map[string]int
+	Err    error
 }
 type messageSent struct {
 	Body   string
@@ -148,7 +154,8 @@ func loadInbox(local localClient, inboxOwner string, row agentRow) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		inbox, err := local.ReadInbox(ctx, owner, simpleInboxFetchLimit, false)
+		senderAgentID, senderTrackerID, senderName := rowInboxFilters(row)
+		inbox, err := local.ReadInboxForSender(ctx, owner, simpleInboxFetchLimit, false, senderAgentID, senderTrackerID, senderName)
 		return inboxLoaded{Messages: filterConversation(inbox.Messages, row), Err: err}
 	}
 }
@@ -163,6 +170,32 @@ func loadAllInbox(local localClient, inboxOwner string) tea.Cmd {
 		inbox, err := local.ReadInbox(ctx, inboxOwner, advancedInboxFetchLimit, false)
 		return allInboxLoaded{Messages: inbox.Messages, Err: err}
 	}
+}
+
+func loadUnreadCounts(local localClient, inboxOwner string) tea.Cmd {
+	return func() tea.Msg {
+		if local == nil || strings.TrimSpace(inboxOwner) == "" {
+			return unreadCountsLoaded{}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result, err := local.GetUnreadCounts(ctx, inboxOwner)
+		return unreadCountsLoaded{Counts: result.Counts, Err: err}
+	}
+}
+
+func rowInboxFilters(row agentRow) (senderAgentID, senderTrackerID, senderName string) {
+	if row.AgentID != "" {
+		senderAgentID = row.AgentID
+		if row.Scope == "remote" {
+			senderTrackerID = row.TrackerID
+		}
+		return senderAgentID, senderTrackerID, ""
+	}
+	if row.Scope == "remote" {
+		return "", "", ""
+	}
+	return "", "", fallback(row.AgentName, row.Name)
 }
 
 func filterConversation(messages []tracker.Message, row agentRow) []tracker.Message {

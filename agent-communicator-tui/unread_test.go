@@ -14,8 +14,8 @@ func TestIncomingEventHighlightsAgentListRow(t *testing.T) {
 	if !m.hasUnread(m.rows[0]) {
 		t.Fatal("incoming event did not mark row unread")
 	}
-	if view := m.agentList(40, 10); !strings.Contains(view, "●") {
-		t.Fatalf("agent list missing unread badge:\n%s", view)
+	if view := m.agentList(40, 10); !strings.Contains(view, "1") {
+		t.Fatalf("agent list missing unread count badge:\n%s", view)
 	}
 }
 
@@ -46,5 +46,33 @@ func TestRemoteIncomingEventHighlightsMatchingHostRow(t *testing.T) {
 	m.markUnreadFromEvents(tracker.WaitEventsResult{Events: []tracker.Event{{TargetAgentName: "coding-agent", Sender: "alice (via dawnstar)"}}})
 	if !m.hasUnread(row) {
 		t.Fatal("remote incoming event did not mark row unread")
+	}
+}
+
+func TestUnreadCountsUseStableLocalAndRemoteKeys(t *testing.T) {
+	local := agentRow{Name: "alice", Scope: "local", AgentID: "same-id"}
+	remote := agentRow{Name: "host/alice", Scope: "remote", AgentID: "same-id", TrackerID: "remote-tracker", Hostname: "host", AgentName: "alice", TargetAddress: "host/alice"}
+	m := model{unreadCounts: map[string]int{
+		conversationKey(local):  2,
+		conversationKey(remote): 3,
+	}}
+	if got := m.unreadCount(local); got != 2 {
+		t.Fatalf("local unread count = %d, want 2", got)
+	}
+	if got := m.unreadCount(remote); got != 3 {
+		t.Fatalf("remote unread count = %d, want 3", got)
+	}
+}
+
+func TestNextUnreadSelectsNextCountBadgeWithoutChangingCtrlN(t *testing.T) {
+	rows := []agentRow{{Name: "alpha", Scope: "local", AgentID: "a"}, {Name: "beta", Scope: "local", AgentID: "b"}, {Name: "gamma", Scope: "local", AgentID: "c"}}
+	m := model{rows: rows, selected: 0, unreadCounts: map[string]int{conversationKey(rows[2]): 1}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if got := updated.(model).selected; got != 2 {
+		t.Fatalf("n selected row %d, want 2", got)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	if got := updated.(model).selected; got != 1 {
+		t.Fatalf("ctrl-n selected row %d, want 1", got)
 	}
 }

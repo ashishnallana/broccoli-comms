@@ -241,8 +241,8 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	inner := max(4, cardWidth-4)
 	view := m.agentView(row)
 	unread := ""
-	if view.Unread {
-		unread = " " + unreadDotStyle.Render("●")
+	if view.UnreadCount > 0 {
+		unread = " " + unreadCountBadge(view.UnreadCount)
 	}
 	prefix := statusDot(view.Status) + " " + badgeStyle.Render(view.ModelBadge) + " "
 	nameBudget := max(1, inner-lipgloss.Width(prefix)-lipgloss.Width(unread))

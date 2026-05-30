@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -17,7 +18,7 @@ var modeTabStyle = lipgloss.NewStyle().Foreground(palette.Subtext0)
 var activeModeTabStyle = lipgloss.NewStyle().Foreground(palette.Base).Background(palette.Green).Bold(true).Padding(0, 1)
 var statusBarStyle = lipgloss.NewStyle().Foreground(palette.Teal)
 var errorBarStyle = lipgloss.NewStyle().Foreground(palette.Red).Bold(true)
-var unreadDotStyle = lipgloss.NewStyle().Foreground(palette.Yellow)
+var unreadCountStyle = lipgloss.NewStyle().Foreground(palette.Base).Background(palette.Yellow).Bold(true).Padding(0, 1)
 
 func statusDot(status string) string {
 	return statusDotStyle(status).Render("●")
@@ -41,6 +42,13 @@ func senderColorKey(sender string) string {
 		return strings.TrimSpace(strings.SplitN(sender, "→", 2)[0])
 	}
 	return strings.TrimSpace(sender)
+}
+
+func unreadCountBadge(count int) string {
+	if count > 99 {
+		return unreadCountStyle.Render("99+")
+	}
+	return unreadCountStyle.Render(fmt.Sprintf("%d", count))
 }
 
 func agentStyle(name string, bold bool) lipgloss.Style {

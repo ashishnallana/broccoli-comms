@@ -40,6 +40,7 @@ type model struct {
 	savedSelected           int
 	sentMessages            map[string][]tracker.Message
 	unreadRows              map[string]bool
+	unreadCounts            map[string]int
 	hiddenAgents            map[string]bool
 	agentSection            agentSection
 	autoHiddenApplied       bool
@@ -117,6 +118,7 @@ func newModel(local localClient, ownName string) model {
 		runtime:           runtimeInfoFromEnv(),
 		sentMessages:      map[string][]tracker.Message{},
 		unreadRows:        map[string]bool{},
+		unreadCounts:      map[string]int{},
 		hiddenAgents:      map[string]bool{},
 		showingConfigMenu: false,
 	}
@@ -133,6 +135,7 @@ func initialLoadCmds(m model) tea.Cmd {
 		loadHiddenAgentsCmd(),
 		loadPromptsCmd(),
 		loadConfigItemsCmd(m.local),
+		loadUnreadCounts(m.local, m.ownName),
 		tickRefresh(),
 		waitEvents(m.local, 0),
 	)
@@ -339,6 +342,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(msg.Runes) == 1 && msg.Runes[0] == 'r' && len(m.composer) == 0 && m.err != nil && m.retryOperation != "" {
 				return m, m.retryCurrentOperation()
 			}
+			if len(msg.Runes) == 1 && msg.Runes[0] == 'n' && len(m.composer) == 0 && m.mode != savedView && m.selectNextUnread() {
+				m.scrollSelectedAgentIntoView()
+				m.selectLatestMessage()
+				return m, m.reloadMessages()
+			}
 			m.messageFocused = false
 			m.composer = append(m.composer, msg.Runes...)
 			m.messageOffset = 0
@@ -379,7 +387,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case refreshTick:
 		m.agentListLoading = true
-		return m, tea.Batch(loadAgents(m.local), loadOutboxCmd(), tickRefresh(), tickAgentListSpinner())
+		return m, tea.Batch(loadAgents(m.local), loadOutboxCmd(), loadUnreadCounts(m.local, m.ownName), tickRefresh(), tickAgentListSpinner())
 	case agentListSpinnerTick:
 		if m.agentListLoading {
 			m.agentListFrame++
@@ -427,6 +435,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.retryOperation = ""
 			m.messages = m.mergeSentMessages(m.currentRow(), msg.Messages)
 			m.selectLatestMessage()
+			return m, loadUnreadCounts(m.local, m.ownName)
 		}
 	case allInboxLoaded:
 		if msg.Err != nil {
@@ -437,6 +446,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.retryOperation = ""
 			m.allMessages = m.mergeAllMessages(msg.Messages)
 			m.selectLatestMessage()
+			return m, loadUnreadCounts(m.local, m.ownName)
 		}
 	case messageSent:
 		m.err = msg.Err
@@ -461,13 +471,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.eventSeq = msg.Result.LastSeq
 			m.markUnreadFromEvents(msg.Result)
 			m.applyStatusEvents(msg.Result)
-			cmds := []tea.Cmd{waitEvents(m.local, m.eventSeq)}
+			cmds := []tea.Cmd{waitEvents(m.local, m.eventSeq), loadUnreadCounts(m.local, m.ownName)}
 			if len(m.rows) > 0 && shouldReloadForEvents(m.ownName, m.rows[m.selected], msg.Result) {
 				cmds = append(cmds, m.reloadMessages())
 			}
 			return m, tea.Batch(cmds...)
 		}
 		return m, retryWaitEvents()
+	case unreadCountsLoaded:
+		if msg.Err != nil {
+			m.err = msg.Err
+		} else {
+			m.unreadCounts = msg.Counts
+			if m.unreadCounts == nil {
+				m.unreadCounts = map[string]int{}
+			}
+		}
 	case promptsLoaded:
 		m.err = msg.Err
 		if msg.Err == nil {

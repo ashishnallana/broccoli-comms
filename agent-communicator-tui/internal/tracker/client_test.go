@@ -97,6 +97,40 @@ func TestReadInbox(t *testing.T) {
 	}
 }
 
+func TestReadInboxForSenderAddsStableFilters(t *testing.T) {
+	client := fakeClient(t, func(req rpcRequest) any {
+		if req.Method != "get_inbox" {
+			t.Fatalf("method = %s, want get_inbox", req.Method)
+		}
+		params := req.Params.(map[string]any)
+		if params["sender_agent_id"] != "a1" || params["sender_tracker_id"] != "t1" || params["sender_name"] != "alice" {
+			t.Fatalf("params = %+v", params)
+		}
+		return ReadInboxResult{Mode: "last_n", Messages: []Message{{Sender: "alice", Body: "hi"}}}
+	})
+	inbox, err := client.ReadInboxForSender(context.Background(), "agent-communicator", 5, false, "a1", "t1", "alice")
+	if err != nil || len(inbox.Messages) != 1 {
+		t.Fatalf("ReadInboxForSender = %+v, %v", inbox, err)
+	}
+}
+
+func TestGetUnreadCounts(t *testing.T) {
+	client := fakeClient(t, func(req rpcRequest) any {
+		if req.Method != "get_unread_counts" {
+			t.Fatalf("method = %s, want get_unread_counts", req.Method)
+		}
+		params := req.Params.(map[string]any)
+		if params["agent_name"] != "agent-communicator" {
+			t.Fatalf("agent_name = %v", params["agent_name"])
+		}
+		return UnreadCountsResult{Counts: map[string]int{"local:a1": 2}, Total: 2}
+	})
+	counts, err := client.GetUnreadCounts(context.Background(), "agent-communicator")
+	if err != nil || counts.Counts["local:a1"] != 2 || counts.Total != 2 {
+		t.Fatalf("GetUnreadCounts = %+v, %v", counts, err)
+	}
+}
+
 func TestSendMessageUsesAgentNameForPlainLocalTarget(t *testing.T) {
 	client := fakeClient(t, func(req rpcRequest) any {
 		if req.Method != "send_message" {

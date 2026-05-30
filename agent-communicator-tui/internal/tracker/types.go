@@ -73,6 +73,11 @@ type ReadInboxResult struct {
 	Messages []Message `json:"messages"`
 }
 
+type UnreadCountsResult struct {
+	Counts map[string]int `json:"counts"`
+	Total  int            `json:"total"`
+}
+
 type SendResult struct {
 	Success bool   `json:"success,omitempty"`
 	Warning string `json:"warning,omitempty"`

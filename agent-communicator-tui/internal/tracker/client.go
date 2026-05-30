@@ -182,12 +182,34 @@ func (c *Client) WaitEvents(ctx context.Context, opts WaitOptions) (WaitEventsRe
 }
 
 func (c *Client) ReadInbox(ctx context.Context, agentName string, last int, clear bool) (ReadInboxResult, error) {
+	return c.ReadInboxForSender(ctx, agentName, last, clear, "", "", "")
+}
+
+func (c *Client) ReadInboxForSender(ctx context.Context, agentName string, last int, clear bool, senderAgentID, senderTrackerID, senderName string) (ReadInboxResult, error) {
 	params := map[string]any{"agent_name": agentName, "clear": clear}
 	if last > 0 {
 		params["last_n"] = last
 	}
+	if senderAgentID != "" {
+		params["sender_agent_id"] = senderAgentID
+	}
+	if senderTrackerID != "" {
+		params["sender_tracker_id"] = senderTrackerID
+	}
+	if senderName != "" {
+		params["sender_name"] = senderName
+	}
 	var result ReadInboxResult
 	err := c.call(ctx, "get_inbox", params, 5*time.Second, &result)
+	return result, err
+}
+
+func (c *Client) GetUnreadCounts(ctx context.Context, agentName string) (UnreadCountsResult, error) {
+	var result UnreadCountsResult
+	err := c.call(ctx, "get_unread_counts", map[string]any{"agent_name": agentName}, 5*time.Second, &result)
+	if result.Counts == nil {
+		result.Counts = map[string]int{}
+	}
 	return result, err
 }
 

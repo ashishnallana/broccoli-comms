@@ -18,6 +18,7 @@ type AgentView struct {
 	CWD          string
 	Hidden       bool
 	Unread       bool
+	UnreadCount  int
 }
 
 type MachineGroup struct {
@@ -39,7 +40,7 @@ type UIError struct {
 	Retryable bool
 }
 
-func newAgentView(row agentRow, hidden, unread bool) AgentView {
+func newAgentView(row agentRow, hidden bool, unreadCount int) AgentView {
 	machine := rowMachineLabel(row)
 	scope := strings.Title(fallback(row.Scope, "local"))
 	group := scope
@@ -57,16 +58,20 @@ func newAgentView(row agentRow, hidden, unread bool) AgentView {
 		GroupHeader:  group,
 		CWD:          compactCWD(row.CWD),
 		Hidden:       hidden,
-		Unread:       unread,
+		Unread:       unreadCount > 0,
+		UnreadCount:  unreadCount,
 	}
 }
 
-func deriveAgentViews(rows []agentRow, hiddenFn func(agentRow) bool, unreadFn func(agentRow) bool) []AgentView {
+func deriveAgentViews(rows []agentRow, hiddenFn func(agentRow) bool, unreadCountFn func(agentRow) int) []AgentView {
 	views := make([]AgentView, 0, len(rows))
 	for _, row := range rows {
 		hidden := hiddenFn != nil && hiddenFn(row)
-		unread := unreadFn != nil && unreadFn(row)
-		views = append(views, newAgentView(row, hidden, unread))
+		unreadCount := 0
+		if unreadCountFn != nil {
+			unreadCount = unreadCountFn(row)
+		}
+		views = append(views, newAgentView(row, hidden, unreadCount))
 	}
 	return views
 }
@@ -96,11 +101,11 @@ func hiddenAgentCount(rows []agentRow, hiddenFn func(agentRow) bool) int {
 }
 
 func (m model) agentView(row agentRow) AgentView {
-	return newAgentView(row, m.isHiddenAgent(row), m.hasUnread(row))
+	return newAgentView(row, m.isHiddenAgent(row), m.unreadCount(row))
 }
 
 func (m model) agentViews() []AgentView {
-	return deriveAgentViews(m.rows, m.isHiddenAgent, m.hasUnread)
+	return deriveAgentViews(m.rows, m.isHiddenAgent, m.unreadCount)
 }
 
 func (m model) hiddenCount() int {

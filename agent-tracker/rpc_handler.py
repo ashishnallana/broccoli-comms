@@ -875,6 +875,7 @@ def _read_and_update_inbox_file(
     mark_read: bool = True,
     sender_name: str | None = None,
     sender_agent_id: str | None = None,
+    sender_tracker_id: str | None = None,
 ) -> dict:
     """Reads inbox history and optionally marks returned messages read under a file lock."""
     if not os.path.exists(inbox_file):
@@ -893,6 +894,8 @@ def _read_and_update_inbox_file(
 
             def matches_filters(msg):
                 if sender_agent_id and msg.get("sender_agent_id") != sender_agent_id:
+                    return False
+                if sender_tracker_id and msg.get("sender_tracker_id") != sender_tracker_id:
                     return False
                 if sender_name and msg.get("sender") != sender_name:
                     return False
@@ -985,12 +988,74 @@ def _identify_agent(params: dict, caller_pid: int = None) -> str:
     return None
 
 
+def _unread_count_key(msg: dict) -> str | None:
+    sender_agent_id = msg.get("sender_agent_id")
+    sender_tracker_id = msg.get("sender_tracker_id")
+    if sender_agent_id:
+        if sender_tracker_id and sender_tracker_id != registry_client.TRACKER_ID:
+            return f"remote:{sender_tracker_id}:{sender_agent_id}"
+        return f"local:{sender_agent_id}"
+    sender = str(msg.get("sender") or "").strip()
+    if sender:
+        return f"sender:{sender}"
+    return None
+
+
+def handle_get_unread_counts(params: dict, caller_pid: int = None) -> dict:
+    """Counts unread messages in an agent inbox by stable sender conversation keys."""
+    agent_name = _identify_agent(params, caller_pid)
+    if not agent_name:
+        raise RPCStructuredError("Agent not identified. Provide agent_name or run from an agent pane.", {
+            "error_code": "agent_not_identified",
+            "operation": "get_unread_counts",
+            "retryable": True,
+        })
+
+    info = state.get_agent(agent_name)
+    if not info:
+        raise RPCStructuredError(f"Agent '{agent_name}' not found", {
+            "error_code": "agent_not_found",
+            "agent": agent_name,
+            "hostname": registry_client.HOSTNAME,
+            "operation": "get_unread_counts",
+            "retryable": True,
+        }, code=-32004)
+
+    uuid_str = info.get("uuid") or agent_name
+    inbox_file = os.path.join(state.INBOX_DIR, f"{uuid_str}.inbox")
+    counts = {}
+    total = 0
+    if not os.path.exists(inbox_file):
+        return {"counts": counts, "total": total}
+    try:
+        with _locked_inbox(inbox_file):
+            with open(inbox_file, "r") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if msg.get("read", False):
+                        continue
+                    key = _unread_count_key(msg)
+                    if not key:
+                        continue
+                    counts[key] = counts.get(key, 0) + 1
+                    total += 1
+        return {"counts": counts, "total": total}
+    except IOError as e:
+        raise RuntimeError(f"Failed to access inbox file: {e}")
+
+
 def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
     """Handles get_inbox RPC call by reading directly from the inbox file."""
     clear = params.get("clear", False)
     mark_read = params.get("mark_read", True)
     sender_name = params.get("sender_name")
     sender_agent_id = params.get("sender_agent_id")
+    sender_tracker_id = params.get("sender_tracker_id")
     last_n = params.get("last_n")
 
     if not isinstance(mark_read, bool):
@@ -999,6 +1064,8 @@ def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
         raise ValueError("sender_name must be a string")
     if sender_agent_id is not None and not isinstance(sender_agent_id, str):
         raise ValueError("sender_agent_id must be a string")
+    if sender_tracker_id is not None and not isinstance(sender_tracker_id, str):
+        raise ValueError("sender_tracker_id must be a string")
     
     if last_n is not None:
         try:
@@ -1036,6 +1103,7 @@ def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
         mark_read=mark_read,
         sender_name=sender_name,
         sender_agent_id=sender_agent_id,
+        sender_tracker_id=sender_tracker_id,
     )
 
 
@@ -1364,6 +1432,7 @@ dispatcher = {
     "send_message": handle_send_message,
     "send_input": handle_send_input,
     "get_inbox": handle_get_inbox,
+    "get_unread_counts": handle_get_unread_counts,
     "get_group_timeline": handle_get_group_timeline,
     "update_watchlist": handle_update_watchlist,
     "wait_events": handle_wait_events,

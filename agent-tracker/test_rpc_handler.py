@@ -799,6 +799,32 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    def test_get_unread_counts_counts_stable_sender_keys_without_marking_read(self):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
+            os.makedirs(state.INBOX_DIR, exist_ok=True)
+            with open(inbox_path, "w") as f:
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "sender_tracker_id": registry_client.TRACKER_ID, "message": "a", "read": False, "message_id": "m1"}) + "\n")
+                f.write(json.dumps({"sender": "remote-alpha", "sender_agent_id": "alpha-id", "sender_tracker_id": "remote-tracker", "message": "b", "read": False, "message_id": "m2"}) + "\n")
+                f.write(json.dumps({"sender": "legacy", "message": "c", "read": False, "message_id": "m3"}) + "\n")
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "read", "read": True, "message_id": "m4"}) + "\n")
+
+            result = rpc_handler.handle_get_unread_counts({"agent_name": "agent1"})
+            self.assertEqual(result["total"], 3)
+            self.assertEqual(result["counts"]["local:alpha-id"], 1)
+            self.assertEqual(result["counts"]["remote:remote-tracker:alpha-id"], 1)
+            self.assertEqual(result["counts"]["sender:legacy"], 1)
+
+            with open(inbox_path, "r") as f:
+                stored = [json.loads(line) for line in f if line.strip()]
+            self.assertFalse(stored[0]["read"])
+            self.assertFalse(stored[1]["read"])
+            self.assertFalse(stored[2]["read"])
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
     @mock.patch("state.publish_event")
     def test_get_inbox_sender_filter_marks_only_matching_messages(self, publish_event):
         inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
@@ -806,16 +832,18 @@ class TestRpcHandler(unittest.TestCase):
             state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1"})
             os.makedirs(state.INBOX_DIR, exist_ok=True)
             with open(inbox_path, "w") as f:
-                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "a", "read": False, "message_id": "m1"}) + "\n")
-                f.write(json.dumps({"sender": "beta", "sender_agent_id": "beta-id", "message": "b", "read": False, "message_id": "m2"}) + "\n")
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "sender_tracker_id": registry_client.TRACKER_ID, "message": "a", "read": False, "message_id": "m1"}) + "\n")
+                f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "sender_tracker_id": "remote-tracker", "message": "remote", "read": False, "message_id": "m2"}) + "\n")
+                f.write(json.dumps({"sender": "beta", "sender_agent_id": "beta-id", "message": "b", "read": False, "message_id": "m3"}) + "\n")
 
-            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "sender_agent_id": "alpha-id"})
+            result = rpc_handler.handle_get_inbox({"agent_name": "agent1", "sender_agent_id": "alpha-id", "sender_tracker_id": registry_client.TRACKER_ID})
             self.assertEqual([m["message_id"] for m in result["messages"]], ["m1"])
 
             with open(inbox_path, "r") as f:
                 stored = [json.loads(line) for line in f if line.strip()]
             self.assertTrue(stored[0]["read"])
             self.assertFalse(stored[1]["read"])
+            self.assertFalse(stored[2]["read"])
             publish_event.assert_called_once()
         finally:
             if os.path.exists(inbox_path):
