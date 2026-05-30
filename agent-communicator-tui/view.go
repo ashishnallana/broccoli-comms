@@ -626,7 +626,8 @@ func (m model) composerModeControls(width int) string {
 	if buttons == "" {
 		return ""
 	}
-	return buttons + "\n" + m.composerModeDescription(width)
+	description := lipgloss.NewStyle().Height(3).PaddingTop(1).Render(m.composerModeDescription(width))
+	return lipgloss.JoinHorizontal(lipgloss.Top, buttons, " ", description)
 }
 
 func (m model) composerModeButtons(width int) string {
