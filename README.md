@@ -33,6 +33,14 @@ Default private paths:
 
 ### Nix machine
 
+Required on the host:
+
+- Nix with flakes enabled
+- `git` if you want to clone a checkout locally
+- the agent commands you want to run on `PATH`, for example `pi`, `claude`, or `codex`
+
+The Nix package supplies Broccoli Comms' own runtime tools, including Python, tmux, the Go-built TUI, `agent-tracker`, `agent-wrapper`, and `agent-registry`.
+
 Run directly from a checkout:
 
 ```sh
@@ -59,18 +67,21 @@ broccoli-comms start
 broccoli-comms ui
 ```
 
-Nix packages include the runtime dependencies they launch, including `tmux`. The agent commands you want to run, such as `pi`, `claude`, or `codex`, must still be available on `PATH`.
-
 ### Non-Nix machine
 
 A non-Nix install builds the TUI from source and uses system dependencies.
 
-Prerequisites:
+Required on the host:
 
-- `python3`
-- `go`
-- `tmux`
-- agent commands on `PATH`, for example `pi`, `claude`, or `codex`
+- `git` to clone this repository
+- `make` to run the build/install targets
+- `go` to build `agent-communicator`
+- `python3` to run `broccoli-comms`, `agent-tracker`, and `agent-registry`
+- `tmux` for the private agent/UI session runtime
+- a POSIX shell; `bash` is needed for the smoke-test scripts
+- the agent commands you want to run on `PATH`, for example `pi`, `claude`, or `codex`
+
+No third-party Python packages are required for the core launcher/tracker/registry path; they use the Python standard library.
 
 Build and run:
 
@@ -83,7 +94,46 @@ make build
 ./bin/broccoli-comms ui
 ```
 
-Optional: put `./bin` on `PATH` or copy/symlink `bin/broccoli-comms` somewhere on `PATH`.
+Optional: put the checkout's `./bin` directory on `PATH`, or symlink `bin/broccoli-comms` into a directory on `PATH`. Prefer a symlink over copying so the launcher can still find the rest of the source checkout.
+
+## Build from source
+
+From a source checkout you can build either with Nix or with the repository `Makefile`.
+
+Nix build:
+
+```sh
+git clone https://github.com/tanmayv/broccoli-comms.git
+cd broccoli-comms
+nix build .#broccoli-comms
+./result/bin/broccoli-comms doctor
+```
+
+Non-Nix build:
+
+```sh
+git clone https://github.com/tanmayv/broccoli-comms.git
+cd broccoli-comms
+make build
+./bin/broccoli-comms doctor
+```
+
+The non-Nix build is source-checkout based: keep the checkout in place and run `./bin/broccoli-comms`, add the checkout's `bin/` directory to `PATH`, or symlink `bin/broccoli-comms` into a directory on `PATH`. Do not copy only the launcher by itself; it needs the repository's `agent-tracker/`, `agent-registry/`, and wrapper files.
+
+The non-Nix build creates these local executables:
+
+- `bin/broccoli-comms`
+- `bin/agent-communicator`
+- `bin/agent-wrapper`
+- `bin/agent-tracker`
+- `bin/agent-tracker-ctl`
+
+Useful source checks:
+
+```sh
+make check
+nix flake check
+```
 
 ## Common commands
 
