@@ -128,11 +128,13 @@ Use this when all agents you care about are running under the same Broccoli Comm
 
 A central `agent-registry` is required for multi-device communication. Each machine runs its own local `broccoli-comms`/`agent-tracker`, and all trackers publish to and poll the same registry for discovery and queued messages.
 
-Start Broccoli Comms with an existing registry URL:
+Configure an existing registry URL, then restart/start Broccoli Comms so the private tracker receives it:
 
 ```sh
-AGENT_REGISTRIES_JSON='[{"name":"home","url":"https://registry.example.com","token-file":"/home/user/.config/broccoli-comms/registry-token"}]' \
-  broccoli-comms start
+broccoli-comms registry add --name home --url https://registry.example.com --auth --token-file ~/.config/broccoli-comms/registry-token
+broccoli-comms registry list
+broccoli-comms registry env
+broccoli-comms start
 broccoli-comms ui
 broccoli-comms agent-tracker registry-status
 ```
@@ -140,9 +142,11 @@ broccoli-comms agent-tracker registry-status
 For an unauthenticated local/dev registry:
 
 ```sh
-AGENT_REGISTRIES_JSON='[{"name":"local","url":"http://127.0.0.1:8080"}]' \
-  broccoli-comms start
+broccoli-comms registry add --name local --url http://127.0.0.1:8080 --noauth
+broccoli-comms start
 ```
+
+Saved registry URLs live in `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` (default `~/.config/broccoli-comms/registries.json`). Token contents are not stored; use `token-file`. If `AGENT_REGISTRIES_JSON` is explicitly set in the environment, it overrides saved registry URLs for that invocation.
 
 ### 3. Run a standalone registry with Broccoli Comms
 
@@ -154,8 +158,8 @@ broccoli-comms registry start --host 0.0.0.0 --port 8080 --name home --auth --to
 broccoli-comms registry status
 
 # On each client machine:
-AGENT_REGISTRIES_JSON='[{"name":"home","url":"http://REGISTRY_HOST:8080","token-file":"/home/user/.config/broccoli-comms/registry-token"}]' \
-  broccoli-comms start
+broccoli-comms registry add --name home --url http://REGISTRY_HOST:8080 --auth --token-file ~/.config/broccoli-comms/registry-token
+broccoli-comms start
 broccoli-comms agent-tracker registry-status
 ```
 
@@ -262,7 +266,7 @@ broccoli-comms registry stop
 broccoli-comms registry start --host 0.0.0.0 --port 8080 --name home --auth --token-file ~/.config/broccoli-comms/registry-token
 ```
 
-Unauthenticated non-loopback binds are refused for safety. Starting a registry does not automatically point a tracker at it; start Broccoli Comms with `AGENT_REGISTRIES_JSON='[{"name":"local","url":"http://127.0.0.1:8080"}]'` (plus `token-file` when auth is enabled) when you want the private tracker to publish/consume that registry. Registry start does not enable remote direct pane input; the separate remote pane-input gates remain required.
+Unauthenticated non-loopback binds are refused for safety. Starting a registry does not automatically point a tracker at it; use `broccoli-comms registry add --name local --url http://127.0.0.1:8080 --noauth` (or `--auth --token-file ...`) when you want the private tracker to publish/consume that registry URL after restart. Use `registry list/remove/enable/disable/env` to manage saved URLs. Registry URL configuration does not enable remote direct pane input; the separate remote pane-input gates remain required.
 
 Runtime/frontend JSON contracts are documented in `docs/RUNTIME_API.md`:
 

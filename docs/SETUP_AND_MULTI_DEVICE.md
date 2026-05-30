@@ -135,7 +135,7 @@ openssl rand -base64 32 > ~/.config/broccoli-comms/registry-token
 broccoli-comms registry start --host 0.0.0.0 --port 8080 --name home --auth --token-file ~/.config/broccoli-comms/registry-token
 ```
 
-Managed registry process files are stored under Broccoli Comms runtime/cache/config paths (`agent-registry.pid`, `agent-registry.log`, `agent-registry/state.json`, and `registry.json`). Unauthenticated non-loopback binds are refused. Starting this process does not automatically configure a tracker to publish to it; use `AGENT_REGISTRIES_JSON` as described below or tracker/module registry settings. Remote direct pane input remains separately gated and is not enabled by `registry start`.
+Managed registry process files are stored under Broccoli Comms runtime/cache/config paths (`agent-registry.pid`, `agent-registry.log`, `agent-registry/state.json`, and `registry.json`). Unauthenticated non-loopback binds are refused. Starting this process does not automatically configure a tracker to publish to it; use `broccoli-comms registry add` as described below, explicit `AGENT_REGISTRIES_JSON`, or tracker/module registry settings. Remote direct pane input remains separately gated and is not enabled by `registry start`.
 
 ### NixOS module
 
@@ -212,6 +212,24 @@ curl -H "Authorization: Bearer $(cat token-file)" http://registry-host:8080/agen
 ## 7. Tracker/client machine setup
 
 Each machine that should publish local agents or receive cross-device messages needs `agent-tracker` registry integration.
+
+For Broccoli Comms' private tracker, save registry URLs with the CLI:
+
+```sh
+# Existing authenticated central registry.
+broccoli-comms registry add --name home --url https://registry.example.com --auth --token-file ~/.config/broccoli-comms/registry-token
+
+# Local/dev unauthenticated registry.
+broccoli-comms registry add --name local --url http://127.0.0.1:8080 --noauth
+
+broccoli-comms registry list
+broccoli-comms registry env --json
+broccoli-comms stop
+broccoli-comms start
+broccoli-comms agent-tracker registry-status
+```
+
+Saved registry URLs live in `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` (default `~/.config/broccoli-comms/registries.json`) using a versioned object schema. Token values are not stored; only `token-file` paths are saved. `broccoli-comms start` automatically supplies enabled saved entries as `AGENT_REGISTRIES_JSON` to the private tracker unless `AGENT_REGISTRIES_JSON` is already explicitly set. Use `broccoli-comms registry remove NAME`, `enable NAME`, or `disable NAME` to manage entries. Restart Broccoli Comms after changing registry URL config.
 
 Home Manager-style options from the tracker module:
 

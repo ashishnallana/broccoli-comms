@@ -279,6 +279,8 @@ Unread navigation: `n` jumps to the next unread conversation, while `Ctrl-N` / `
 
 The wrapper does not require `agent-tracker-ctl` to be installed globally or present on the user's shell `PATH`. Pane-sensitive commands such as `send-text`, `send-key`, `focus`, and `capture-pane` use the private tmux socket.
 
+`base_env()` also auto-loads enabled saved tracker registries from `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` into `AGENT_REGISTRIES_JSON` unless `AGENT_REGISTRIES_JSON` is already set by the caller or `BROCCOLI_COMMS_DISABLE_CONFIG_REGISTRIES=1` is set. Manage this file with `broccoli-comms registry add/list/remove/enable/disable/env`; token contents are not stored, only `token-file` paths.
+
 Examples:
 
 ```sh

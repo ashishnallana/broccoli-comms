@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 APP = "broccoli-comms"
@@ -68,6 +69,7 @@ def paths() -> dict[str, Path]:
         "registry_log": cache / "agent-registry.log",
         "registry_state": cache / "agent-registry" / "state.json",
         "registry_config": config / "registry.json",
+        "registries_json": config / "registries.json",
         "tmux_conf": config / "tmux.conf",
         "config_json": config / "config.json",
     }
@@ -94,6 +96,7 @@ def base_env() -> dict[str, str]:
         "XDG_CACHE_HOME": str(p["cache"]),
         "AGENT_TRACKER_HTTP_PORT": env.get("AGENT_TRACKER_HTTP_PORT", "19876"),
     })
+    apply_configured_registries(env)
     bin_dir = repo_root() / "bin"
     env["PATH"] = f"{bin_dir}:{repo_root() / 'wrapper'}:{env.get('PATH', '')}"
     return env
@@ -812,6 +815,217 @@ def doctor_payload() -> dict:
     }
 
 
+def _default_registries_config() -> dict:
+    return {"version": 1, "registries": []}
+
+
+def _normalize_registry_urls_config(data: object) -> dict:
+    if data is None:
+        return _default_registries_config()
+    if not isinstance(data, dict):
+        raise ValueError("registries config must be a JSON object")
+    version = data.get("version", 1)
+    if version != 1:
+        raise ValueError(f"unsupported registries config version: {version}")
+    registries = data.get("registries", [])
+    if not isinstance(registries, list):
+        raise ValueError("registries config field 'registries' must be a list")
+    normalized = []
+    for entry in registries:
+        if not isinstance(entry, dict):
+            raise ValueError("registry entries must be objects")
+        name = entry.get("name")
+        url = entry.get("url")
+        if not isinstance(name, str) or not AGENT_NAME_RE.match(name):
+            raise ValueError(f"invalid registry name in config: {name!r}")
+        if not isinstance(url, str):
+            raise ValueError(f"registry {name} has invalid url")
+        item = {"name": name, "url": _normalize_registry_url(url), "enabled": bool(entry.get("enabled", True))}
+        if "auth" in entry:
+            item["auth"] = bool(entry.get("auth"))
+        token_file = entry.get("token-file")
+        if token_file:
+            if not isinstance(token_file, str):
+                raise ValueError(f"registry {name} has invalid token-file")
+            item["token-file"] = str(Path(token_file).expanduser())
+        normalized.append(item)
+    return {"version": 1, "registries": normalized}
+
+
+def load_registry_urls_config() -> dict:
+    path = paths()["registries_json"]
+    if not path.exists():
+        return _default_registries_config()
+    try:
+        return _normalize_registry_urls_config(json.loads(path.read_text()))
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"failed to parse {path}: {e}")
+    except ValueError as e:
+        raise SystemExit(f"invalid {path}: {e}")
+
+
+def save_registry_urls_config(config: dict) -> None:
+    normalized = _normalize_registry_urls_config(config)
+    path = paths()["registries_json"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(normalized, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _normalize_registry_url(url: str) -> str:
+    if not isinstance(url, str):
+        raise ValueError("registry URL must be a string")
+    url = url.strip()
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("registry URL must start with http:// or https:// and include a host")
+    path = parsed.path.rstrip("/")
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+
+def _registry_entry_for_tracker(entry: dict) -> dict[str, str]:
+    result = {"name": entry["name"], "url": entry["url"]}
+    token_file = entry.get("token-file")
+    if token_file:
+        result["token-file"] = token_file
+    return result
+
+
+def configured_registries_for_tracker() -> list[dict[str, str]]:
+    config = load_registry_urls_config()
+    return [_registry_entry_for_tracker(entry) for entry in config.get("registries", []) if entry.get("enabled", True)]
+
+
+def apply_configured_registries(env: dict[str, str]) -> dict[str, str]:
+    if "AGENT_REGISTRIES_JSON" in env:
+        return env
+    if os.environ.get("BROCCOLI_COMMS_DISABLE_CONFIG_REGISTRIES", "").lower() in {"1", "true", "yes"}:
+        return env
+    registries = configured_registries_for_tracker()
+    if registries:
+        env["AGENT_REGISTRIES_JSON"] = json.dumps(registries, separators=(",", ":"))
+    return env
+
+
+def _redact_registry_entry(entry: dict) -> dict:
+    redacted = {k: v for k, v in entry.items() if k != "token"}
+    if "token" in entry:
+        redacted["token"] = "<redacted>"
+    return redacted
+
+
+def _redacted_registry_urls_config(config: dict) -> dict:
+    normalized = _normalize_registry_urls_config(config)
+    return {"version": 1, "registries": [_redact_registry_entry(entry) for entry in normalized.get("registries", [])]}
+
+
+def registry_add(args: argparse.Namespace) -> None:
+    if not AGENT_NAME_RE.match(args.name):
+        raise SystemExit("registry add: NAME may contain only letters, digits, underscore, dot, or dash")
+    if args.auth and not args.token_file:
+        raise SystemExit("registry add: --auth requires --token-file")
+    if args.noauth and args.token_file:
+        raise SystemExit("registry add: --noauth cannot be combined with --token-file")
+    url = _normalize_registry_url(args.url)
+    token_file = str(Path(args.token_file).expanduser()) if args.token_file else None
+    if token_file and not Path(token_file).exists():
+        raise SystemExit(f"registry add: token file does not exist: {token_file}")
+    config = load_registry_urls_config()
+    registries = config.get("registries", [])
+    existing = next((i for i, entry in enumerate(registries) if entry.get("name") == args.name), None)
+    if existing is not None and not args.replace:
+        raise SystemExit(f"registry add: registry {args.name!r} already exists; use --replace")
+    entry = {"name": args.name, "url": url, "enabled": True}
+    if args.noauth:
+        entry["auth"] = False
+    elif args.auth or token_file:
+        entry["auth"] = True
+    if token_file:
+        entry["token-file"] = token_file
+    if existing is None:
+        registries.append(entry)
+    else:
+        registries[existing] = entry
+    config["registries"] = registries
+    save_registry_urls_config(config)
+    print(f"registry {args.name} configured. Restart Broccoli Comms for changes to affect the running tracker.")
+
+
+def registry_list(args: argparse.Namespace) -> None:
+    config = load_registry_urls_config()
+    redacted = _redacted_registry_urls_config(config)
+    if args.json:
+        print(json.dumps(redacted, indent=2, sort_keys=True))
+        return
+    registries = redacted.get("registries", [])
+    if not registries:
+        print("no registries configured")
+        return
+    rows = [("NAME", "URL", "AUTH", "ENABLED")]
+    for entry in registries:
+        if entry.get("token-file"):
+            auth = "token-file"
+        elif entry.get("auth") is False:
+            auth = "noauth"
+        else:
+            auth = "none"
+        rows.append((entry["name"], entry["url"], auth, "yes" if entry.get("enabled", True) else "no"))
+    widths = [max(len(row[i]) for row in rows) for i in range(4)]
+    for row in rows:
+        print("  ".join(value.ljust(widths[i]) for i, value in enumerate(row)))
+
+
+def registry_remove(args: argparse.Namespace) -> None:
+    config = load_registry_urls_config()
+    registries = config.get("registries", [])
+    kept = [entry for entry in registries if entry.get("name") != args.name]
+    if len(kept) == len(registries) and not args.missing_ok:
+        raise SystemExit(f"registry remove: registry {args.name!r} not found")
+    config["registries"] = kept
+    save_registry_urls_config(config)
+    print(f"registry {args.name} removed. Restart Broccoli Comms for changes to affect the running tracker.")
+
+
+def _set_registry_enabled(args: argparse.Namespace, enabled: bool) -> None:
+    config = load_registry_urls_config()
+    for entry in config.get("registries", []):
+        if entry.get("name") == args.name:
+            entry["enabled"] = enabled
+            save_registry_urls_config(config)
+            state = "enabled" if enabled else "disabled"
+            print(f"registry {args.name} {state}. Restart Broccoli Comms for changes to affect the running tracker.")
+            return
+    raise SystemExit(f"registry {args.name!r} not found")
+
+
+def registry_enable(args: argparse.Namespace) -> None:
+    _set_registry_enabled(args, True)
+
+
+def registry_disable(args: argparse.Namespace) -> None:
+    _set_registry_enabled(args, False)
+
+
+def registry_env(args: argparse.Namespace) -> None:
+    registries = configured_registries_for_tracker()
+    value = json.dumps(registries, separators=(",", ":"))
+    if args.json:
+        print(json.dumps({"AGENT_REGISTRIES_JSON": value, "registries": registries}, indent=2, sort_keys=True))
+    else:
+        print(f"AGENT_REGISTRIES_JSON={shlex.quote(value)}")
+
+
 def _is_loopback_host(host: str) -> bool:
     return host in {"127.0.0.1", "localhost", "::1"}
 
@@ -1166,6 +1380,31 @@ def main() -> None:
     registry_trackers_parser = registry_sub.add_parser("trackers", help="GET /trackers")
     registry_trackers_parser.add_argument("--json", action="store_true", help="Emit raw JSON")
     registry_trackers_parser.set_defaults(func=registry_trackers)
+    registry_add_parser = registry_sub.add_parser("add", help="Configure a registry URL for the private tracker")
+    registry_add_parser.add_argument("--name", required=True, help="Registry name")
+    registry_add_parser.add_argument("--url", required=True, help="Registry URL")
+    add_auth_group = registry_add_parser.add_mutually_exclusive_group()
+    add_auth_group.add_argument("--auth", action="store_true", help="Require token-file auth for this URL")
+    add_auth_group.add_argument("--noauth", action="store_true", help="Save without auth token metadata")
+    registry_add_parser.add_argument("--token-file", help="Token file path; token contents are not stored")
+    registry_add_parser.add_argument("--replace", action="store_true", help="Replace existing registry with same name")
+    registry_add_parser.set_defaults(func=registry_add)
+    registry_list_parser = registry_sub.add_parser("list", help="List configured tracker registry URLs")
+    registry_list_parser.add_argument("--json", action="store_true", help="Emit JSON")
+    registry_list_parser.set_defaults(func=registry_list)
+    registry_remove_parser = registry_sub.add_parser("remove", help="Remove a configured tracker registry URL")
+    registry_remove_parser.add_argument("name")
+    registry_remove_parser.add_argument("--missing-ok", action="store_true", help="Do not fail if missing")
+    registry_remove_parser.set_defaults(func=registry_remove)
+    registry_enable_parser = registry_sub.add_parser("enable", help="Enable a configured tracker registry URL")
+    registry_enable_parser.add_argument("name")
+    registry_enable_parser.set_defaults(func=registry_enable)
+    registry_disable_parser = registry_sub.add_parser("disable", help="Disable a configured tracker registry URL")
+    registry_disable_parser.add_argument("name")
+    registry_disable_parser.set_defaults(func=registry_disable)
+    registry_env_parser = registry_sub.add_parser("env", help="Show AGENT_REGISTRIES_JSON generated from saved registry URLs")
+    registry_env_parser.add_argument("--json", action="store_true", help="Emit JSON")
+    registry_env_parser.set_defaults(func=registry_env)
 
     agent = sub.add_parser("agent", help="Manage configured agents")
     agent_sub = agent.add_subparsers(dest="agent_command", required=True)
