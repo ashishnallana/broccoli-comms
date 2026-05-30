@@ -14,7 +14,7 @@ export BROCCOLI_COMMS_CONFIG_DIR="$tmpdir/config"
 export AGENT_TRACKER_SOCKET="$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock"
 export XDG_CACHE_HOME="$BROCCOLI_COMMS_CACHE_DIR"
 export AGENT_TRACKER_HTTP_PORT="0"
-unset BROCCOLI_COMMS_TMUX_MODE AGENT_REGISTRIES_JSON AGENT_REGISTRY_TOKEN AGENT_TRACKER_DAEMON TMUX TMUX_PANE
+unset BROCCOLI_COMMS_TMUX_MODE BROCCOLI_COMMS_TMUX_SOCKET AGENT_TRACKER_TMUX_SOCKET AGENT_REGISTRIES_JSON AGENT_REGISTRY_TOKEN AGENT_TRACKER_DAEMON TMUX TMUX_PANE
 
 nix_cmd=(nix --extra-experimental-features "nix-command flakes")
 
@@ -51,6 +51,29 @@ except OSError:
     sys.exit(1)
 finally:
     sock.close()
+PY
+}
+
+tracker_rpc() {
+  python3 - "$1" "${2:-{}}" <<'PY'
+import json, os, socket, sys
+method = sys.argv[1]
+params = json.loads(sys.argv[2])
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(2)
+s.connect(os.environ["AGENT_TRACKER_SOCKET"])
+s.sendall(json.dumps({"jsonrpc":"2.0","method":method,"params":params,"id":1}).encode())
+s.shutdown(socket.SHUT_WR)
+chunks = []
+while True:
+    chunk = s.recv(4096)
+    if not chunk:
+        break
+    chunks.append(chunk)
+resp = json.loads(b"".join(chunks).decode())
+if "error" in resp:
+    raise SystemExit(resp["error"].get("message", "tracker RPC error"))
+print(json.dumps(resp.get("result")))
 PY
 }
 
@@ -118,6 +141,39 @@ if [[ "$ui_count" != "1" ]]; then
   tmux_default list-windows -t "$session_name" -F $'#{window_id}\t#{window_name}\t#{@broccoli_ui_window}' >&2
   exit 1
 fi
+
+for _ in {1..50}; do
+  agents_json="$(tracker_rpc list)"
+  if AGENTS_JSON="$agents_json" python3 <<'PY'
+import json, os, sys
+agents = json.loads(os.environ["AGENTS_JSON"] or "{}")
+ui = agents.get("agent-communicator")
+if not ui or not ui.get("tmux_pane"):
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+  then
+    break
+  fi
+  sleep 0.1
+done
+
+AGENTS_JSON="$agents_json" python3 <<'PY'
+import json, os, sys
+agents = json.loads(os.environ["AGENTS_JSON"] or "{}")
+ui = agents.get("agent-communicator")
+if not ui:
+    print(json.dumps(agents, indent=2), file=sys.stderr)
+    raise SystemExit("agent-communicator mailbox/UI registration missing")
+if ui.get("target_address") != "agent-communicator" or ui.get("name") != "agent-communicator":
+    raise SystemExit(f"agent-communicator registration is not stable/shared: {ui}")
+if not ui.get("tmux_pane"):
+    raise SystemExit(f"agent-communicator registration does not point at the UI pane: {ui}")
+local_duplicates = [name for name, info in agents.items() if name.startswith("agent-communicator-") and info.get("scope", "local") == "local"]
+if local_duplicates:
+    print(json.dumps(agents, indent=2), file=sys.stderr)
+    raise SystemExit(f"communicator registered duplicate local names: {local_duplicates}")
+PY
 
 # attach is interactive; verify it targets the renamed session without requiring
 # a real terminal by accepting either a timeout or tmux's no-terminal error.

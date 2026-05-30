@@ -33,7 +33,6 @@ SHELL_WINDOW_OPTION = "@broccoli_shell_window"
 UI_WINDOW_OPTION = "@broccoli_ui_window"
 UI_WINDOW_NAME = "ui"
 UI_AGENT_NAME = "agent-communicator"
-UI_AGENT_ID = "00000000-0000-5000-8000-000000000001"
 AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
@@ -101,8 +100,8 @@ def tmux_socket_label() -> str | None:
 def base_env() -> dict[str, str]:
     p = paths()
     env = os.environ.copy()
-    env.pop("TMUX", None)
-    env.pop("TMUX_PANE", None)
+    for key in ("TMUX", "TMUX_PANE", "AGENT_ID", "AGENT_NAME", "AGENT_UUID", "SUGGESTED_AGENT_NAME"):
+        env.pop(key, None)
     env.update({
         "BROCCOLI_COMMS_APP_RUNTIME": "1",
         "BROCCOLI_COMMS_RUNTIME_DIR": str(p["runtime"]),
@@ -524,10 +523,20 @@ def ui_window_registered(window: dict[str, str] | None) -> bool:
     return True
 
 
+def ensure_ui_mailbox() -> dict:
+    result = tracker_rpc("ensure_mailbox", {"agent_name": UI_AGENT_NAME, "preserve_pane": True})
+    return result if isinstance(result, dict) else {}
+
+
 def ui_launch_command() -> str:
     p = paths()
+    mailbox = ensure_ui_mailbox()
+    ui_agent_id = mailbox.get("agent_id") or mailbox.get("uuid")
+    assignments = []
+    if ui_agent_id:
+        assignments.append(f"AGENT_ID={shlex.quote(str(ui_agent_id))}")
     return " ".join([
-        f"AGENT_ID={shlex.quote(UI_AGENT_ID)}",
+        *assignments,
         f"SUGGESTED_AGENT_NAME={shlex.quote(UI_AGENT_NAME)}",
         f"AGENT_TRACKER_SOCKET={shlex.quote(str(p['tracker_socket']))}",
         f"BROCCOLI_COMMS_APP_RUNTIME=1",
