@@ -34,23 +34,10 @@ func (m *model) appendSystemEvents(result tracker.WaitEventsResult) {
 }
 
 func (m model) displayOrderedSystemEvents() []tracker.Event {
-	if m.mode == savedView || len(m.systemEvents) == 0 {
+	if m.mode != advancedView || len(m.systemEvents) == 0 {
 		return nil
 	}
-	if m.mode == advancedView {
-		return m.systemEvents
-	}
-	row := m.currentRow()
-	if row.Name == "" {
-		return nil
-	}
-	out := []tracker.Event{}
-	for _, event := range m.systemEvents {
-		if systemEventMatchesRow(event, row) {
-			out = append(out, event)
-		}
-	}
-	return out
+	return m.systemEvents
 }
 
 func systemEventMatchesRow(event tracker.Event, row agentRow) bool {

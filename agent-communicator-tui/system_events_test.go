@@ -7,18 +7,31 @@ import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
-func TestAppendSystemEventsAndRenderAnnotationRows(t *testing.T) {
-	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", AgentID: "id-1"}}}
+func TestNormalMessagePaneStoresButDoesNotRenderSystemAnnotations(t *testing.T) {
+	m := model{
+		rows:     []agentRow{{Name: "alpha", Scope: "local", AgentID: "id-1"}},
+		messages: []tracker.Message{{Sender: "alpha", Body: "real user message"}},
+	}
 	m.appendSystemEvents(tracker.WaitEventsResult{Events: []tracker.Event{
-		{Seq: 1, Type: "agent_status_changed", TargetAgentID: "id-1", TargetAgentName: "alpha", OldStatus: "idle", Status: "running"},
-		{Seq: 2, Type: "unknown_event", TargetAgentName: "alpha"},
+		{Seq: 1, Type: "agent_registered", TargetAgentID: "id-1", TargetAgentName: "alpha"},
+		{Seq: 2, Type: "agent_unregistered", TargetAgentID: "id-1", TargetAgentName: "alpha"},
+		{Seq: 3, Type: "agent_status_changed", TargetAgentID: "id-1", TargetAgentName: "alpha", OldStatus: "idle", Status: "ready"},
+		{Seq: 4, Type: "message_delivered", TargetAgentID: "id-1", TargetAgentName: "alpha"},
+		{Seq: 5, Type: "message_read", TargetAgentID: "id-1", TargetAgentName: "alpha"},
+		{Seq: 6, Type: "remote_agent_event", TargetAgentID: "id-1", TargetAgentName: "alpha", Message: "alpha notified lifecycle"},
+		{Seq: 7, Type: "unknown_event", TargetAgentName: "alpha"},
 	}})
-	if len(m.systemEvents) != 1 {
+	if len(m.systemEvents) != 6 {
 		t.Fatalf("systemEvents = %+v", m.systemEvents)
 	}
 	view := strings.Join(m.messageLinesForWidth(90), "\n")
-	if !strings.Contains(view, "alpha status idle") || !strings.Contains(view, "╌") {
-		t.Fatalf("system annotation missing:\n%s", view)
+	if !strings.Contains(view, "real user message") {
+		t.Fatalf("real message missing:\n%s", view)
+	}
+	for _, unwanted := range []string{"alpha joined", "alpha left", "alpha status idle", "message delivered to alpha", "message read by alpha", "alpha notified lifecycle", "╌"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("normal message pane rendered annotation %q:\n%s", unwanted, view)
+		}
 	}
 }
 
