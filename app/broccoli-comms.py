@@ -802,6 +802,15 @@ def doctor_payload() -> dict:
     }
 
 
+def agent_tracker(args: argparse.Namespace) -> None:
+    """Run the in-repo agent-tracker-ctl against Broccoli Comms private sockets."""
+    ensure_tracker()
+    ensure_tmux()
+    ctl = repo_root() / "agent-tracker" / "agent-tracker-ctl.py"
+    tracker_args = list(getattr(args, "tracker_args", None) or ["--help"])
+    os.execvpe(sys.executable, [sys.executable, str(ctl), *tracker_args], base_env())
+
+
 def doctor(args: argparse.Namespace) -> None:
     payload = doctor_payload()
     if getattr(args, "json", False):
@@ -820,6 +829,10 @@ def doctor(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "agent-tracker":
+        agent_tracker(argparse.Namespace(tracker_args=sys.argv[2:]))
+        return
+
     parser = argparse.ArgumentParser(description="Standalone Broccoli Comms runtime")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("start").set_defaults(func=start)
@@ -833,6 +846,10 @@ def main() -> None:
     doctor_parser = sub.add_parser("doctor", help="Check new-machine/runtime readiness")
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON doctor results")
     doctor_parser.set_defaults(func=doctor)
+
+    agent_tracker_parser = sub.add_parser("agent-tracker", help="Run agent-tracker-ctl against the Broccoli Comms private runtime", add_help=False)
+    agent_tracker_parser.add_argument("tracker_args", nargs=argparse.REMAINDER)
+    agent_tracker_parser.set_defaults(func=agent_tracker)
 
     agent = sub.add_parser("agent", help="Manage configured agents")
     agent_sub = agent.add_subparsers(dest="agent_command", required=True)

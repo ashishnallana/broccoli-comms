@@ -266,6 +266,30 @@ Legacy slash commands remain supported from any mode: `/msg`, `/text`, `/text --
 
 Unread navigation: `n` jumps to the next unread conversation, while `Ctrl-N` / `Ctrl-P` keep their existing next/previous agent behavior.
 
+## `broccoli-comms agent-tracker` passthrough
+
+`broccoli-comms agent-tracker <subcommand> [args...]` runs the repository's `agent-tracker/agent-tracker-ctl.py` against the Broccoli Comms private runtime. It is equivalent to `agent-tracker-ctl` but pins these environment values via `base_env()`:
+
+- `AGENT_TRACKER_SOCKET`
+- `AGENT_TRACKER_TMUX_SOCKET`
+- `BROCCOLI_COMMS_TMUX_SOCKET`
+- `BROCCOLI_COMMS_RUNTIME_DIR`
+- `BROCCOLI_COMMS_CACHE_DIR`
+- `BROCCOLI_COMMS_CONFIG_DIR`
+
+The wrapper does not require `agent-tracker-ctl` to be installed globally or present on the user's shell `PATH`. Pane-sensitive commands such as `send-text`, `send-key`, `focus`, and `capture-pane` use the private tmux socket.
+
+Examples:
+
+```sh
+broccoli-comms agent-tracker --help
+broccoli-comms agent-tracker list
+broccoli-comms agent-tracker read-inbox --last 10
+broccoli-comms agent-tracker send-message main "hello"
+broccoli-comms agent-tracker registry-status
+broccoli-comms agent-tracker capture-pane agent-communicator --last 80
+```
+
 ## Direct pane input capability
 
 Direct pane input is separate from inbox messaging. It controls a registered tmux pane directly and does not create inbox/outbox conversation history.
