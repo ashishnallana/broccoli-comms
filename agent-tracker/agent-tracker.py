@@ -12,6 +12,7 @@ import monitor
 import rpc_handler
 import http_sidecar
 import registry_client
+import permission_detection
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', stream=sys.stderr)
 
@@ -73,6 +74,7 @@ def main():
     # Start background threads
     threading.Thread(target=monitor.background_monitor, daemon=True).start()
     threading.Thread(target=monitor.background_inbox_reminder, daemon=True).start()
+    threading.Thread(target=permission_detection.background_detection_monitor, daemon=True).start()
     threading.Thread(target=http_sidecar.serve_forever, daemon=True).start()
     threading.Thread(target=registry_client.background_sync, daemon=True).start()
 

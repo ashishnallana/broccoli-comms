@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "enabled": true,
+  "notify_target": "agent-communicator",
+  "default": {
+    "enabled": false,
+    "capture_lines": 10,
+    "scan_interval_seconds": 5,
+    "notify_cooldown_seconds": 300,
+    "keyword_matches_required": 2,
+    "keywords": [
+      "permission",
+      "approve",
+      "allow",
+      "blocked"
+    ]
+  },
+  "agents": {
+    "claude-1": {
+      "capture_lines": 10,
+      "scan_interval_seconds": 3,
+      "notify_cooldown_seconds": 300,
+      "keyword_matches_required": 2,
+      "keywords": [
+        "bash command",
+        "requires approval",
+        "do you want to proceed",
+        "wants to use bash",
+        "do you want to allow",
+        "allow this command"
+      ]
+    },
+    "codex-1": {
+      "capture_lines": 10,
+      "scan_interval_seconds": 3,
+      "notify_cooldown_seconds": 300,
+      "keyword_matches_required": 2,
+      "keywords": [
+        "approve",
+        "allow command",
+        "command execution",
+        "accept",
+        "decline"
+      ]
+    }
+  }
+}
