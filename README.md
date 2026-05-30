@@ -51,6 +51,8 @@ nix run .#broccoli-comms -- status --json
 nix run .#broccoli-comms -- attach
 nix run .#broccoli-comms -- agent focus main
 nix run .#broccoli-comms -- agent-tracker list
+nix run .#broccoli-comms -- registry start --host 127.0.0.1 --port 8080 --name local --noauth
+nix run .#broccoli-comms -- registry status
 nix run .#broccoli-comms -- stop
 ```
 
@@ -155,6 +157,24 @@ broccoli-comms agent-tracker send-key registry-a:host-a/alice Escape
 ```
 
 Remote-origin inbox delivery can optionally focus the destination pane when `BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES=1` is set. This is disabled by default; when enabled, the tracker uses only the registered/private tmux socket and treats focus as best-effort so message delivery still succeeds if focus fails.
+
+## Local registry management
+
+`broccoli-comms registry ...` can run the in-repo `agent-registry` rendezvous service under Broccoli Comms runtime/cache/config paths:
+
+```sh
+# Local development registry, loopback only, no auth.
+broccoli-comms registry start --host 127.0.0.1 --port 8080 --name local --noauth
+broccoli-comms registry health
+broccoli-comms registry agents --json
+broccoli-comms registry status --json
+broccoli-comms registry stop
+
+# Authenticated LAN/public bind. Prefer token files over shell-history tokens.
+broccoli-comms registry start --host 0.0.0.0 --port 8080 --name home --auth --token-file ~/.config/broccoli-comms/registry-token
+```
+
+Unauthenticated non-loopback binds are refused for safety. Starting a registry does not automatically point a tracker at it; start Broccoli Comms with `AGENT_REGISTRIES_JSON='[{"name":"local","url":"http://127.0.0.1:8080"}]'` (plus `token-file` when auth is enabled) when you want the private tracker to publish/consume that registry. Registry start does not enable remote direct pane input; the separate remote pane-input gates remain required.
 
 Runtime/frontend JSON contracts are documented in `docs/RUNTIME_API.md`:
 

@@ -20,6 +20,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 
 APP = "broccoli-comms"
 VERSION = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
@@ -62,6 +64,10 @@ def paths() -> dict[str, Path]:
         "tracker_socket": runtime / "agent-tracker.sock",
         "tracker_pid": runtime / "agent-tracker.pid",
         "tracker_log": cache / "agent-tracker.log",
+        "registry_pid": runtime / "agent-registry.pid",
+        "registry_log": cache / "agent-registry.log",
+        "registry_state": cache / "agent-registry" / "state.json",
+        "registry_config": config / "registry.json",
         "tmux_conf": config / "tmux.conf",
         "config_json": config / "config.json",
     }
@@ -139,6 +145,10 @@ def tracker_script() -> str:
 
 def wrapper_path() -> str:
     return os.environ.get("BROCCOLI_COMMS_AGENT_WRAPPER") or str(repo_root() / "wrapper" / "agent-wrapper.sh")
+
+
+def registry_script() -> str:
+    return os.environ.get("BROCCOLI_COMMS_AGENT_REGISTRY") or str(repo_root() / "agent-registry" / "server.py")
 
 
 def tui_path() -> str:
@@ -802,6 +812,281 @@ def doctor_payload() -> dict:
     }
 
 
+def _is_loopback_host(host: str) -> bool:
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _pid_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        return int(path.read_text().strip())
+    except Exception:
+        return None
+
+
+def _read_token_file(path: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        return Path(path).expanduser().read_text().strip()
+    except OSError as e:
+        raise SystemExit(f"failed to read token file {path}: {e}")
+
+
+def _registry_auth_enabled(args: argparse.Namespace) -> bool:
+    if args.auth and args.noauth:
+        raise SystemExit("registry start: choose only one of --auth or --noauth")
+    if args.auth:
+        return True
+    if args.noauth:
+        if not _is_loopback_host(args.host):
+            raise SystemExit("registry start: refusing unauthenticated non-loopback bind; use --auth --token-file for public/LAN hosts")
+        return False
+    if _is_loopback_host(args.host):
+        return False
+    raise SystemExit("registry start: non-loopback binds require explicit --auth (recommended) or --noauth is refused for safety")
+
+
+def _registry_state_path(args: argparse.Namespace) -> Path:
+    if getattr(args, "state_path", None):
+        return Path(args.state_path).expanduser()
+    return paths()["registry_state"]
+
+
+def _registry_url(host: str, port: int) -> str:
+    url_host = "127.0.0.1" if host == "0.0.0.0" else host
+    if ":" in url_host and not url_host.startswith("["):
+        url_host = f"[{url_host}]"
+    return f"http://{url_host}:{port}"
+
+
+def _registry_config_from_args(args: argparse.Namespace, auth_enabled: bool, state_path: Path) -> dict:
+    return {
+        "name": args.name,
+        "host": args.host,
+        "port": int(args.port),
+        "auth": auth_enabled,
+        "token_file": str(Path(args.token_file).expanduser()) if getattr(args, "token_file", None) else None,
+        "state_path": str(state_path),
+        "url": _registry_url(args.host, int(args.port)),
+    }
+
+
+def _load_registry_config() -> dict:
+    path = paths()["registry_config"]
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {
+        "name": "local",
+        "host": "127.0.0.1",
+        "port": 8080,
+        "auth": False,
+        "token_file": None,
+        "state_path": str(paths()["registry_state"]),
+        "url": "http://127.0.0.1:8080",
+    }
+
+
+def _save_registry_config(config: dict) -> None:
+    path = paths()["registry_config"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+
+
+def _registry_env(args: argparse.Namespace, auth_enabled: bool, state_path: Path) -> dict[str, str]:
+    token = getattr(args, "token", None) or _read_token_file(getattr(args, "token_file", None))
+    if auth_enabled and not token:
+        raise SystemExit("registry start: --auth requires --token-file or --token")
+    env = base_env()
+    env.update({
+        "AGENT_REGISTRY_HOST": args.host,
+        "AGENT_REGISTRY_PORT": str(args.port),
+        "AGENT_REGISTRY_AUTH": "true" if auth_enabled else "false",
+        "AGENT_REGISTRY_STATE_PATH": str(state_path),
+        "TRACKER_STALE_SECONDS": str(args.stale_seconds),
+        "TRACKER_GONE_SECONDS": str(args.gone_seconds),
+    })
+    if token:
+        env["AGENT_REGISTRY_TOKEN"] = token
+    return env
+
+
+def _registry_auth_header(config: dict) -> dict[str, str]:
+    if not config.get("auth"):
+        return {}
+    token = _read_token_file(config.get("token_file"))
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _registry_request(path: str, config: dict | None = None, timeout: float = 3.0) -> tuple[int | None, dict | None, str | None]:
+    config = config or _load_registry_config()
+    url = (config.get("url") or _registry_url(config.get("host", "127.0.0.1"), int(config.get("port", 8080)))).rstrip("/") + path
+    req = urllib.request.Request(url, headers={"Accept": "application/json", **_registry_auth_header(config)})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode()
+            return resp.status, json.loads(body) if body else {}, None
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode())
+        except Exception:
+            body = None
+        return e.code, body, None
+    except Exception as e:
+        return None, None, str(e)
+
+
+def _wait_registry_ready(config: dict, timeout: float = 5.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        status, _, _ = _registry_request("/healthz", config, timeout=0.5)
+        if status == 200:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def registry_start(args: argparse.Namespace) -> None:
+    ensure_dirs()
+    auth_enabled = _registry_auth_enabled(args)
+    state_path = _registry_state_path(args)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    config = _registry_config_from_args(args, auth_enabled, state_path)
+    env = _registry_env(args, auth_enabled, state_path)
+    if args.foreground:
+        os.execvpe(sys.executable, [sys.executable, registry_script()], env)
+
+    pid_file = paths()["registry_pid"]
+    existing_pid = _read_pid(pid_file)
+    if existing_pid and _pid_running(existing_pid) and not args.force:
+        print(f"registry already running pid={existing_pid} url={config['url']}")
+        return
+    if existing_pid and args.force:
+        try:
+            os.kill(existing_pid, signal.SIGTERM)
+        except OSError:
+            pass
+    log = open(paths()["registry_log"], "ab", buffering=0)
+    proc = subprocess.Popen([sys.executable, registry_script()], env=env, stdout=log, stderr=log, start_new_session=True)
+    pid_file.write_text(str(proc.pid))
+    _save_registry_config(config)
+    if not _wait_registry_ready(config):
+        if proc.poll() is not None:
+            raise SystemExit(f"agent-registry exited early; see {paths()['registry_log']}")
+        raise SystemExit(f"agent-registry did not become healthy; see {paths()['registry_log']}")
+    print(f"registry started name={config['name']} url={config['url']} pid={proc.pid} auth={'on' if auth_enabled else 'off'}")
+
+
+def registry_stop(args: argparse.Namespace) -> None:
+    pid_file = paths()["registry_pid"]
+    pid = _read_pid(pid_file)
+    if not pid:
+        print("registry not running")
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pid_file.unlink(missing_ok=True)
+        print("registry not running")
+        return
+    for _ in range(50):
+        if not _pid_running(pid):
+            break
+        time.sleep(0.1)
+    if _pid_running(pid) and args.force:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        for _ in range(20):
+            if not _pid_running(pid):
+                break
+            time.sleep(0.1)
+    pid_file.unlink(missing_ok=True)
+    print("registry stopped")
+
+
+def _registry_status_payload() -> dict:
+    config = _load_registry_config()
+    pid = _read_pid(paths()["registry_pid"])
+    running = bool(pid and _pid_running(pid))
+    health_status, health_body, health_error = _registry_request("/healthz", config)
+    agents_status, agents_body, _ = _registry_request("/agents", config)
+    return {
+        "name": config.get("name"),
+        "url": config.get("url"),
+        "host": config.get("host"),
+        "port": config.get("port"),
+        "auth": bool(config.get("auth")),
+        "pid": pid,
+        "running": running,
+        "state_path": config.get("state_path"),
+        "log_path": str(paths()["registry_log"]),
+        "health": {"status": health_status, "body": health_body, "error": health_error},
+        "agent_count": len((agents_body or {}).get("agents") or []) if agents_status == 200 else None,
+    }
+
+
+def registry_status(args: argparse.Namespace) -> None:
+    payload = _registry_status_payload()
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    health = payload["health"]
+    health_text = "ok" if health.get("status") == 200 else (health.get("error") or f"http {health.get('status')}")
+    print(f"registry {payload['name']} {payload['url']} pid={payload['pid']} running={payload['running']} auth={'on' if payload['auth'] else 'off'} health={health_text} agents={payload['agent_count']}")
+
+
+def registry_health(_args: argparse.Namespace) -> None:
+    status, body, error = _registry_request("/healthz")
+    if status == 200:
+        print(json.dumps(body or {"ok": True}, indent=2, sort_keys=True))
+        return
+    raise SystemExit(error or json.dumps(body or {"status": status}))
+
+
+def registry_agents(args: argparse.Namespace) -> None:
+    status, body, error = _registry_request("/agents")
+    if status != 200:
+        raise SystemExit(error or json.dumps(body or {"status": status}))
+    agents = (body or {}).get("agents") or []
+    if args.json:
+        print(json.dumps(body, indent=2, sort_keys=True))
+    else:
+        for agent in agents:
+            print(f"{agent.get('hostname', '?')}/{agent.get('name', '?')} {agent.get('status', 'unknown')} {agent.get('agent_id', '')}")
+        if not agents:
+            print("no agents")
+
+
+def registry_trackers(args: argparse.Namespace) -> None:
+    status, body, error = _registry_request("/trackers")
+    if status != 200:
+        raise SystemExit(error or json.dumps(body or {"status": status}))
+    if args.json:
+        print(json.dumps(body, indent=2, sort_keys=True))
+    else:
+        trackers = (body or {}).get("trackers") or []
+        for tracker in trackers:
+            print(f"{tracker.get('hostname', '?')} {tracker.get('status', 'unknown')} {tracker.get('tracker_id', '')}")
+        if not trackers:
+            print("no trackers")
+
+
 def agent_tracker(args: argparse.Namespace) -> None:
     """Run the in-repo agent-tracker-ctl against Broccoli Comms private sockets."""
     ensure_tracker()
@@ -850,6 +1135,37 @@ def main() -> None:
     agent_tracker_parser = sub.add_parser("agent-tracker", help="Run agent-tracker-ctl against the Broccoli Comms private runtime", add_help=False)
     agent_tracker_parser.add_argument("tracker_args", nargs=argparse.REMAINDER)
     agent_tracker_parser.set_defaults(func=agent_tracker)
+
+    registry = sub.add_parser("registry", help="Manage a Broccoli Comms agent-registry process")
+    registry_sub = registry.add_subparsers(dest="registry_command", required=True)
+    registry_start_parser = registry_sub.add_parser("start", help="Start a managed local agent-registry")
+    registry_start_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    registry_start_parser.add_argument("--port", type=int, default=8080, help="Bind port (default: 8080)")
+    registry_start_parser.add_argument("--name", default="local", help="Logical registry name")
+    auth_group = registry_start_parser.add_mutually_exclusive_group()
+    auth_group.add_argument("--auth", action="store_true", help="Require bearer auth")
+    auth_group.add_argument("--noauth", action="store_true", help="Disable auth for loopback local/dev use")
+    registry_start_parser.add_argument("--token", help="Bearer token value (prefer --token-file)")
+    registry_start_parser.add_argument("--token-file", help="File containing bearer token")
+    registry_start_parser.add_argument("--state-path", help="Registry state path")
+    registry_start_parser.add_argument("--stale-seconds", type=int, default=60, help="Tracker stale threshold")
+    registry_start_parser.add_argument("--gone-seconds", type=int, default=180, help="Tracker gone threshold")
+    registry_start_parser.add_argument("--foreground", action="store_true", help="Run in foreground")
+    registry_start_parser.add_argument("--force", action="store_true", help="Replace stale/running pid file")
+    registry_start_parser.set_defaults(func=registry_start)
+    registry_stop_parser = registry_sub.add_parser("stop", help="Stop the managed registry")
+    registry_stop_parser.add_argument("--force", action="store_true", help="SIGKILL if graceful stop fails")
+    registry_stop_parser.set_defaults(func=registry_stop)
+    registry_status_parser = registry_sub.add_parser("status", help="Show managed registry status")
+    registry_status_parser.add_argument("--json", action="store_true", help="Emit JSON")
+    registry_status_parser.set_defaults(func=registry_status)
+    registry_sub.add_parser("health", help="GET /healthz").set_defaults(func=registry_health)
+    registry_agents_parser = registry_sub.add_parser("agents", help="GET /agents")
+    registry_agents_parser.add_argument("--json", action="store_true", help="Emit raw JSON")
+    registry_agents_parser.set_defaults(func=registry_agents)
+    registry_trackers_parser = registry_sub.add_parser("trackers", help="GET /trackers")
+    registry_trackers_parser.add_argument("--json", action="store_true", help="Emit raw JSON")
+    registry_trackers_parser.set_defaults(func=registry_trackers)
 
     agent = sub.add_parser("agent", help="Manage configured agents")
     agent_sub = agent.add_subparsers(dest="agent_command", required=True)

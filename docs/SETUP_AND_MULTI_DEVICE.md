@@ -117,6 +117,26 @@ Important properties:
 
 ## 6. Registry host setup
 
+### Broccoli Comms source/runtime CLI
+
+For local development or small self-managed deployments, Broccoli Comms can run the in-repo registry directly:
+
+```sh
+# Loopback dev registry; auth disabled only on localhost/loopback.
+broccoli-comms registry start --host 127.0.0.1 --port 8080 --name local --noauth
+broccoli-comms registry health
+broccoli-comms registry agents --json
+broccoli-comms registry status --json
+broccoli-comms registry stop
+
+# LAN/public bind requires auth and should use a token file.
+umask 077
+openssl rand -base64 32 > ~/.config/broccoli-comms/registry-token
+broccoli-comms registry start --host 0.0.0.0 --port 8080 --name home --auth --token-file ~/.config/broccoli-comms/registry-token
+```
+
+Managed registry process files are stored under Broccoli Comms runtime/cache/config paths (`agent-registry.pid`, `agent-registry.log`, `agent-registry/state.json`, and `registry.json`). Unauthenticated non-loopback binds are refused. Starting this process does not automatically configure a tracker to publish to it; use `AGENT_REGISTRIES_JSON` as described below or tracker/module registry settings. Remote direct pane input remains separately gated and is not enabled by `registry start`.
+
 ### NixOS module
 
 Add the registry flake/module to the host that should run the rendezvous service:
