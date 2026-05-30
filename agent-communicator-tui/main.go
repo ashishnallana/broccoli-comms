@@ -46,7 +46,7 @@ func run(stdout io.Writer, args []string) error {
 		ownName = appName
 	}
 	_ = cleanupHistoryOnStart()
-	p := tea.NewProgram(newModel(tracker.New(""), ownName), tea.WithOutput(stdout), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(tracker.New(""), ownName), tea.WithOutput(stdout), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = p.Run()
 	return err
 }

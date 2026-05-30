@@ -62,12 +62,13 @@ func (m model) sidebarView(width, height int) string {
 		return truncateLines(body, height)
 	}
 	title := shellTitleStyle.Render("Agent Communicator")
+	device := mutedStyle.Render("This device: " + localHostname())
 	total, hidden := len(m.rows), m.hiddenCount()
 	header := fmt.Sprintf("Agents %d", total)
 	if hidden > 0 {
 		header = fmt.Sprintf("Agents %d · Hidden %d", total, hidden)
 	}
-	body := title + "\n" + sectionHeaderStyle.Render(header) + "\n" + m.agentList(width, max(1, height-2))
+	body := title + "\n" + device + "\n" + sectionHeaderStyle.Render(header) + "\n" + m.agentList(width, max(1, height-3))
 	return truncateLines(body, height)
 }
 
@@ -283,19 +284,16 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	if view.UnreadCount > 0 {
 		unread = " " + unreadCountBadge(view.UnreadCount)
 	}
-	prefix := statusDot(view.Status) + " " + badgeStyle.Render(view.ModelBadge) + " "
+	prefix := statusDot(view.Status) + " "
 	nameBudget := max(1, inner-lipgloss.Width(prefix)-lipgloss.Width(unread))
 	nameText := agentStyle(row.Name, true).Render(truncateCells(row.Name, nameBudget))
 	nameLine := prefix + nameText + unread
 	if lipgloss.Width(nameLine) > inner {
-		nameLine = truncateCells(statusDot(view.Status)+" "+view.ModelBadge+" "+view.Name, inner)
+		nameLine = truncateCells(statusDot(view.Status)+" "+view.Name, inner)
 	}
-	detailParts := []string{view.StatusLabel, view.MachineLabel}
-	if view.CWD != "" {
-		detailParts = append(detailParts, view.CWD)
-	}
-	detail := strings.Join(nonEmpty(detailParts), " · ")
-	lines := nameLine + "\n" + mutedStyle.Render(truncateCells(detail, inner))
+	statusLine := strings.Join(nonEmpty([]string{view.ModelBadge, view.StatusLabel, view.RegistryLabel}), " · ")
+	hostLine := strings.TrimSpace("host " + view.HostnameLabel)
+	lines := nameLine + "\n" + mutedStyle.Render(truncateCells(statusLine, inner)) + "\n" + mutedStyle.Render(truncateCells(hostLine, inner))
 	border := lipgloss.RoundedBorder()
 	if selected {
 		border = lipgloss.DoubleBorder()

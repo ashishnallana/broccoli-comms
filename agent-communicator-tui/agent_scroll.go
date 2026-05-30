@@ -1,6 +1,6 @@
 package main
 
-const agentCardHeight = 4
+const agentCardHeight = 5
 
 func (m model) visibleAgentCards() int {
 	return max(1, (m.height-lineCount(m.footer(max(1, m.width)))-4)/agentCardHeight)

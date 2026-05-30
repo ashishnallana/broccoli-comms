@@ -25,14 +25,13 @@ func TestSelectedAgentCardUsesDoubleBorder(t *testing.T) {
 	}
 }
 
-func TestAgentCardShowsCompactCWD(t *testing.T) {
+func TestAgentCardShowsStatusRegistryAndFullHost(t *testing.T) {
 	m := model{}
-	card := m.agentCard(agentRow{Name: "alpha", Scope: "local", CWD: "/Users/tanmayvijay/home-manager-core"}, false, 60)
-	if !strings.Contains(card, "tanmayvijay/home-manager-core") {
-		t.Fatalf("agent card missing compact cwd:\n%s", card)
-	}
-	if strings.Contains(card, "/Users/tanmayvijay/home-manager-core") {
-		t.Fatalf("agent card should show at most two cwd folders:\n%s", card)
+	card := m.agentCard(agentRow{Name: "alpha", Scope: "remote", Status: "idle", Hostname: "tanmayvijay-mac-ywd", RegistryName: "mundus", ModelType: "pi"}, false, 70)
+	for _, want := range []string{"alpha", "Pi · idle · mundus", "host tanmayvijay-mac-ywd"} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("agent card missing %q:\n%s", want, card)
+		}
 	}
 }
 

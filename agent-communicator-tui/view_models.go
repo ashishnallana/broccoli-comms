@@ -7,18 +7,20 @@ import (
 )
 
 type AgentView struct {
-	Row          agentRow
-	Name         string
-	Scope        string
-	Status       string
-	StatusLabel  string
-	ModelBadge   string
-	MachineLabel string
-	GroupHeader  string
-	CWD          string
-	Hidden       bool
-	Unread       bool
-	UnreadCount  int
+	Row           agentRow
+	Name          string
+	Scope         string
+	Status        string
+	StatusLabel   string
+	ModelBadge    string
+	MachineLabel  string
+	HostnameLabel string
+	RegistryLabel string
+	GroupHeader   string
+	CWD           string
+	Hidden        bool
+	Unread        bool
+	UnreadCount   int
 }
 
 type MachineGroup struct {
@@ -42,24 +44,27 @@ type UIError struct {
 
 func newAgentView(row agentRow, hidden bool, unreadCount int) AgentView {
 	machine := rowMachineLabel(row)
+	hostname := rowHostnameLabel(row)
 	scope := strings.Title(fallback(row.Scope, "local"))
 	group := scope
-	if machine != "" {
-		group += " · " + machine
+	if hostname != "" {
+		group += " · " + hostname
 	}
 	return AgentView{
-		Row:          row,
-		Name:         row.Name,
-		Scope:        fallback(row.Scope, "local"),
-		Status:       row.Status,
-		StatusLabel:  statusLabel(row.Status),
-		ModelBadge:   modelBadge(row),
-		MachineLabel: machine,
-		GroupHeader:  group,
-		CWD:          compactCWD(row.CWD),
-		Hidden:       hidden,
-		Unread:       unreadCount > 0,
-		UnreadCount:  unreadCount,
+		Row:           row,
+		Name:          row.Name,
+		Scope:         fallback(row.Scope, "local"),
+		Status:        row.Status,
+		StatusLabel:   statusLabel(row.Status),
+		ModelBadge:    modelBadge(row),
+		MachineLabel:  machine,
+		HostnameLabel: hostname,
+		RegistryLabel: rowRegistryLabel(row),
+		GroupHeader:   group,
+		CWD:           compactCWD(row.CWD),
+		Hidden:        hidden,
+		Unread:        unreadCount > 0,
+		UnreadCount:   unreadCount,
 	}
 }
 
@@ -122,16 +127,33 @@ func splitHost(target string) string {
 }
 
 func rowMachineLabel(row agentRow) string {
+	return shortHost(rowHostnameLabel(row))
+}
+
+func rowHostnameLabel(row agentRow) string {
 	if row.Hostname != "" {
-		return shortHost(row.Hostname)
+		return row.Hostname
 	}
 	if host := splitHost(row.TargetAddress); host != "" {
-		return shortHost(host)
+		return host
 	}
 	if row.Scope == "remote" {
 		return "remote"
 	}
-	return shortHost(localHostname())
+	return localHostname()
+}
+
+func rowRegistryLabel(row agentRow) string {
+	if row.Scope != "remote" {
+		return "local"
+	}
+	if row.RegistryName != "" {
+		return row.RegistryName
+	}
+	if strings.Contains(row.TargetAddress, ":") {
+		return strings.SplitN(row.TargetAddress, ":", 2)[0]
+	}
+	return "unknown"
 }
 
 func modelBadge(row agentRow) string {
