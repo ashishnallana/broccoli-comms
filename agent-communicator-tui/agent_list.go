@@ -15,6 +15,18 @@ import (
 
 var agentListProvider = loadAgentsFromCtlProvider
 
+func loadHealth(local localClient) tea.Cmd {
+	return func() tea.Msg {
+		if local == nil {
+			return healthLoaded{}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		info, err := local.TrackerInfo(ctx)
+		return healthLoaded{Info: info, Err: err}
+	}
+}
+
 type ctlAgent struct {
 	Name          string   `json:"name"`
 	Aliases       []string `json:"aliases"`

@@ -187,6 +187,8 @@ def handle_register(params: dict) -> str:
     })
     
     _best_effort_update_tmux_metadata(tmux_pane, agent_name, agent_id, agent_type, agent_cmd, tmux_socket, no_notify_with_send_keys, no_registry)
+    registered_info = state.get_agent(agent_name) or {}
+    state.publish_event("agent_registered", _agent_event_payload(agent_name, registered_info))
     
     return agent_name
 
@@ -222,6 +224,19 @@ def _fetch_registry_agents_for_list() -> dict:
                 "model_type": state.normalize_model_type(agent.get("model_type"), agent.get("agent_type"), agent.get("agent_cmd")),
             }
     return remote_agents
+
+
+def _agent_event_payload(name: str, info: dict) -> dict:
+    return {
+        "target_agent_id": info.get("agent_id") or info.get("uuid"),
+        "target_agent_name": name,
+        "hostname": info.get("hostname") or registry_client.HOSTNAME,
+        "tracker_id": info.get("tracker_id") or registry_client.TRACKER_ID,
+        "status": info.get("status", "unknown"),
+        "model_type": state.normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd")),
+        "agent_type": info.get("agent_type"),
+        "agent_cmd": info.get("agent_cmd"),
+    }
 
 
 def _local_agent_list_row(name: str, info: dict) -> dict:
@@ -344,9 +359,14 @@ def handle_update_agent(params: dict, caller_pid: int = None) -> bool:
         raise ValueError("Agent not identified")
         
     kwargs = {k: v for k, v in params.items() if k not in ["agent_id", "agent_name", "tmux_pane"]}
+    old_info = state.get_agent(agent_name) or {}
+    old_status = old_info.get("status")
     if state.update_agent(agent_name, **kwargs):
+        info = state.get_agent(agent_name) or {}
         if "status" in kwargs:
-            registry_client.push_agent_update(state.get_agent(agent_name)["agent_id"], kwargs["status"])
+            registry_client.push_agent_update(info["agent_id"], kwargs["status"])
+            if kwargs.get("status") != old_status:
+                state.publish_event("agent_status_changed", {**_agent_event_payload(agent_name, info), "old_status": old_status})
         return True
     raise ValueError(f"Agent '{agent_name}' not found")
 
@@ -357,10 +377,15 @@ def handle_heartbeat(params: dict, caller_pid: int = None) -> bool:
     if not agent_name:
         raise ValueError("Agent not identified")
 
+    old_info = state.get_agent(agent_name) or {}
+    old_status = old_info.get("status")
     kwargs = {k: v for k, v in params.items() if k not in ["agent_id", "agent_name"]}
     kwargs["last_heartbeat"] = time.time()
     kwargs["recovered_at"] = None
     if state.update_agent(agent_name, **kwargs):
+        if "status" in kwargs and kwargs.get("status") != old_status:
+            info = state.get_agent(agent_name) or {}
+            state.publish_event("agent_status_changed", {**_agent_event_payload(agent_name, info), "old_status": old_status})
         return True
     raise ValueError(f"Agent '{agent_name}' not found")
 
@@ -431,6 +456,7 @@ def handle_unregister(params: dict, caller_pid: int = None) -> bool:
         except OSError as e:
             logging.error(f"Failed to remove inbox file for {agent_name}: {e}")
             
+    state.publish_event("agent_unregistered", _agent_event_payload(agent_name, info))
     state.delete_agent(agent_name)
     return True
 
@@ -1280,12 +1306,46 @@ def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
     return state.wait_events(since=cursor, timeout=timeout, filters=filters, client_id=client_id, watch_list=watch_list)
 
 
+def _read_registry_status() -> dict:
+    try:
+        with open(registry_client.STATUS_PATH, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def handle_tracker_info(params: dict) -> dict:
-    """Returns this tracker's registry identity."""
+    """Returns this tracker's registry identity and UI-friendly health snapshot."""
+    agents = state.get_all_agents()
+    online_statuses = {"running", "active", "online", "idle", "ready"}
+    online_agents = sum(1 for info in agents.values() if str(info.get("status", "")).lower() in online_statuses)
+    registry_status = _read_registry_status()
+    registries = [{**value, "name": name} for name, value in (registry_status.get("registries") or {}).items()]
+    remote_tracker_count = 0
+    online_remote_tracker_count = 0
+    try:
+        tracker_status, tracker_body = registry_client.fetch_trackers()
+        if tracker_status == 200:
+            trackers = (tracker_body or {}).get("trackers") or []
+            remote_tracker_count = len([t for t in trackers if t.get("tracker_id") != registry_client.TRACKER_ID])
+            online_remote_tracker_count = len([t for t in trackers if t.get("tracker_id") != registry_client.TRACKER_ID and t.get("status") == "active"])
+    except Exception:
+        pass
+    status = "ok"
+    if registry_status and not registry_status.get("connected", False):
+        status = "degraded"
     return {
         "hostname": registry_client.HOSTNAME,
         "tracker_id": registry_client.TRACKER_ID,
         "http_port": registry_client.HTTP_PORT,
+        "status": status,
+        "agent_count": len(agents),
+        "online_agent_count": online_agents,
+        "registry_connected": registry_status.get("connected"),
+        "registries": registries,
+        "remote_tracker_count": remote_tracker_count,
+        "online_remote_tracker_count": online_remote_tracker_count,
     }
 
 

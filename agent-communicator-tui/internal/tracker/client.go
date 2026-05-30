@@ -153,6 +153,12 @@ func (c *Client) EnsureMailbox(ctx context.Context, agentName string) (EnsureMai
 	return result, err
 }
 
+func (c *Client) TrackerInfo(ctx context.Context) (TrackerInfo, error) {
+	var result TrackerInfo
+	err := c.call(ctx, "tracker_info", map[string]any{}, 5*time.Second, &result)
+	return result, err
+}
+
 func (c *Client) List(ctx context.Context) (map[string]Agent, error) {
 	agents := map[string]Agent{}
 	if err := c.call(ctx, "list", map[string]any{}, 5*time.Second, &agents); err != nil {

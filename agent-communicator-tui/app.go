@@ -53,6 +53,9 @@ type model struct {
 	composer                []rune
 	err                     error
 	eventSeq                int64
+	health                  tracker.TrackerInfo
+	healthErr               error
+	systemEvents            []tracker.Event
 	ownName                 string
 	local                   localClient
 	runtime                 runtimeInfo
@@ -129,6 +132,7 @@ func (m model) Init() tea.Cmd {
 
 func initialLoadCmds(m model) tea.Cmd {
 	return tea.Batch(
+		loadHealth(m.local),
 		loadAgents(m.local),
 		loadOutboxCmd(),
 		loadSavedMessagesCmd(),
@@ -387,7 +391,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case refreshTick:
 		m.agentListLoading = true
-		return m, tea.Batch(loadAgents(m.local), loadOutboxCmd(), loadUnreadCounts(m.local, m.ownName), tickRefresh(), tickAgentListSpinner())
+		return m, tea.Batch(loadHealth(m.local), loadAgents(m.local), loadOutboxCmd(), loadUnreadCounts(m.local, m.ownName), tickRefresh(), tickAgentListSpinner())
 	case agentListSpinnerTick:
 		if m.agentListLoading {
 			m.agentListFrame++
@@ -403,6 +407,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.retryOperation = ""
 		return m, initialLoadCmds(m)
+	case healthLoaded:
+		m.healthErr = msg.Err
+		if msg.Err == nil {
+			m.health = msg.Info
+		}
 	case agentsLoaded:
 		m.agentListLoading = false
 		m.err = msg.Err
@@ -471,6 +480,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.eventSeq = msg.Result.LastSeq
 			m.markUnreadFromEvents(msg.Result)
 			m.applyStatusEvents(msg.Result)
+			m.appendSystemEvents(msg.Result)
 			cmds := []tea.Cmd{waitEvents(m.local, m.eventSeq), loadUnreadCounts(m.local, m.ownName)}
 			if len(m.rows) > 0 && shouldReloadForEvents(m.ownName, m.rows[m.selected], msg.Result) {
 				cmds = append(cmds, m.reloadMessages())

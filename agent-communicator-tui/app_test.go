@@ -40,6 +40,9 @@ func (f *fakeLocal) EnsureMailbox(_ context.Context, agentName string) (tracker.
 	f.ensureName = agentName
 	return tracker.EnsureMailboxResult{Name: agentName, AgentID: "mailbox-id", UUID: "mailbox-id"}, f.ensureErr
 }
+func (f *fakeLocal) TrackerInfo(context.Context) (tracker.TrackerInfo, error) {
+	return tracker.TrackerInfo{Status: "ok", AgentCount: len(f.agents), OnlineAgentCount: len(f.agents)}, nil
+}
 func (f *fakeLocal) List(context.Context) (map[string]tracker.Agent, error) { return f.agents, nil }
 func (f *fakeLocal) ReadInbox(_ context.Context, _ string, limit int, _ bool) (tracker.ReadInboxResult, error) {
 	f.lastLimit = limit
@@ -125,7 +128,7 @@ func TestFooterShowsBroccoliRuntimeStatus(t *testing.T) {
 		rows:    []agentRow{{Name: "alpha", Scope: "local"}},
 	}
 	footer := m.footer(120)
-	if !strings.Contains(footer, "Broccoli Comms runtime") || !strings.Contains(footer, "tracker connected") || !strings.Contains(footer, "agents 1") {
+	if !strings.Contains(footer, "Broccoli Comms runtime") || !strings.Contains(footer, "rpc ok") || !strings.Contains(footer, "online 0/1") {
 		t.Fatalf("footer missing runtime status: %q", footer)
 	}
 }

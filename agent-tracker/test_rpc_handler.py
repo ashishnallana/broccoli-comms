@@ -75,6 +75,8 @@ class TestRpcHandler(unittest.TestCase):
         self.assertFalse(info.get("no_registry", False))
         self.assertIn("last_heartbeat", info)
         self.assertEqual(len(state.state), 1)
+        self.assertEqual(state.events[-1]["type"], "agent_registered")
+        self.assertEqual(state.events[-1]["target_agent_id"], "id-1")
 
     def test_handle_list_includes_local_metadata_and_model_type(self):
         with mock.patch.object(registry_client, "HOSTNAME", "test-host"), mock.patch.object(registry_client, "TRACKER_ID", "tracker-1"):
@@ -799,6 +801,20 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    def test_tracker_info_includes_health_snapshot(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle"})
+        state.set_agent("agent2", {"agent_id": "id-2", "status": "offline"})
+        with mock.patch.object(rpc_handler, "_read_registry_status", return_value={"connected": False, "registries": {"local": {"connected": False}}}), \
+             mock.patch.object(registry_client, "fetch_trackers", return_value=(200, {"trackers": [{"tracker_id": registry_client.TRACKER_ID, "status": "active"}, {"tracker_id": "remote-1", "status": "active"}, {"tracker_id": "remote-2", "status": "gone"}]})):
+            result = rpc_handler.handle_tracker_info({})
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["agent_count"], 2)
+        self.assertEqual(result["online_agent_count"], 1)
+        self.assertFalse(result["registry_connected"])
+        self.assertEqual(result["registries"][0]["name"], "local")
+        self.assertEqual(result["remote_tracker_count"], 2)
+        self.assertEqual(result["online_remote_tracker_count"], 1)
+
     def test_get_unread_counts_counts_stable_sender_keys_without_marking_read(self):
         inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
         try:
@@ -850,6 +866,26 @@ class TestRpcHandler(unittest.TestCase):
         finally:
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
+
+    @mock.patch("registry_client.push_agent_update")
+    def test_update_agent_publishes_status_changed_event(self, push_update):
+        state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1", "status": "idle", "agent_type": "pi", "agent_cmd": "pi"})
+        self.assertTrue(rpc_handler.handle_update_agent({"agent_name": "agent1", "status": "running"}))
+        push_update.assert_called_once_with("id-1", "running")
+        event = state.events[-1]
+        self.assertEqual(event["type"], "agent_status_changed")
+        self.assertEqual(event["target_agent_id"], "id-1")
+        self.assertEqual(event["old_status"], "idle")
+        self.assertEqual(event["status"], "running")
+
+    def test_heartbeat_publishes_status_changed_event(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1", "status": "idle", "agent_type": "pi", "agent_cmd": "pi"})
+        self.assertTrue(rpc_handler.handle_heartbeat({"agent_name": "agent1", "status": "running"}))
+        event = state.events[-1]
+        self.assertEqual(event["type"], "agent_status_changed")
+        self.assertEqual(event["target_agent_id"], "id-1")
+        self.assertEqual(event["old_status"], "idle")
+        self.assertEqual(event["status"], "running")
 
     @mock.patch("tmux_util.send_keys")
     def test_send_message_notifies_recovered_unknown_agent(self, send_keys):

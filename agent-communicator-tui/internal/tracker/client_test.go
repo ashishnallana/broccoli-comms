@@ -64,6 +64,20 @@ func TestListSetsAgentNamesFromMapKeys(t *testing.T) {
 	}
 }
 
+func TestTrackerInfo(t *testing.T) {
+	client := fakeClient(t, func(req rpcRequest) any {
+		if req.Method != "tracker_info" {
+			t.Fatalf("method = %s, want tracker_info", req.Method)
+		}
+		connected := true
+		return TrackerInfo{Status: "ok", AgentCount: 3, OnlineAgentCount: 2, RegistryConnected: &connected, RemoteTrackerCount: 4, OnlineRemoteTrackerCount: 3}
+	})
+	info, err := client.TrackerInfo(context.Background())
+	if err != nil || info.AgentCount != 3 || info.OnlineAgentCount != 2 || info.RegistryConnected == nil || !*info.RegistryConnected || info.OnlineRemoteTrackerCount != 3 {
+		t.Fatalf("TrackerInfo = %+v, %v", info, err)
+	}
+}
+
 func TestWaitEventsUsesLongerSocketDeadlineAndFilters(t *testing.T) {
 	client := fakeClient(t, func(req rpcRequest) any {
 		if req.Method != "wait_events" {

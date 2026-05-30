@@ -59,6 +59,14 @@ type Event struct {
 	Sender          string  `json:"sender,omitempty"`
 	MessageID       string  `json:"message_id,omitempty"`
 	HasAttachments  bool    `json:"has_attachments,omitempty"`
+	Hostname        string  `json:"hostname,omitempty"`
+	TrackerID       string  `json:"tracker_id,omitempty"`
+	Status          string  `json:"status,omitempty"`
+	OldStatus       string  `json:"old_status,omitempty"`
+	ModelType       string  `json:"model_type,omitempty"`
+	AgentType       string  `json:"agent_type,omitempty"`
+	AgentCmd        string  `json:"agent_cmd,omitempty"`
+	Message         string  `json:"message,omitempty"`
 }
 
 type WaitEventsResult struct {
@@ -99,6 +107,30 @@ type WaitOptions struct {
 type AgentConfig struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+type TrackerInfo struct {
+	Hostname                 string           `json:"hostname"`
+	TrackerID                string           `json:"tracker_id"`
+	HTTPPort                 int              `json:"http_port"`
+	Status                   string           `json:"status"`
+	AgentCount               int              `json:"agent_count"`
+	OnlineAgentCount         int              `json:"online_agent_count"`
+	RegistryConnected        *bool            `json:"registry_connected,omitempty"`
+	Registries               []RegistryHealth `json:"registries,omitempty"`
+	RemoteTrackerCount       int              `json:"remote_tracker_count,omitempty"`
+	OnlineRemoteTrackerCount int              `json:"online_remote_tracker_count,omitempty"`
+}
+
+type RegistryHealth struct {
+	Name          string  `json:"name"`
+	Connected     bool    `json:"connected"`
+	RegistryURL   string  `json:"registry_url,omitempty"`
+	LastOperation string  `json:"last_operation,omitempty"`
+	StatusCode    int     `json:"status_code,omitempty"`
+	LastAttempt   float64 `json:"last_attempt,omitempty"`
+	LastSuccess   float64 `json:"last_success,omitempty"`
+	LastError     string  `json:"last_error,omitempty"`
 }
 
 type RemoteTracker struct {

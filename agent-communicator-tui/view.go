@@ -202,25 +202,64 @@ func (m model) errorStatusLine() string {
 }
 
 func (m model) runtimeStatusLine() string {
-	if !m.runtime.AppRuntime {
-		return ""
-	}
-	state := "tracker connected"
+	state := "rpc ok"
 	if m.agentListLoading {
-		state = "tracker refreshing"
+		state = "rpc refreshing"
 	}
-	if m.agentListStale || m.err != nil {
-		state = "tracker unavailable"
+	if m.healthErr != nil || m.agentListStale || m.err != nil {
+		state = "rpc degraded"
 	}
-	remoteDirect := "remote pane input off"
-	if m.runtime.RemoteDirectInputEnabled {
-		remoteDirect = "remote pane input on"
+	if m.health.Status != "" && m.health.Status != "ok" && state == "rpc ok" {
+		state = "rpc " + m.health.Status
 	}
-	details := []string{"Broccoli Comms runtime", state, fmt.Sprintf("agents %d", len(m.rows)), remoteDirect}
+	row := m.currentRow()
+	active := "no agent"
+	if row.Name != "" {
+		activeParts := []string{row.Name}
+		if badge := modelBadge(row); badge != "??" {
+			activeParts = append(activeParts, badge)
+		}
+		if machine := rowMachineLabel(row); machine != "" {
+			activeParts = append(activeParts, "@ "+machine)
+		}
+		active = strings.Join(activeParts, " ")
+	}
+	online, total := m.health.OnlineAgentCount, m.health.AgentCount
+	if total == 0 && len(m.rows) > 0 {
+		total = len(m.rows)
+		online = countOnlineRows(m.rows)
+	}
+	registry := "registry unknown"
+	if m.health.RegistryConnected != nil {
+		if *m.health.RegistryConnected {
+			registry = "registry online"
+		} else {
+			registry = "registry offline"
+		}
+	}
+	details := []string{state, "active " + active, fmt.Sprintf("online %d/%d", online, total), registry}
+	if m.health.RemoteTrackerCount > 0 {
+		details = append(details, fmt.Sprintf("trackers %d/%d", m.health.OnlineRemoteTrackerCount, m.health.RemoteTrackerCount))
+	}
+	details = append(details, time.Now().In(displayLocation).Format("15:04"))
+	if m.runtime.AppRuntime {
+		details = append([]string{"Broccoli Comms runtime"}, details...)
+	}
 	if m.runtime.TrackerSocket != "" {
 		details = append(details, "socket "+filepath.Base(m.runtime.TrackerSocket))
 	}
 	return strings.Join(details, " · ")
+}
+
+func countOnlineRows(rows []agentRow) int {
+	count := 0
+	for _, row := range rows {
+		switch strings.ToLower(strings.TrimSpace(row.Status)) {
+		case "running", "active", "online", "idle", "ready":
+			count++
+		}
+	}
+	return count
 }
 
 func (m model) agentListTitle() string {
@@ -397,13 +436,14 @@ func (m model) messageLinesForWidth(width int) []string {
 	defer func() {
 		debugLogf("message_lines duration=%s messages=%d width=%d", time.Since(start), len(messages), width)
 	}()
-	if len(messages) == 0 {
+	systemEvents := m.displayOrderedSystemEvents()
+	if len(messages) == 0 && len(systemEvents) == 0 {
 		if len(m.rows) > 0 && m.rows[m.selected].Scope == "remote" {
 			return wrapLine(mutedStyle.Render("No messages. Remote history is in-memory for sent messages only."), wrapWidth)
 		}
 		return wrapLine(mutedStyle.Render("No messages. Inbox history loads for local agents."), wrapWidth)
 	}
-	cacheKey := messageRenderCacheKey(m, messages, wrapWidth)
+	cacheKey := messageRenderCacheKey(m, messages, systemEvents, wrapWidth)
 	if lines, ok := cachedMessageLines(cacheKey); ok {
 		debugLogf("message_lines cache=hit messages=%d width=%d", len(messages), width)
 		return lines
@@ -411,10 +451,16 @@ func (m model) messageLinesForWidth(width int) []string {
 	debugLogf("message_lines cache=miss messages=%d width=%d", len(messages), width)
 	lines := []string{}
 	for i, msg := range messages {
-		if i > 0 {
+		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
 		lines = append(lines, m.messageBubbleLines(msg, i, wrapWidth)...)
+	}
+	for _, event := range systemEvents {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, m.systemEventLine(event, wrapWidth))
 	}
 	storeMessageLines(cacheKey, lines)
 	return lines

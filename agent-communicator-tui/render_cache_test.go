@@ -11,23 +11,27 @@ func TestMessageRenderCacheKeyIgnoresComposer(t *testing.T) {
 	m1 := model{width: 80, messageSelected: 0, composer: []rune("a")}
 	m2 := m1
 	m2.composer = []rune("abcd")
-	if k1, k2 := messageRenderCacheKey(m1, messages, 80), messageRenderCacheKey(m2, messages, 80); k1 != k2 {
+	if k1, k2 := messageRenderCacheKey(m1, messages, nil, 80), messageRenderCacheKey(m2, messages, nil, 80); k1 != k2 {
 		t.Fatalf("cache key changed with composer: %s != %s", k1, k2)
 	}
 }
 
-func TestMessageRenderCacheKeyChangesForSelectionAndBody(t *testing.T) {
+func TestMessageRenderCacheKeyChangesForSelectionBodyAndEvents(t *testing.T) {
 	messages := []tracker.Message{{Sender: "alice", Body: "hello", MessageID: "1"}}
 	m := model{}
-	base := messageRenderCacheKey(m, messages, 80)
+	base := messageRenderCacheKey(m, messages, nil, 80)
 	m.messageSelected = 1
-	if got := messageRenderCacheKey(m, messages, 80); got == base {
+	if got := messageRenderCacheKey(m, messages, nil, 80); got == base {
 		t.Fatal("cache key did not change with selected message")
 	}
 	m.messageSelected = 0
 	messages[0].Body = "changed"
-	if got := messageRenderCacheKey(m, messages, 80); got == base {
+	if got := messageRenderCacheKey(m, messages, nil, 80); got == base {
 		t.Fatal("cache key did not change with message body")
+	}
+	messages[0].Body = "hello"
+	if got := messageRenderCacheKey(m, messages, []tracker.Event{{Seq: 1, Type: "agent_registered"}}, 80); got == base {
+		t.Fatal("cache key did not change with system event")
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 
 type localClient interface {
 	EnsureMailbox(context.Context, string) (tracker.EnsureMailboxResult, error)
+	TrackerInfo(context.Context) (tracker.TrackerInfo, error)
 	List(context.Context) (map[string]tracker.Agent, error)
 	ReadInbox(context.Context, string, int, bool) (tracker.ReadInboxResult, error)
 	ReadInboxForSender(context.Context, string, int, bool, string, string, string) (tracker.ReadInboxResult, error)
@@ -39,6 +40,10 @@ type mailboxEnsured struct{ Err error }
 
 type agentsLoaded struct {
 	Rows []agentRow
+	Err  error
+}
+type healthLoaded struct {
+	Info tracker.TrackerInfo
 	Err  error
 }
 type inboxLoaded struct {
