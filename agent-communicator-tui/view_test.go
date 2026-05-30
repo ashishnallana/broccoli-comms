@@ -21,7 +21,7 @@ func TestMessageLinesHighlightSenderAndSeparateMessages(t *testing.T) {
 
 func TestMarkdownTablesRenderAsAlignedRows(t *testing.T) {
 	body := "# Test Markdown Report\n\n| ID | Name | Status |\n|---:|---|---|\n| 1 | Alpha | Complete |"
-	view := model{height: 20, messages: []tracker.Message{{Sender: "agent", Body: body}}}.messageView(100)
+	view := model{height: 24, messages: []tracker.Message{{Sender: "agent", Body: body}}}.messageView(100)
 	for _, want := range []string{"Test Markdown Report", "│ ID", "Alpha", "Complete", "├"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("rendered markdown missing %q:\n%s", want, view)

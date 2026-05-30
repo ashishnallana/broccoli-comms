@@ -96,10 +96,32 @@ func TestComposerModeButtonsExcludeTargetAndBroadcast(t *testing.T) {
 	}
 }
 
+func TestComposerModeDescriptionTracksSelectedMode(t *testing.T) {
+	cases := []struct {
+		name string
+		m    model
+		want string
+	}{
+		{name: "message", m: model{inputMode: inputModeMessage}, want: "Send chat message."},
+		{name: "text", m: model{inputMode: inputModeText}, want: "Type into agent pane."},
+		{name: "keys", m: model{inputMode: inputModeKeys}, want: "Send keys to agent pane."},
+		{name: "slash text", m: model{inputMode: inputModeMessage, composer: []rune("/text hello")}, want: "Type into agent pane."},
+		{name: "slash keys", m: model{inputMode: inputModeMessage, composer: []rune("/keys Enter")}, want: "Send keys to agent pane."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			controls := tc.m.composerModeHint(160)
+			if !strings.Contains(controls, tc.want) {
+				t.Fatalf("mode description missing %q: %s", tc.want, controls)
+			}
+		})
+	}
+}
+
 func TestComposerInputAreaDoesNotIncludeModeButtons(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, inputMode: inputModeMessage}
 	input := m.composerView(120)
-	for _, unwanted := range []string{"/msg", "/text", "/keys", "broadcast", "target"} {
+	for _, unwanted := range []string{"/msg", "/text", "/keys", "Send chat message", "broadcast", "target"} {
 		if strings.Contains(input, unwanted) {
 			t.Fatalf("composer input should not contain %q: %s", unwanted, input)
 		}

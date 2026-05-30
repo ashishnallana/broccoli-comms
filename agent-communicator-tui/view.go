@@ -140,11 +140,11 @@ func (m model) conversationTitle() string {
 
 func (m model) composerBox(width int) string {
 	input := m.composerInputBox(width)
-	buttons := m.composerModeButtons(width)
-	if buttons == "" {
+	controls := m.composerModeControls(width)
+	if controls == "" {
 		return input
 	}
-	return input + "\n" + buttons
+	return input + "\n" + controls
 }
 
 func (m model) composerInputBox(width int) string {
@@ -602,10 +602,10 @@ func inputModeButtons() []inputModeButton {
 }
 
 func (m model) composerModeHint(width int) string {
-	return m.composerModeButtons(width)
+	return m.composerModeControls(width)
 }
 
-func (m model) composerModeButtons(width int) string {
+func (m model) activeComposerModeName() string {
 	action := composerActionForMode(string(m.composer), m.inputMode)
 	active := m.inputMode.name()
 	if slashComposerCommand(string(m.composer)) {
@@ -618,6 +618,19 @@ func (m model) composerModeButtons(width int) string {
 			active = "msg"
 		}
 	}
+	return active
+}
+
+func (m model) composerModeControls(width int) string {
+	buttons := m.composerModeButtons(width)
+	if buttons == "" {
+		return ""
+	}
+	return buttons + "\n" + m.composerModeDescription(width)
+}
+
+func (m model) composerModeButtons(width int) string {
+	active := m.activeComposerModeName()
 	buttons := []string{}
 	for i, button := range inputModeButtons() {
 		if i > 0 {
@@ -630,6 +643,17 @@ func (m model) composerModeButtons(width int) string {
 		buttons = append(buttons, style.Render(button.Label))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Top, buttons...)
+}
+
+func (m model) composerModeDescription(width int) string {
+	description := "Send chat message."
+	switch m.activeComposerModeName() {
+	case "text":
+		description = "Type into agent pane."
+	case "key":
+		description = "Send keys to agent pane."
+	}
+	return mutedStyle.Render(truncateCells(description, max(1, width-1)))
 }
 
 func (m model) sendingContextLine() string {
