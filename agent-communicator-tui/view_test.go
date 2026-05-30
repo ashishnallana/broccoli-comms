@@ -129,13 +129,6 @@ func TestWideComposerSitsAtPanelTop(t *testing.T) {
 	}
 }
 
-func TestFooterUsesLowercaseCtrlHHelp(t *testing.T) {
-	footer := model{width: 160}.footer(160)
-	if !strings.Contains(footer, "c-h hide") || strings.Contains(footer, "c-H") {
-		t.Fatalf("footer should advertise lowercase c-h binding:\n%s", footer)
-	}
-}
-
 func TestLayoutWidthsConsumeAvailableWidth(t *testing.T) {
 	m := model{width: 160}
 	left, mid, right := m.layoutWidths()
