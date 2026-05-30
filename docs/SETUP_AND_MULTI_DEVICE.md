@@ -10,9 +10,9 @@ This guide covers:
 
 ## 1. What Broccoli Comms owns
 
-Broccoli Comms is designed to avoid depending on a user's existing Home Manager or tmux setup. The app owns:
+Broccoli Comms is designed to avoid depending on a user's existing Home Manager or global tracker setup. The app owns:
 
-- a private `tmux` server/socket
+- a `broccoli-comms` session in the user's default tmux server by default
 - a private `agent-tracker` daemon/socket
 - managed agent windows launched through `agent-wrapper`
 - the `agent-communicator` TUI launched with explicit private socket environment
@@ -23,7 +23,7 @@ Default paths:
 | --- | --- |
 | Runtime dir | `$XDG_RUNTIME_DIR/broccoli-comms` |
 | Tracker socket | `$XDG_RUNTIME_DIR/broccoli-comms/agent-tracker.sock` |
-| Tmux socket | `$XDG_RUNTIME_DIR/broccoli-comms/tmux.sock` |
+| Tmux mode | `default` uses the user's normal tmux server; `BROCCOLI_COMMS_TMUX_MODE=private` uses `$XDG_RUNTIME_DIR/broccoli-comms/tmux.sock` |
 | Config | `$XDG_CONFIG_HOME/broccoli-comms/config.json` |
 | Logs/cache | `$XDG_CACHE_HOME/broccoli-comms` |
 
