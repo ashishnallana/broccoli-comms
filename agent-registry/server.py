@@ -17,6 +17,7 @@ LOG = logging.getLogger("agent-registry")
 
 TOKEN = os.environ.get("AGENT_REGISTRY_TOKEN", "")
 AUTH_REQUIRED = os.environ.get("AGENT_REGISTRY_AUTH", "true").lower() not in ("0", "false", "no")
+AGENT_REGISTRY_BROAD_WATCH_ALLOWED = os.environ.get("AGENT_REGISTRY_BROAD_WATCH_ALLOWED", "false").lower() in {"1", "true", "yes", "on"}
 MAX_BODY_BYTES = int(os.environ.get("AGENT_MAX_DELIVERY_BYTES", "5242880"))
 STALE = int(os.environ.get("TRACKER_STALE_SECONDS", "60"))
 GONE = int(os.environ.get("TRACKER_GONE_SECONDS", "180"))
@@ -36,6 +37,7 @@ class Store:
         self.agents = {}
         self.deliveries = {}
         self.tracker_events = {}
+        self.remote_watch_leases = {}  # target_tracker_id -> {(source_tracker_id, client_id): {expires_at, source_tracker_id, watch_targets}}
         self.lock = threading.RLock()
         self.cv = threading.Condition(self.lock)
         self._load_locked()
@@ -114,6 +116,16 @@ class Store:
                     )
                     tracker["status"] = status
                     changed = True
+            
+            # Sweep expired remote watch leases
+            for target_tid, leases in list(self.remote_watch_leases.items()):
+                for key, lease in list(leases.items()):
+                    if lease["expires_at"] < now:
+                        leases.pop(key)
+                        LOG.info("AUDIT: Purged expired remote watch lease for client %s on target_tid=%s", key[1], target_tid)
+                if not leases:
+                    self.remote_watch_leases.pop(target_tid, None)
+
             agents = {
                 agent_id: info
                 for agent_id, info in self.agents.items()
@@ -141,6 +153,50 @@ class Store:
             if changed:
                 LOG.info("registry sweep updated state trackers=%s agents=%s queued_trackers=%s", len(self.trackers), len(self.agents), len(self.deliveries))
                 self._persist_locked()
+
+    def _resolve_tracker_id_by_host(self, hostname: str) -> str | None:
+        for tid, tracker in self.trackers.items():
+            if tracker["hostname"] == hostname and tracker["status"] != "gone":
+                return tid
+        return None
+
+    def put_watch_lease(self, source_tracker_id: str, client_id: str, watch_targets: list[str], lease_seconds: float, scope: str = "narrow") -> None:
+        """Registers or replaces a lease-bound remote watch lease atomically."""
+        now = time.time()
+        expires_at = now + lease_seconds
+        
+        with self.lock:
+            # First clear previous watches for this specific client
+            self.clear_watch_leases(source_tracker_id, client_id)
+            
+            for target in watch_targets:
+                if "/" not in target:
+                    continue
+                host, _ = target.split("/", 1)
+                if ":" in host:
+                    _, host = host.split(":", 1)
+                target_tid = self._resolve_tracker_id_by_host(host)
+                if not target_tid:
+                    LOG.warning("put_watch_lease: could not resolve tracker_id for hostname=%s", host)
+                    continue
+                
+                self.remote_watch_leases.setdefault(target_tid, {})
+                self.remote_watch_leases[target_tid][(source_tracker_id, client_id)] = {
+                    "expires_at": expires_at,
+                    "source_tracker_id": source_tracker_id,
+                    "watch_targets": set(watch_targets),
+                    "scope": scope
+                }
+            LOG.info("AUDIT: Registered remote watch lease: source_tracker_id=%s client_id=%s scope=%s lease_seconds=%.1fs targets=%s", source_tracker_id, client_id, scope, lease_seconds, watch_targets)
+
+    def clear_watch_leases(self, source_tracker_id: str, client_id: str) -> None:
+        """Atomically clears all remote watch leases for a given client."""
+        with self.lock:
+            for target_tid, leases in list(self.remote_watch_leases.items()):
+                key = (source_tracker_id, client_id)
+                if key in leases:
+                    leases.pop(key)
+                    LOG.info("AUDIT: Cleared remote watch lease for source_tracker_id=%s client_id=%s on target_tid=%s", source_tracker_id, client_id, target_tid)
 
     def list_agents(self):
         with self.lock:
@@ -330,6 +386,51 @@ class Store:
                 self.tracker_events.pop(tracker_id, None)
             self._persist_locked()
             return True
+
+
+def _fanout_remote_message_delivered(store, target_tracker_id, target_agent, msg_payload):
+    """Dispatches remote_agent_event to all active remote watchers of the delivered message target."""
+    now = time.time()
+    with store.lock:
+        leases = store.remote_watch_leases.get(target_tracker_id) or {}
+        for (source_tracker_id, client_id), lease in list(leases.items()):
+            if lease["expires_at"] < now:
+                continue
+            
+            scope = lease.get("scope", "narrow")
+            is_broad = True
+            
+            if msg_payload.get("sender_tracker_id") == source_tracker_id:
+                is_broad = False
+            elif target_agent.get("tracker_id") == source_tracker_id:
+                is_broad = False
+                
+            if scope == "narrow" and is_broad:
+                continue
+                
+            if scope == "broad" and is_broad and not AGENT_REGISTRY_BROAD_WATCH_ALLOWED:
+                LOG.warning("AUDIT: Fanout blocked unauthorized passive observation event from %s to watcher t_id=%s", target_agent["hostname"], source_tracker_id)
+                continue
+
+            match = False
+            for wt in lease["watch_targets"]:
+                if "/" in wt:
+                    _, agent_ref = wt.split("/", 1)
+                    if agent_ref in {target_agent["agent_id"], target_agent["name"]}:
+                        match = True
+                        break
+            
+            if match:
+                event_payload = {
+                    "target_agent_id": f"{target_agent['hostname']}/{target_agent['agent_id']}",
+                    "target_agent_name": f"{target_agent['hostname']}/{target_agent['name']}",
+                    "sender": msg_payload.get("sender_name"),
+                    "message_id": msg_payload.get("message_id"),
+                    "message": msg_payload.get("message"),
+                    "timestamp": msg_payload.get("sent_at"),
+                }
+                store.enqueue_tracker_event(source_tracker_id, "remote_agent_event", "registry", event_payload)
+                LOG.info("AUDIT: Fanned out remote watch event to source_tracker_id=%s client_id=%s (scope=%s, is_broad=%s)", source_tracker_id, client_id, scope, is_broad)
 
 
 def _validate_attachments(body):
@@ -570,6 +671,35 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 if not {"tracker_id", "hostname", "address", "http_port"}.issubset(body):
                     return self._json(400, {"error": "invalid_request", "message": "tracker_id, hostname, address, http_port are required"})
                 return self._json(201 if store.put_tracker(body) else 200, {"tracker_id": body["tracker_id"]})
+            if len(parts) == 3 and parts[0] == "trackers" and parts[2] == "watch-leases":
+                tracker_id = parts[1]
+                if not store.has_tracker(tracker_id):
+                    return self._json(404, {"error": "tracker_not_found", "message": "tracker not registered; call POST /trackers first"})
+                required = {"client_id", "watch_targets", "lease_seconds"}
+                if not required.issubset(body):
+                    return self._json(400, {"error": "invalid_request", "message": "client_id, watch_targets, lease_seconds are required"})
+                watch_targets = body["watch_targets"]
+                if not isinstance(watch_targets, list):
+                    return self._json(400, {"error": "invalid_request", "message": "watch_targets must be a list"})
+                if len(watch_targets) > 50:
+                    return self._json(400, {"error": "limit_exceeded", "message": "max 50 watched agents per lease"})
+                try:
+                    lease_seconds = float(body["lease_seconds"])
+                except ValueError:
+                    return self._json(400, {"error": "invalid_request", "message": "lease_seconds must be a number"})
+                
+                scope = body.get("scope", "narrow")
+                if scope not in {"narrow", "broad"}:
+                    return self._json(400, {"error": "invalid_request", "message": "scope must be narrow or broad"})
+                
+                # Security policy check: reject unauthorized broad passive observation
+                if scope == "broad" and not AGENT_REGISTRY_BROAD_WATCH_ALLOWED:
+                    LOG.warning("AUDIT: Denied unauthorized broad watch lease request: tracker_id=%s client_id=%s targets=%s", tracker_id, body["client_id"], watch_targets)
+                    return self._json(403, {"error": "unauthorized_scope", "message": "Broad passive remote observation is disabled on this registry"})
+                
+                store.put_watch_lease(tracker_id, body["client_id"], watch_targets, lease_seconds, scope=scope)
+                return self._json(200, {"ok": True})
+
             if len(parts) == 3 and parts[0] == "trackers" and parts[2] in {"heartbeat", "agent-update"}:
                 tracker_id = parts[1]
                 if not store.has_tracker(tracker_id):
@@ -730,16 +860,30 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                     "message_id": body.get("message_id"),
                     "sent_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
                 })
+                _fanout_remote_message_delivered(store, target["tracker_id"], target, entry)
                 return self._json(202, {"ok": True, "queued": True, "message_id": entry["message_id"], "target_agent_id": target["agent_id"], "target_name": target["name"], "target_tracker": target["hostname"]})
+            self._json(404, {"error": "not_found", "message": "no such endpoint"})
+
+        def do_DELETE(self):
+            if not self._check():
+                return
+            parts = self._parts()
+            if len(parts) == 4 and parts[0] == "trackers" and parts[2] == "watch-leases":
+                tracker_id, client_id = parts[1], parts[3]
+                if not store.has_tracker(tracker_id):
+                    return self._json(404, {"error": "tracker_not_found", "message": "tracker not registered"})
+                store.clear_watch_leases(tracker_id, client_id)
+                return self._json(200, {"ok": True})
             self._json(404, {"error": "not_found", "message": "no such endpoint"})
 
     return Handler
 
 
 def serve_forever():
+    host = os.environ.get("AGENT_REGISTRY_HOST", "0.0.0.0")
     port = int(os.environ.get("AGENT_REGISTRY_PORT", "8080"))
-    LOG.info("starting agent-registry bind=0.0.0.0 port=%s state_path=%s auth_required=%s", port, STATE_PATH, AUTH_REQUIRED)
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler()).serve_forever()
+    LOG.info("starting agent-registry bind=%s port=%s state_path=%s auth_required=%s", host, port, STATE_PATH, AUTH_REQUIRED)
+    ThreadingHTTPServer((host, port), make_handler()).serve_forever()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../shared/ipcChannels'
-import type { TargetRef } from '../shared/contracts'
+import type { TargetRef, GroupWatchParams } from '../shared/contracts'
 import { mockAgents, mockMessages, mockRuntimeStatus } from '../test/fixtures'
 import { LocalTrackerClient, resolveTrackerSocket } from './trackerClient'
 
@@ -26,9 +26,9 @@ export function registerMockIpcHandlers(): void {
     const tracker = trackerClient()
     return tracker ? tracker.listAgents() : mockAgents
   })
-  ipcMain.handle(IPC_CHANNELS.listMessages, async (_event, conversationKey: string) => {
+  ipcMain.handle(IPC_CHANNELS.listMessages, async (_event, conversationKey: string, inboxOwnerName?: string) => {
     const tracker = trackerClient()
-    return tracker ? tracker.listMessages(conversationKey) : (mockMessages[conversationKey] ?? [])
+    return tracker ? tracker.listMessages(conversationKey, inboxOwnerName) : (mockMessages[conversationKey] ?? [])
   })
   ipcMain.handle(IPC_CHANNELS.sendMessage, async (_event, target: TargetRef, body: string) => {
     const tracker = trackerClient()
@@ -39,6 +39,7 @@ export function registerMockIpcHandlers(): void {
       conversationKey: target.address,
       direction: 'outbound' as const,
       author: 'you',
+      recipient: target.address,
       body,
       createdAt: new Date().toISOString(),
       deliveryState: 'delivered' as const,
@@ -46,10 +47,9 @@ export function registerMockIpcHandlers(): void {
     mockMessages[message.conversationKey] = [...(mockMessages[message.conversationKey] ?? []), message]
     return { ok: true, message }
   })
-  ipcMain.handle(IPC_CHANNELS.sendDirectText, async (_event, target: TargetRef, _text: string, submit: boolean) => {
-    if (trackerClient()) {
-      return { ok: false, summary: 'Direct pane control is not wired for tracker Simple View yet.', error: 'direct-not-implemented' }
-    }
+  ipcMain.handle(IPC_CHANNELS.sendDirectText, async (_event, target: TargetRef, text: string, submit: boolean) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.sendDirectText(target, text, submit)
     return {
       ok: target.scope === 'local',
       summary:
@@ -60,9 +60,8 @@ export function registerMockIpcHandlers(): void {
     }
   })
   ipcMain.handle(IPC_CHANNELS.sendDirectKeys, async (_event, target: TargetRef, keys: string[]) => {
-    if (trackerClient()) {
-      return { ok: false, summary: 'Direct pane control is not wired for tracker Simple View yet.', error: 'direct-not-implemented' }
-    }
+    const tracker = trackerClient()
+    if (tracker) return tracker.sendDirectKeys(target, keys)
     return {
       ok: target.scope === 'local',
       summary:
@@ -72,4 +71,124 @@ export function registerMockIpcHandlers(): void {
       error: target.scope === 'local' ? undefined : 'remote-direct-disabled',
     }
   })
+  ipcMain.handle(IPC_CHANNELS.sendPaneCapture, async (_event, sourceName: string, targetName: string) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.sendPaneCapture(sourceName, targetName)
+
+    // Mock implementation
+    const messageText = `### Mock Pane Capture Snapshot from ${sourceName}\n` +
+      `- **Pane:** %0\n` +
+      `- **Session:** mock-session\n` +
+      `- **Copy Mode:** Inactive\n` +
+      `- **Captured At:** ${new Date().toISOString()}\n` +
+      `\n\`\`\`\n[mock pane history output for dev exploration]\n\`\`\`\n`
+    const message = {
+      id: `mock-pane-cap-${Date.now()}`,
+      conversationKey: sourceName,
+      direction: 'inbound' as const,
+      author: sourceName,
+      recipient: 'you',
+      body: messageText,
+      createdAt: new Date().toISOString(),
+      deliveryState: 'received' as const,
+    }
+    mockMessages[sourceName] = [...(mockMessages[sourceName] ?? []), message]
+    return { ok: true, summary: `Mock snapshot successfully sent to ${targetName}` }
+  })
+  ipcMain.handle(IPC_CHANNELS.listSavedAgents, async () => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.listSavedAgents()
+
+    return [
+      { name: 'jetski', agentCommand: 'jetski-cli', agentArgs: [], description: '专家智能编程助手 pair programming with DeepMind researchers' },
+      { name: 'pi', agentCommand: 'pi-agent', agentArgs: ['--role', 'reviewer'], description: 'Local developer assistant for Nix and shell scripting' },
+    ]
+  })
+  ipcMain.handle(IPC_CHANNELS.spinAgent, async (_event, configName: string, directory: string) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.spinAgent(configName, directory)
+
+    return { ok: true, summary: `Mock spun agent '${configName}' successfully inside ${directory}` }
+  })
+  ipcMain.handle(IPC_CHANNELS.selectLocalDirectory, async () => {
+    const { dialog } = require('electron')
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+      title: 'Select Agent Working Directory',
+      buttonLabel: 'Select Directory',
+    })
+    return result.filePaths[0] || null
+  })
+  ipcMain.handle('tracker-wait-events', async (_event, clientId: string, cursor: number, watchlist: string[], leaseSeconds: number) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.waitEvents(clientId, cursor, watchlist, leaseSeconds)
+    return { events: [], lastSeq: 0 }
+  })
+  ipcMain.on('tracker-update-watchlist', (_event, watchlist: string[] | GroupWatchParams) => {
+    if (watchlist && typeof watchlist === 'object' && 'mode' in watchlist && watchlist.mode === 'group') {
+      const tracker = trackerClient()
+      if (tracker) {
+        void tracker.updateWatchlist(watchlist).catch((e) => console.error('Failed to update group watchlist lease:', e))
+      }
+      activeWatchlist = [watchlist.groupId, ...watchlist.members]
+    } else {
+      activeWatchlist = watchlist as string[]
+    }
+  })
+  ipcMain.handle('tracker-list-group-messages', async (_event, groupId: string) => {
+    const tracker = trackerClient()
+    if (tracker) return tracker.listGroupMessages(groupId)
+    return []
+  })
+}
+
+let activeWatchlist: string[] = []
+let eventLoopRunning = false
+let eventLoopCancel = false
+
+export async function startTrackerEventLoop(webContents: Electron.WebContents) {
+  if (eventLoopRunning) return
+  eventLoopRunning = true
+  eventLoopCancel = false
+
+  let since = 0
+  while (!eventLoopCancel) {
+    const tracker = trackerClient()
+    if (!tracker) {
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+      continue
+    }
+
+    try {
+      const clientId = tracker.selfAgentName
+      const result = await tracker.waitEvents(clientId, since, activeWatchlist, 60)
+      if (eventLoopCancel) break
+
+      if (result.reset || result.gap) {
+        since = 0
+        webContents.send('tracker-reset-required')
+        continue
+      }
+
+      if (result && result.events && result.events.length > 0) {
+        webContents.send(IPC_CHANNELS.onTrackerEvents, result.events)
+      }
+      since = result.lastSeq || since
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      if (msg.includes('cursor_expired')) {
+        since = 0
+        webContents.send('tracker-reset-required')
+      }
+      if (msg.includes('Broad passive remote observation is disabled') || msg.includes('unauthorized_scope') || msg.includes('unauthorized')) {
+        webContents.send('tracker-watch-denied', msg)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    }
+  }
+  eventLoopRunning = false
+}
+
+export function stopTrackerEventLoop() {
+  eventLoopCancel = true
 }

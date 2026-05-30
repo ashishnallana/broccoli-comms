@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
@@ -8,6 +8,7 @@ import {
   mergeConversationMessages,
   messageMatchesConversation,
   resolveSelfAgentName,
+  resolveTmuxSocket,
   resolveTrackerSocket,
   trackerAgentToSummary,
   trackerMessageTargetParams,
@@ -66,6 +67,19 @@ async function withFakeTracker<T>(
   }
 }
 
+async function withFakeSocket<T>(socketPath: string, run: () => Promise<T>): Promise<T> {
+  const server = createServer((socket) => socket.end())
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(socketPath, resolve)
+  })
+  try {
+    return await run()
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+}
+
 describe('resolveTrackerSocket', () => {
   it('prefers explicit AGENT_TRACKER_SOCKET', () => {
     expect(
@@ -92,6 +106,15 @@ describe('resolveTrackerSocket', () => {
 
   it('returns undefined when no explicit tracker runtime is provided', () => {
     expect(resolveTrackerSocket(env({ XDG_CACHE_HOME: '/tmp/cache', TMUX: '/tmp/tmux,1,0' }))).toBeUndefined()
+  })
+})
+
+describe('resolveTmuxSocket', () => {
+  it('prefers explicit tmux env vars and only infers a sibling socket for broccoli private runtimes', () => {
+    expect(resolveTmuxSocket('/tmp/runtime/agent-tracker.sock', env({ AGENT_TRACKER_TMUX_SOCKET: '/tmp/explicit.sock' }))).toBe('/tmp/explicit.sock')
+    expect(resolveTmuxSocket('/tmp/runtime/agent-tracker.sock', env({ BROCCOLI_COMMS_TMUX_SOCKET: '/tmp/broccoli.sock' }))).toBe('/tmp/broccoli.sock')
+    expect(resolveTmuxSocket('/run/user/1000/broccoli-comms/agent-tracker.sock', env({}))).toBe('/run/user/1000/broccoli-comms/tmux.sock')
+    expect(resolveTmuxSocket('/tmp/cache/agent-tracker/agent-tracker.sock', env({}))).toBeUndefined()
   })
 })
 
@@ -128,24 +151,100 @@ describe('tracker identity and target params', () => {
     })
   })
 
-  it('maps legacy local names but rejects host-qualified/remote targets at the main-process boundary', () => {
+  it('maps legacy local names, supports remote host-qualified targets, and handles registry targets at the main-process boundary', () => {
     expect(trackerMessageTargetParams({ scope: 'local', id: 'alpha', address: 'alpha' })).toEqual({ agent_name: 'alpha' })
-    expect(() => trackerMessageTargetParams({ scope: 'remote', id: 'host/alpha', address: 'host/alpha' })).toThrow(/local targets only/)
-    expect(() => trackerMessageTargetParams({ scope: 'local', id: 'bad', address: 'host/alpha' })).toThrow(/host-qualified/)
-    expect(() => trackerMessageTargetParams({ scope: 'local', id: 'bad', address: 'registry:host/alpha' })).toThrow(/host-qualified/)
+    expect(trackerMessageTargetParams({ scope: 'remote', id: 'host/alpha', address: 'host/alpha' })).toEqual({ target_address: 'host/alpha' })
+    expect(trackerMessageTargetParams({ scope: 'local', id: 'bad', address: 'host/alpha' })).toEqual({ target_address: 'host/alpha' })
+    expect(trackerMessageTargetParams({ scope: 'local', id: 'bad', address: 'registry:host/alpha' })).toEqual({ target_address: 'registry:host/alpha' })
   })
 })
 
 describe('LocalTrackerClient tracker Simple View behavior', () => {
-  it('lists local targets while excluding the configured Electron inbox identity', async () => {
+  it('reports live tmux and registry health instead of hardcoding them offline', async () => {
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local', tmux_socket: 'none' },
+            alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local', tmux_socket: params.agent_name === 'desktop' ? undefined : undefined },
+          }
+        }
+        if (method === 'tracker_info') return { tracker_id: 'track-1', hostname: 'host-1' }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const dir = await mkdtemp(join(tmpdir(), 'electron-status-cache-'))
+        tempDirs.push(dir)
+        const cacheDir = join(dir, 'cache')
+        const tmuxSocket = join(dir, 'tmux.sock')
+        await mkdir(join(cacheDir, 'agent-tracker'), { recursive: true })
+        await writeFile(
+          join(cacheDir, 'agent-tracker', 'registry-status.json'),
+          JSON.stringify({
+            tracker_id: 'track-1',
+            hostname: 'host-1',
+            registries: {
+              local: { connected: true, tracker_id: 'track-1', hostname: 'host-1', last_success: Date.now() / 1000 },
+              mundus: { connected: true, tracker_id: 'track-1', hostname: 'host-1', last_success: Date.now() / 1000 },
+            },
+          }),
+        )
+
+        const previousCacheDir = process.env.BROCCOLI_COMMS_CACHE_DIR
+        const previousTmuxSocket = process.env.AGENT_TRACKER_TMUX_SOCKET
+        process.env.BROCCOLI_COMMS_CACHE_DIR = cacheDir
+        process.env.AGENT_TRACKER_TMUX_SOCKET = tmuxSocket
+        try {
+          await withFakeSocket(tmuxSocket, async () => {
+            const client = new LocalTrackerClient(socketPath, 'desktop')
+            const status = await client.getStatus()
+            expect(status.tracker).toBe('healthy')
+            expect(status.tmux).toBe('healthy')
+            expect(status.registry).toBe('healthy')
+            expect(status.health).toBe('healthy')
+          })
+        } finally {
+          if (previousCacheDir === undefined) delete process.env.BROCCOLI_COMMS_CACHE_DIR
+          else process.env.BROCCOLI_COMMS_CACHE_DIR = previousCacheDir
+          if (previousTmuxSocket === undefined) delete process.env.AGENT_TRACKER_TMUX_SOCKET
+          else process.env.AGENT_TRACKER_TMUX_SOCKET = previousTmuxSocket
+        }
+      },
+    )
+  })
+
+  it('treats default tracker tmux integration as healthy even without an explicit tmux.sock sibling', async () => {
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local' },
+            alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local' },
+          }
+        }
+        if (method === 'tracker_info') return { tracker_id: 'track-1', hostname: 'host-1' }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        const status = await client.getStatus()
+        expect(status.tracker).toBe('healthy')
+        expect(status.tmux).toBe('healthy')
+      },
+    )
+  })
+
+  it('lists both local and remote targets while excluding the configured Electron inbox identity', async () => {
     await withFakeTracker(
       (method, params) => {
         if (method === 'ensure_mailbox') {
-          expect(params).toEqual({ agent_name: 'desktop' })
+          expect(params).toEqual({ agent_name: 'desktop', no_registry: false })
           return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
         }
         expect(method).toBe('list')
-        expect(params).toEqual({ agent_name: 'desktop' })
+        expect(params).toEqual({ agent_name: 'desktop', include_remote: true })
         return {
           desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local', cwd: '/repo/app' },
           alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local', cwd: '/repo/alpha' },
@@ -155,8 +254,9 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
       async (socketPath) => {
         const client = new LocalTrackerClient(socketPath, 'desktop')
         const agents = await client.listAgents()
-        expect(agents.map((agent) => agent.name)).toEqual(['alpha'])
-        expect(agents[0]).toMatchObject({ id: 'local:alpha-id', canDirectControl: false })
+        expect(agents.map((agent) => agent.name).sort()).toEqual(['alpha', 'host/beta'])
+        expect(agents.find(a => a.name === 'alpha')).toMatchObject({ id: 'local:alpha-id', scope: 'local', canDirectControl: false })
+        expect(agents.find(a => a.name === 'host/beta')).toMatchObject({ id: 'remote:host/beta', scope: 'remote', canDirectControl: false })
       },
     )
   })
@@ -217,6 +317,170 @@ describe('LocalTrackerClient tracker Simple View behavior', () => {
       },
     )
   })
+
+  it('falls back to standard register RPC when ensure_mailbox method is not found on older daemons', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    await withFakeTracker(
+      (method, params) => {
+        calls.push({ method, params })
+        if (method === 'ensure_mailbox') {
+          throw new Error('Method not found: ensure_mailbox')
+        }
+        if (method === 'register') {
+          return { success: true }
+        }
+        if (method === 'list') {
+          return {}
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        const agents = await client.listAgents()
+        expect(agents).toEqual([])
+
+        expect(calls[0]).toMatchObject({ method: 'ensure_mailbox', params: { agent_name: 'desktop', no_registry: false } })
+        expect(calls[1]).toMatchObject({
+          method: 'register',
+          params: {
+            session: 'mailbox',
+            name: 'desktop',
+            agent_type: 'agent-communicator-ui',
+            agent_id: '00000000-0000-5000-8000-000000000001',
+          },
+        })
+      },
+    )
+  })
+
+  it('captures a local pane snapshot and delivers it to the communicator inbox successfully', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    await withFakeTracker(
+      (method, params) => {
+        calls.push({ method, params })
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local' },
+            alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local' },
+          }
+        }
+        if (method === 'capture_pane') {
+          expect(params).toMatchObject({ agent_id: 'alpha-id', last_lines: 25, include_ansi: false })
+          return {
+            agent_name: 'alpha',
+            agent_id: 'alpha-id',
+            tmux_pane: '%1',
+            session: 'broccoli',
+            copy_mode: false,
+            captured_at: '2026-05-25T13:40:00.000Z',
+            content: 'visible pane content',
+          }
+        }
+        if (method === 'send_message') {
+          expect(params).toMatchObject({
+            agent_name: 'desktop',
+            sender_name: 'alpha',
+            sender_id: 'alpha-id',
+          })
+          expect(params.message).toContain('visible pane content')
+          expect(params.message).toContain('### Pane Capture Snapshot from alpha')
+          return true
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        await client.listAgents()
+        const result = await client.sendPaneCapture('local:alpha-id', 'desktop')
+        expect(result.ok).toBe(true)
+        expect(result.summary).toContain('Snapshot sent successfully')
+
+        expect(calls.map((c) => c.method)).toEqual(['ensure_mailbox', 'list', 'capture_pane', 'send_message'])
+      },
+    )
+  })
+
+  it('dispatches a remote pane capture request successfully across tracker registries', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    await withFakeTracker(
+      (method, params) => {
+        calls.push({ method, params })
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local' },
+            'zephyrus/reviewer': { agent_id: 'rev-id', name: 'zephyrus/reviewer', scope: 'remote', target_address: 'zephyrus/reviewer', tracker_id: 'track-z' },
+          }
+        }
+        if (method === 'tracker_info') return { hostname: 'local-generated-host', tracker_id: 'local-track' }
+        if (method === 'publish_tracker_event') {
+          expect(params).toMatchObject({
+            target_tracker_id: 'track-z',
+            event_type: 'pane_capture_request',
+            payload: {
+              source: 'reviewer',
+              target: 'local-generated-host/desktop',
+              requester: 'desktop',
+              last: 25,
+            },
+          })
+          return true
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        await client.listAgents()
+        const result = await client.sendPaneCapture('remote:zephyrus/reviewer', 'desktop')
+        expect(result.ok).toBe(true)
+        expect(result.summary).toContain('Remote pane capture request sent to zephyrus')
+
+        expect(calls.map((c) => c.method)).toEqual(['ensure_mailbox', 'list', 'tracker_info', 'publish_tracker_event'])
+      },
+    )
+  })
+
+  it('injects local direct text and keys successfully', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    await withFakeTracker(
+      (method, params) => {
+        calls.push({ method, params })
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'list') {
+          return {
+            desktop: { agent_id: 'self-id', name: 'desktop', scope: 'local' },
+            alpha: { agent_id: 'alpha-id', name: 'alpha', scope: 'local' },
+          }
+        }
+        if (method === 'send_input') {
+          return { success: true }
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        await client.listAgents()
+
+        const textResult = await client.sendDirectText({ scope: 'local', id: 'local:alpha-id', address: 'alpha' }, 'ls -la', true)
+        expect(textResult.ok).toBe(true)
+        expect(calls.find((c) => c.method === 'send_input' && c.params.input_type === 'text')?.params).toMatchObject({
+          input_type: 'text',
+          text: 'ls -la',
+          submit: true,
+          agent_id: 'alpha-id',
+        })
+
+        const keysResult = await client.sendDirectKeys({ scope: 'local', id: 'local:alpha-id', address: 'alpha' }, ['Escape', 'C-c'])
+        expect(keysResult.ok).toBe(true)
+        expect(calls.find((c) => c.method === 'send_input' && c.params.input_type === 'keys')?.params).toMatchObject({
+          input_type: 'keys',
+          keys: ['Escape', 'C-c'],
+          agent_id: 'alpha-id',
+        })
+      },
+    )
+  })
 })
 
 describe('tracker Simple View mapping', () => {
@@ -232,8 +496,36 @@ describe('tracker Simple View mapping', () => {
     })
   })
 
-  it('filters out remote tracker rows', () => {
-    expect(trackerAgentToSummary('host/alpha', { scope: 'remote', target_address: 'host/alpha' })).toBeUndefined()
+  it('maps remote tracker rows successfully and prefixes registry name', () => {
+    expect(
+      trackerAgentToSummary('host/alpha', {
+        scope: 'remote',
+        target_address: 'host/alpha',
+        tracker_id: 'reg-a',
+        registry_name: 'local',
+      })
+    ).toMatchObject({
+      id: 'remote:local:host/alpha',
+      scope: 'remote',
+      project: 'reg-a',
+      address: 'local:host/alpha',
+    })
+  })
+
+  it('does not double-prefix already-qualified remote addresses', () => {
+    expect(
+      trackerAgentToSummary('host/alpha', {
+        scope: 'remote',
+        target_address: 'local:host/alpha',
+        tracker_id: 'reg-a',
+        registry_name: 'local',
+      })
+    ).toMatchObject({
+      id: 'remote:local:host/alpha',
+      scope: 'remote',
+      project: 'reg-a',
+      address: 'local:host/alpha',
+    })
   })
 
   it('maps tracker inbox messages into one-to-one timeline messages', () => {
@@ -243,7 +535,7 @@ describe('tracker Simple View mapping', () => {
         timestamp: '2026-05-25T00:00:00.000Z',
         message: 'hello',
         message_id: 'm1',
-      }),
+      }, 'you'),
     ).toMatchObject({
       id: 'm1',
       conversationKey: 'local:id-1',
@@ -259,7 +551,8 @@ describe('tracker Simple View mapping', () => {
       trackerMessageToMessage(
         'local:id-1',
         { sender: 'desktop-user', timestamp: '2026-05-25T00:00:00.000Z', message: 'sent', message_id: 'm2' },
-        'desktop-user',
+        'alpha', // Recipient target
+        'desktop-user', // selfAgentName matching sender
       ),
     ).toMatchObject({ direction: 'outbound', author: 'you', deliveryState: 'delivered' })
   })
@@ -278,6 +571,7 @@ describe('tracker Simple View mapping', () => {
           conversationKey: 'local:id-1',
           direction: 'inbound',
           author: 'alpha',
+          recipient: 'you',
           body: 'reply',
           createdAt: '2026-05-25T00:00:02.000Z',
           deliveryState: 'received',
@@ -289,6 +583,7 @@ describe('tracker Simple View mapping', () => {
           conversationKey: 'local:id-1',
           direction: 'outbound',
           author: 'you',
+          recipient: 'alpha',
           body: 'hello',
           createdAt: '2026-05-25T00:00:01.000Z',
           deliveryState: 'delivered',
@@ -296,5 +591,128 @@ describe('tracker Simple View mapping', () => {
       ],
     )
     expect(merged.map((message) => message.id)).toEqual(['out-1', 'in-1'])
+  })
+
+  it('deduplicates mirrored sent messages by message id and keeps the strongest delivery state', () => {
+    const merged = mergeConversationMessages(
+      [
+        {
+          id: 'out-1',
+          conversationKey: 'local:id-1',
+          direction: 'outbound',
+          author: 'you',
+          recipient: 'alpha',
+          body: 'hello',
+          createdAt: '2026-05-25T00:00:02.000Z',
+          deliveryState: 'notified',
+        },
+      ],
+      [
+        {
+          id: 'out-1',
+          conversationKey: 'local:id-1',
+          direction: 'outbound',
+          author: 'you',
+          recipient: 'alpha',
+          body: 'hello',
+          createdAt: '2026-05-25T00:00:01.000Z',
+          deliveryState: 'delivered',
+        },
+      ],
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ id: 'out-1', deliveryState: 'notified', createdAt: '2026-05-25T00:00:01.000Z' })
+  })
+
+  it('listMessages() passes optional inboxOwnerName through socket call params', async () => {
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'get_inbox') {
+          expect(params).toEqual({
+            agent_name: 'custom-inbox-owner',
+            clear: false,
+            last_n: 100,
+            mark_read: false
+          })
+          return { messages: [] }
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        ;(client as any).agentsByConversation.set('local:alpha-id', { name: 'alpha', scope: 'local' })
+        const messages = await client.listMessages('local:alpha-id', 'custom-inbox-owner')
+        expect(messages).toEqual([])
+      }
+    )
+  })
+
+  it('listGroupMessages() calls get_group_timeline and maps sender and recipient keys', async () => {
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'get_group_timeline') {
+          expect(params).toEqual({ group_id: 'host:local:group1', last_n: 200 })
+          return {
+            messages: [
+              {
+                message_id: 'g-msg-1',
+                sender: 'agent-1',
+                recipient: 'agent-2',
+                message: 'hello group',
+                timestamp: '2026-05-25T14:00:00.000Z'
+              }
+            ]
+          }
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        const messages = await client.listGroupMessages('host:local:group1')
+        expect(messages.length).toBe(1)
+        expect(messages[0]).toMatchObject({
+          id: 'g-msg-1',
+          conversationKey: 'host:local:group1',
+          direction: 'inbound',
+          author: 'agent-1',
+          recipient: 'agent-2',
+          body: 'hello group'
+        })
+      }
+    )
+  })
+
+  it('updateWatchlist() group mode dispatches update_watchlist RPC to daemon', async () => {
+    const calls: string[] = []
+    await withFakeTracker(
+      (method, params) => {
+        if (method === 'ensure_mailbox') return { name: 'desktop', agent_id: 'self-id', uuid: 'self-id' }
+        if (method === 'update_watchlist') {
+          calls.push(method)
+          expect(params).toEqual({
+            watch_id: 'electron-active-group',
+            mode: 'group',
+            group_id: 'host:local:group1',
+            members: ['local-host/agent-1', 'local-host/agent-2'],
+            lease_seconds: 120,
+            include_body: true
+          })
+          return true
+        }
+        throw new Error(`unexpected method ${method}`)
+      },
+      async (socketPath) => {
+        const client = new LocalTrackerClient(socketPath, 'desktop')
+        await client.updateWatchlist({
+          mode: 'group',
+          groupId: 'host:local:group1',
+          members: ['local-host/agent-1', 'local-host/agent-2']
+        })
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(calls).toEqual(['update_watchlist'])
+      }
+    )
   })
 })

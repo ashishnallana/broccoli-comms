@@ -125,7 +125,7 @@ def list_panes():
     tracked agent during transient PATH/launchd issues on macOS.
     """
     try:
-        out = run_tmux_cmd(["list-panes", "-a", "-F", "#{pane_id}|#{@agent_name}|#{@agent_id}|#{@agent_uuid}|#{@agent_type}|#{@agent_cmd}|#{@agent_no_notify_with_send_keys}|#{@agent_no_registry}|#{pane_active}|#{pane_current_path}"])
+        out = run_tmux_cmd(["list-panes", "-a", "-F", "#{pane_id}|#{@agent_name}|#{@agent_id}|#{@agent_uuid}|#{@agent_type}|#{@agent_cmd}|#{@agent_no_notify_with_send_keys}|#{@agent_no_registry}|#{pane_active}|#{pane_current_path}|#{socket_path}"])
         panes = []
         if out:
             for line in out.split("\n"):
@@ -142,7 +142,8 @@ def list_panes():
                     "no_notify_with_send_keys": (parts[6] == "on"),
                     "no_registry": (parts[7] == "on"),
                     "pane_active": (parts[8] == "1"),
-                    "cwd": parts[9] if len(parts) > 9 and parts[9] else None
+                    "cwd": parts[9] if len(parts) > 9 and parts[9] else None,
+                    "tmux_socket": parts[10] if len(parts) > 10 and parts[10] else None
                 }
                 panes.append(pane_info)
         return panes

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
-import { registerMockIpcHandlers } from './ipc'
+import { registerMockIpcHandlers, startTrackerEventLoop, stopTrackerEventLoop } from './ipc'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -28,6 +28,9 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  // Start background wait_events loop for pushes!
+  void startTrackerEventLoop(mainWindow.webContents)
 }
 
 app.whenReady().then(() => {
@@ -40,5 +43,6 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  stopTrackerEventLoop()
   if (process.platform !== 'darwin') app.quit()
 })

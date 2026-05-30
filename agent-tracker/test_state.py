@@ -99,5 +99,128 @@ class TestState(unittest.TestCase):
             "agent_id": "id-2", "name": "agent2", "aliases": [], "status": "working", "agent_type": "unknown", "agent_cmd": "unknown", "cwd": None
         }])
 
+    def test_event_buffer_bounds_and_eviction(self):
+        state.events = []
+        state.event_sequence_id = 0
+        # Publish 550 events
+        for i in range(550):
+            state.publish_event("dummy_event", {"data": i})
+        # Check events length is capped at MAX_EVENTS (500)
+        self.assertEqual(len(state.events), 500)
+        # Oldest event seq should be 51
+        self.assertEqual(state.events[0]["seq"], 51)
+        # Newest event seq should be 550
+        self.assertEqual(state.events[-1]["seq"], 550)
+
+    def test_watchlist_lease_and_sweeping(self):
+        state.active_watchlists = {}
+        # Register a lease for client1 expiring in 0.1 seconds, and client2 expiring in 10 seconds
+        state.update_watchlist_lease("client1", ["agent1"], 0.1)
+        state.update_watchlist_lease("client2", ["agent2"], 10.0)
+        
+        self.assertIn("client1", state.active_watchlists)
+        self.assertIn("client2", state.active_watchlists)
+        
+        # Sweep immediately - nothing should be swept
+        state.sweep_expired_watchlists()
+        self.assertIn("client1", state.active_watchlists)
+        self.assertIn("client2", state.active_watchlists)
+        
+        # Sleep 0.15 seconds and sweep - client1 should be swept, client2 remains
+        import time
+        time.sleep(0.15)
+        state.sweep_expired_watchlists()
+        self.assertNotIn("client1", state.active_watchlists)
+        self.assertIn("client2", state.active_watchlists)
+
+    def test_group_timeline_persistence_and_deduplication(self):
+        import shutil, tempfile
+        temp_cache = tempfile.mkdtemp()
+        orig_dir = state.GROUP_TIMELINE_DIR
+        state.GROUP_TIMELINE_DIR = temp_cache
+        try:
+            group_id = "host:local:my-test-machine"
+            payload_1 = {
+                "message_id": "msg-1",
+                "sender": "agent-1",
+                "recipient": "agent-2",
+                "timestamp": "2026-05-26T23:45:00Z",
+                "message": "hello local"
+            }
+            payload_2 = {
+                "message_id": "msg-2",
+                "sender": "agent-2",
+                "recipient": "agent-1",
+                "timestamp": "2026-05-26T23:46:00Z",
+                "message": "reply"
+            }
+            
+            state.append_to_group_timeline(group_id, payload_1)
+            state.append_to_group_timeline(group_id, payload_2)
+            state.append_to_group_timeline(group_id, payload_1)
+            
+            entries = state.read_group_timeline(group_id)
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0]["message_id"], "msg-1")
+            self.assertEqual(entries[1]["message_id"], "msg-2")
+            
+        finally:
+            state.GROUP_TIMELINE_DIR = orig_dir
+            shutil.rmtree(temp_cache)
+
+    def test_group_watch_lease_captures_and_sweep(self):
+        state.active_group_watches = {}
+        group_id = "host:local:my-test-group"
+        members = ["local-host/agent-1", "local-host/agent-2"]
+        
+        state.update_group_watch("client1", group_id, members, 0.1)
+        self.assertIn("client1", state.active_group_watches)
+        
+        import tempfile, shutil
+        temp_cache = tempfile.mkdtemp()
+        orig_dir = state.GROUP_TIMELINE_DIR
+        state.GROUP_TIMELINE_DIR = temp_cache
+        try:
+            msg_obj = {
+                "message_id": "p2p-1",
+                "sender": "agent-1",
+                "recipient": "agent-2",
+                "timestamp": "2026-05-26T23:45:00Z",
+                "message": "direct hello"
+            }
+            state.record_to_matching_group_timelines("agent-1", "agent-2", msg_obj)
+            
+            entries = state.read_group_timeline(group_id)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["message_id"], "p2p-1")
+            
+            import time
+            time.sleep(0.15)
+            state.sweep_expired_group_watches()
+            self.assertNotIn("client1", state.active_group_watches)
+            
+            msg_obj_2 = {
+                "message_id": "p2p-2",
+                "sender": "agent-1",
+                "recipient": "agent-2",
+                "timestamp": "2026-05-26T23:46:00Z",
+                "message": "direct hello again"
+            }
+            state.record_to_matching_group_timelines("agent-1", "agent-2", msg_obj_2)
+            
+            entries_after = state.read_group_timeline(group_id)
+            self.assertEqual(len(entries_after), 1)
+            
+        finally:
+            state.GROUP_TIMELINE_DIR = orig_dir
+            shutil.rmtree(temp_cache)
+
+    def test_normalize_group_member(self):
+        self.assertEqual(state.normalize_group_member("remote:local:host/agent"), {"hostname": "host", "agent": "agent"})
+        self.assertEqual(state.normalize_group_member("local:host/agent"), {"hostname": "host", "agent": "agent"})
+        self.assertEqual(state.normalize_group_member("host/agent"), {"hostname": "host", "agent": "agent"})
+        self.assertEqual(state.normalize_group_member("agent"), {"hostname": None, "agent": "agent"})
+        self.assertEqual(state.normalize_group_member("local:agent"), {"hostname": None, "agent": "agent"})
+
 if __name__ == '__main__':
     unittest.main()

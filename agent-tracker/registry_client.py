@@ -1,5 +1,6 @@
 import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error, urllib.request, uuid, shlex
 import state
+import rpc_handler
 
 LOG = logging.getLogger("agent-tracker.registry")
 
@@ -94,6 +95,20 @@ class RegistryClient:
     def fetch_trackers(self):
         return self.request("GET", "/trackers")
 
+    def set_remote_watch_leases(self, client_id: str, watch_targets: list[str], lease_seconds: float, scope: str = "narrow") -> int:
+        status, _ = self.request("POST", f"/trackers/{self.tracker_id}/watch-leases", {
+            "client_id": client_id,
+            "watch_targets": watch_targets,
+            "lease_seconds": lease_seconds,
+            "scope": scope,
+            "token": self.token,
+        })
+        return status or 500
+
+    def clear_remote_watch_leases(self, client_id: str) -> int:
+        status, _ = self.request("DELETE", f"/trackers/{self.tracker_id}/watch-leases/{client_id}", {})
+        return status or 500
+
 
 def _read_token_config(config):
     if config.get("token"):
@@ -108,8 +123,30 @@ def _read_token_config(config):
     return TOKEN
 
 
+def _normalize_registries_json(raw: str) -> str:
+    raw = (raw or "").strip().replace('\\"', '"')
+    # Some launchd/Home Manager paths can preserve shell-style quoting as part of
+    # the environment value, e.g. '"[{\'name\':\'local\',...}]"'.  Unwrap a
+    # JSON string wrapper before parsing the actual registry list.
+    for _ in range(2):
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+            if raw[0] == '"':
+                try:
+                    decoded = json.loads(raw)
+                    if isinstance(decoded, str):
+                        raw = decoded.strip()
+                        continue
+                except json.JSONDecodeError:
+                    pass
+            raw = raw[1:-1].strip()
+        break
+    if "'" in raw and '"' not in raw:
+        raw = raw.replace("'", '"')
+    return raw
+
+
 def load_registry_clients():
-    raw = os.environ.get("AGENT_REGISTRIES_JSON", "").strip()
+    raw = _normalize_registries_json(os.environ.get("AGENT_REGISTRIES_JSON", ""))
     configs = []
     if raw:
         try:
@@ -154,6 +191,20 @@ def fetch_events():
 def ack_event(event_id):
     client = _default_client()
     return None if client is None else client.ack_event(event_id)
+
+
+def set_remote_watch_leases(client_id: str, watch_targets: list[str], lease_seconds: float, scope: str = "narrow"):
+    client = _default_client()
+    if client is None:
+        return 500
+    return client.set_remote_watch_leases(client_id, watch_targets, lease_seconds, scope=scope)
+
+
+def clear_remote_watch_leases(client_id: str):
+    client = _default_client()
+    if client is None:
+        return 500
+    return client.clear_remote_watch_leases(client_id)
 
 
 def ack_delivery(message_id):
@@ -674,6 +725,52 @@ def _event_loop(client=None):
                 sender_name, local_payload = _local_tracker_event_payload(event.get("event_type"), payload)
                 LOG.info("mapping remote %s sender=%s message_id=%s target=%s", event.get("event_type"), sender_name, payload.get("message_id"), local_payload.get("target_agent_name"))
                 state.publish_event(event.get("event_type"), local_payload)
+            elif event.get("event_type") == "remote_agent_event":
+                payload = event.get("payload") or {}
+                LOG.info("publishing remote_agent_event locally: %s", payload)
+                state.publish_event("remote_agent_event", payload)
+                
+                inbound_payload = {
+                    "sender": payload.get("sender"),
+                    "timestamp": payload.get("timestamp"),
+                    "message": payload.get("message"),
+                    "message_id": payload.get("message_id"),
+                    "recipient": payload.get("target_agent_name"),
+                    "read": False
+                }
+                try:
+                    mailbox_name = os.environ.get("BROCCOLI_COMMS_ELECTRON_AGENT_NAME", "agent-communicator")
+                    rpc_handler.deliver_local_message(mailbox_name, inbound_payload)
+                    LOG.info("persisted remote watched message into mailbox inbox %s", mailbox_name)
+                except Exception as e:
+                    LOG.warning("failed to persist remote watched event: %s", e)
+            elif event.get("event_type") == "watch_group_request":
+                payload = event.get("payload") or {}
+                LOG.info("received delegated watch_group_request: %s", payload)
+                watch_id = payload.get("watch_id")
+                group_id = payload.get("group_id")
+                members = payload.get("members", [])
+                lease_seconds = payload.get("lease_seconds", 120)
+                include_body = payload.get("include_body", True)
+                reply_to_tracker_id = payload.get("reply_to_tracker_id")
+                
+                if watch_id and group_id:
+                    state.update_group_watch(
+                        watch_id, group_id, members, lease_seconds, include_body,
+                        reply_to_tracker_id=reply_to_tracker_id
+                    )
+            elif event.get("event_type") == "group_message_observed":
+                payload = event.get("payload") or {}
+                LOG.info("received remote group_message_observed event: %s", payload)
+                group_id = payload.get("group_id")
+                message_payload = payload.get("message")
+                if group_id and message_payload:
+                    state.append_to_group_timeline(group_id, message_payload)
+                    state.publish_event("message_delivered", {
+                        "message_id": message_payload.get("message_id"),
+                        "target_agent_name": group_id,
+                        "sender": message_payload.get("sender")
+                    })
             elif event.get("event_type") == "spin_request":
                 payload = event.get("payload") or {}
                 config_name = payload.get("config_name")

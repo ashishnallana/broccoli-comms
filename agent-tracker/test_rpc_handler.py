@@ -17,7 +17,7 @@ class TestRpcHandler(unittest.TestCase):
         state.name_index = {}
         state.pane_index = {}
         state.events = []
-        state.event_seq = 0
+        state.event_sequence_id = 0
         state.INBOX_DIR = "/tmp/test-agent-inboxes"
 
     @mock.patch("tmux_util.set_agent_no_registry")
@@ -1392,6 +1392,218 @@ class TestRpcHandler(unittest.TestCase):
         finally:
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
+
+    def test_wait_events_with_custom_watchlist_and_lease(self):
+        state.events = []
+        state.event_sequence_id = 0
+        state.active_watchlists = {}
+        
+        # Call wait_events with custom watchlist and client_id
+        params = {
+            "client_id": "client1",
+            "cursor": 0,
+            "watch_list": ["target-agent"],
+            "lease_seconds": 5.0,
+            "timeout": 0
+        }
+        result = rpc_handler.handle_wait_events(params)
+        
+        self.assertEqual(result["events"], [])
+        self.assertIn("client1", state.active_watchlists)
+        self.assertEqual(state.active_watchlists["client1"]["watch_list"], {"target-agent"})
+        
+        # Publish an event that doesn't match target-agent
+        state.publish_event("dummy", {"target_agent_id": "other-agent"})
+        result = rpc_handler.handle_wait_events(params)
+        self.assertEqual(result["events"], [])
+        
+        # Publish an event matching target-agent
+        state.publish_event("dummy", {"target_agent_id": "target-agent"})
+        # Re-request wait_events
+        result = rpc_handler.handle_wait_events(params)
+        self.assertEqual(len(result["events"]), 1)
+        self.assertEqual(result["events"][0]["target_agent_id"], "target-agent")
+
+    def test_wait_events_cursor_expired_error(self):
+        state.events = []
+        state.event_sequence_id = 0
+        
+        # Temporarily cap MAX_EVENTS to 3 to trigger eviction quickly
+        old_max = state.MAX_EVENTS
+        try:
+            state.MAX_EVENTS = 3
+            state.publish_event("dummy", {"data": 1})
+            state.publish_event("dummy", {"data": 2})
+            state.publish_event("dummy", {"data": 3})
+            state.publish_event("dummy", {"data": 4})
+            state.publish_event("dummy", {"data": 5})
+            
+            # Oldest event is now seq 3. Cursor 1 is evicted!
+            params = {
+                "client_id": "client1",
+                "cursor": 1,
+                "watch_list": ["target-agent"],
+                "lease_seconds": 5.0,
+                "timeout": 0
+            }
+            # Calling this should raise CursorExpiredError
+            with self.assertRaises(rpc_handler.CursorExpiredError):
+                rpc_handler.handle_wait_events(params)
+        finally:
+            state.MAX_EVENTS = old_max
+
+    def test_wait_events_broad_watch_local_rejection(self):
+        old_broad = rpc_handler.REMOTE_BROAD_WATCH_ENABLED
+        try:
+            # Enforce broad watch is disabled
+            rpc_handler.REMOTE_BROAD_WATCH_ENABLED = False
+            
+            params = {
+                "client_id": "client_win_1",
+                "cursor": 0,
+                "watch_list": ["host2/agent2"],
+                "scope": "broad",
+                "lease_seconds": 10.0,
+                "timeout": 0
+            }
+            # Should raise ValueError due to local config gate rejection
+            with self.assertRaises(ValueError) as ctx:
+                rpc_handler.handle_wait_events(params)
+            self.assertIn("Broad passive remote observation is disabled", str(ctx.exception))
+        finally:
+            rpc_handler.REMOTE_BROAD_WATCH_ENABLED = old_broad
+
+
+    def test_handle_get_group_timeline(self):
+        import tempfile, shutil
+        temp_cache = tempfile.mkdtemp()
+        orig_dir = state.GROUP_TIMELINE_DIR
+        state.GROUP_TIMELINE_DIR = temp_cache
+        try:
+            group_id = "host:local:test-rpc-machine"
+            payload = {
+                "message_id": "msg-100",
+                "sender": "sender-1",
+                "recipient": "recipient-1",
+                "timestamp": "2026-05-26T23:48:00Z",
+                "message": "hello rpc dispatch"
+            }
+            state.append_to_group_timeline(group_id, payload)
+            
+            res = rpc_handler.handle_get_group_timeline({
+                "group_id": group_id,
+                "last_n": 10
+            })
+            
+            self.assertIn("messages", res)
+            self.assertEqual(len(res["messages"]), 1)
+            self.assertEqual(res["messages"][0]["message_id"], "msg-100")
+            
+            with self.assertRaises(ValueError) as ctx:
+                rpc_handler.handle_get_group_timeline({})
+            self.assertIn("group_id is required", str(ctx.exception))
+            
+            with self.assertRaises(ValueError) as ctx:
+                rpc_handler.handle_get_group_timeline({
+                    "group_id": 123
+                })
+            self.assertIn("group_id must be a string", str(ctx.exception))
+            
+        finally:
+            state.GROUP_TIMELINE_DIR = orig_dir
+            shutil.rmtree(temp_cache)
+
+
+    def test_handle_update_watchlist_group_mode(self):
+        state.active_group_watches = {}
+        params = {
+            "watch_id": "my-client-group-watch",
+            "mode": "group",
+            "group_id": "host:local:test-group-channel",
+            "members": ["local-host/agent-1", "local-host/agent-2"],
+            "lease_seconds": 60
+        }
+        res = rpc_handler.handle_update_watchlist(params)
+        self.assertTrue(res)
+        
+        self.assertIn("my-client-group-watch", state.active_group_watches)
+        watch = state.active_group_watches["my-client-group-watch"]
+        self.assertEqual(watch["group_id"], "host:local:test-group-channel")
+        self.assertEqual(watch["members"], {"local-host/agent-1", "local-host/agent-2"})
+        
+        with self.assertRaises(ValueError) as ctx:
+            rpc_handler.handle_update_watchlist({})
+        self.assertIn("watch_id is required", str(ctx.exception))
+        
+        with self.assertRaises(ValueError) as ctx:
+            rpc_handler.handle_update_watchlist({
+                "watch_id": "my-id",
+                "mode": "group"
+            })
+        self.assertIn("group_id is required for group watch mode", str(ctx.exception))
+
+
+    @mock.patch("registry_client.fetch_trackers")
+    @mock.patch("registry_client.publish_tracker_event")
+    def test_remote_delegated_group_watch_roundtrip(self, publish_event, fetch_trackers):
+        state.active_group_watches = {}
+        
+        fetch_trackers.return_value = (200, {
+            "trackers": [
+                {"hostname": "host2", "tracker_id": "remote-tracker-id-123"}
+            ]
+        })
+        
+        params = {
+            "watch_id": "mac-electron-active-group",
+            "mode": "group",
+            "group_id": "host:local:tanmayvijay.c.googlers.com",
+            "members": ["local-host/agent-1", "host2/remote-agent-2"],
+            "lease_seconds": 60
+        }
+        
+        res = rpc_handler.handle_update_watchlist(params)
+        self.assertTrue(res)
+        
+        import time
+        time.sleep(0.05)
+        
+        publish_event.assert_called_once_with(
+            "remote-tracker-id-123",
+            "watch_group_request",
+            {
+                "watch_id": "mac-electron-active-group",
+                "group_id": "host:local:tanmayvijay.c.googlers.com",
+                "members": ["local-host/agent-1", "host2/remote-agent-2"],
+                "include_body": True,
+                "lease_seconds": 60.0,
+                "reply_to_tracker_id": registry_client.TRACKER_ID
+            }
+        )
+        
+        import tempfile, shutil
+        temp_cache = tempfile.mkdtemp()
+        orig_dir = state.GROUP_TIMELINE_DIR
+        state.GROUP_TIMELINE_DIR = temp_cache
+        try:
+            group_id = "host:local:tanmayvijay.c.googlers.com"
+            obs_payload = {
+                "message_id": "msg-abc-123",
+                "sender": "remote-agent-2",
+                "recipient": "agent-1",
+                "timestamp": "2026-05-26T23:48:00Z",
+                "message": "hello registry roundtrip"
+            }
+            
+            state.append_to_group_timeline(group_id, obs_payload)
+            
+            entries = state.read_group_timeline(group_id)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["message_id"], "msg-abc-123")
+            
+        finally:
+            state.GROUP_TIMELINE_DIR = orig_dir
+            shutil.rmtree(temp_cache)
 
 
 if __name__ == "__main__":

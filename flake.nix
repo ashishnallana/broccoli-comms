@@ -79,6 +79,30 @@
             text = ''exec ${pkgs.python3}/bin/python3 ${./agent-registry/managed_agent.py} "$@"'';
           };
 
+          agentCommunicatorElectron = pkgs.buildNpmPackage {
+            pname = "agent-communicator-electron";
+            version = "0.1.0";
+            src = ./agent-communicator-electron;
+            npmDepsHash = "sha256-oJ5yK6jnb9wBtbsc1RAhckB2QVFXerANFkVMIva25+k=";
+
+            env.ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
+            npmBuildScript = "build";
+
+            installPhase = ''
+              runHook preInstall
+
+              mkdir -p $out/share/agent-communicator-electron $out/bin
+              cp -R out package.json $out/share/agent-communicator-electron/
+
+              makeWrapper ${pkgs.electron}/bin/electron $out/bin/agent-communicator-electron \
+                --add-flags $out/share/agent-communicator-electron
+
+              runHook postInstall
+            '';
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+          };
+
           broccoliComms = pkgs.writeShellApplication {
             name = "broccoli-comms";
             runtimeInputs = with pkgs; [ python3 tmux coreutils procps bash agentTracker agentTrackerCtl agentWrapper agentCommunicator ];
@@ -91,11 +115,12 @@
             '';
           };
         in {
-          inherit agentTracker agentTrackerCtl agentWrapper agentCommunicator agentRegistry managedAgent broccoliComms;
+          inherit agentTracker agentTrackerCtl agentWrapper agentCommunicator agentCommunicatorElectron agentRegistry managedAgent broccoliComms;
           agent-tracker = agentTracker;
           agent-tracker-ctl = agentTrackerCtl;
           agent-wrapper = agentWrapper;
           agent-communicator = agentCommunicator;
+          agent-communicator-electron = agentCommunicatorElectron;
           agent-registry = agentRegistry;
           agent-registry-managed-agent = managedAgent;
           default = broccoliComms;
@@ -159,6 +184,21 @@
             program = "${self.packages.${system}.broccoliComms}/bin/broccoli-comms";
             meta.description = "Standalone Broccoli Comms agent runtime";
           };
+          agent-communicator-electron = {
+            type = "app";
+            program = "${self.packages.${system}.agentCommunicatorElectron}/bin/agent-communicator-electron";
+            meta.description = "Broccoli Comms Electron desktop app";
+          };
         });
+
+      homeManagerModules = {
+        broccoli-comms = import ./modules/home-manager.nix self;
+        default = self.homeManagerModules.broccoli-comms;
+      };
+
+      nixosModules = {
+        broccoli-comms = import ./modules/nixos.nix self;
+        default = self.nixosModules.broccoli-comms;
+      };
     };
 }

@@ -1,47 +1,103 @@
-import { useState } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { AgentSummary, ComposerMode } from '../../shared/contracts'
-import { composerActionLabel, composerPlaceholder, directModeWarning } from '../features/composer/composerActions'
+import { composerActionLabel, composerPlaceholder } from '../features/composer/composerActions'
 import { ActionModePicker } from './ActionModePicker'
 
 interface Props {
   agent: AgentSummary
   mode: ComposerMode
   status: string
+  body: string
+  onBodyChange: (body: string) => void
   onModeChange: (mode: ComposerMode) => void
   onSubmit: (body: string) => Promise<void>
 }
 
-export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props) {
-  const [body, setBody] = useState('')
-  const direct = mode !== 'message'
-  const directBlocked = direct && !agent.canDirectControl
-  const warning = directModeWarning(mode)
+export function Composer({ agent, mode, status, body, onBodyChange, onModeChange, onSubmit }: Props) {
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useLayoutEffect(() => {
+    const input = inputRef.current
+    if (!input) return
+    input.style.height = '0px'
+    input.style.height = `${Math.min(input.scrollHeight, 116)}px`
+  }, [body])
+
+  useEffect(() => {
+    const input = inputRef.current
+    if (!input) return
+    input.focus({ preventScroll: true })
+    input.setSelectionRange(input.value.length, input.value.length)
+  }, [agent.conversationKey])
 
   async function submit() {
     const trimmed = body.trim()
-    if (!trimmed || directBlocked) return
-    await onSubmit(trimmed)
-    setBody('')
+    if (!trimmed) return
+    if (mode === 'directKeys') {
+      const keys = trimmed.split(/[\s,]+/).filter(Boolean)
+      await onSubmit(JSON.stringify({ type: 'keys', keys }))
+    } else {
+      await onSubmit(trimmed)
+    }
+    onBodyChange('')
+  }
+
+  async function handleSendDirectKey(keyName: string) {
+    await onSubmit(JSON.stringify({ type: 'keys', keys: [keyName] }))
   }
 
   return (
-    <section className={`composer-wrap ${direct ? 'direct' : ''} ${directBlocked ? 'blocked' : ''}`}>
-      <div className="mode-row">
+    <div className="composer">
+      <div className="composer-tabs">
         <ActionModePicker mode={mode} agent={agent} onModeChange={onModeChange} />
-        <div className={`composer-status ${direct ? 'warn' : ''}`}>{status}</div>
-      </div>
-      {warning || directBlocked ? (
-        <div className={directBlocked ? 'direct-warning blocked' : 'direct-warning'}>
-          <strong>{directBlocked ? 'Remote direct control locked' : 'Mock pane-control mode'}</strong>
-          <span>{directBlocked ? 'Direct Text and Direct Keys are disabled for remote fixture agents.' : warning}</span>
+        <div className="composer-status">
+          <span className="ok">●</span> {status}
         </div>
-      ) : null}
-      <div className="composer-grid">
+      </div>
+
+      {/* Direct Keys Keyboard Matrix */}
+      {mode === 'directKeys' && (
+        <div
+          className="quick-keys-row"
+          style={{
+            display: 'flex',
+            gap: '6px',
+            marginTop: '2px',
+            marginBottom: '8px',
+            flexWrap: 'wrap',
+          }}
+        >
+          {['Escape', 'Enter', 'C-c', 'Tab', 'Up', 'Down', 'Left', 'Right'].map((keyName) => (
+            <button
+              key={keyName}
+              className="btn"
+              style={{
+                height: '24px',
+                padding: '0 10px',
+                fontSize: '11px',
+                fontFamily: '"JetBrains Mono", monospace',
+                background: 'var(--surface-soft)',
+                borderColor: 'var(--hairline-strong)',
+                borderRadius: 'var(--r-sm)',
+                color: 'var(--primary)',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              onClick={() => handleSendDirectKey(keyName)}
+            >
+              {keyName === 'C-c' ? 'Ctrl+C' : keyName}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="composer-input-row">
         <textarea
+          ref={inputRef}
+          className="composer-input"
           value={body}
-          placeholder={directBlocked ? 'Remote direct pane control is disabled in this mock.' : composerPlaceholder(mode)}
-          disabled={directBlocked}
-          onChange={(event) => setBody(event.target.value)}
+          placeholder={composerPlaceholder(mode)}
+          onChange={(event) => onBodyChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
@@ -49,10 +105,10 @@ export function Composer({ agent, mode, status, onModeChange, onSubmit }: Props)
             }
           }}
         />
-        <button className={direct ? 'send direct' : 'send'} disabled={directBlocked} onClick={() => void submit()}>
+        <button className="btn primary send" disabled={!body.trim() && mode !== 'directKeys'} onClick={() => void submit()}>
           {composerActionLabel(mode)}
         </button>
       </div>
-    </section>
+    </div>
   )
 }

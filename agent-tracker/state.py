@@ -4,6 +4,7 @@ import uuid
 import logging
 import subprocess
 import os
+import hashlib
 import json
 import tmux_util
 
@@ -11,6 +12,7 @@ CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/
 SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET", os.path.join(CACHE_DIR, "agent-tracker.sock"))
 LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
 INBOX_DIR = os.path.join(CACHE_DIR, "inboxes")
+GROUP_TIMELINE_DIR = os.path.join(CACHE_DIR, "group_timelines")
 PANE_INPUT_DEDUPE_PATH = os.path.join(CACHE_DIR, "pane-input-dedupe.json")
 PANE_INPUT_DEDUPE_MAX = int(os.environ.get("AGENT_PANE_INPUT_DEDUPE_MAX", "1000"))
 
@@ -20,8 +22,15 @@ pane_index = {}  # tmux pane id -> agent_id
 state_lock = threading.Lock()
 event_lock = threading.Condition()
 events = []
-event_seq = 0
-MAX_EVENTS = 200
+event_sequence_id = 0
+MAX_EVENTS = 500
+
+active_watchlists = {}  # client_id -> {"expires_at": float, "watch_list": set}
+watchlist_lock = threading.Lock()
+
+active_group_watches = {}  # watch_id -> {"expires_at": float, "group_id": str, "members": set, "include_body": bool}
+group_watches_lock = threading.Lock()
+group_timelines_lock = threading.Lock()
 
 TRANSIENT_COMMS = {
     "ps", "grep", "pgrep", "ls", "cat", "sleep", "which", "sh", "bash", "zsh",
@@ -107,7 +116,7 @@ def init_state() -> None:
                         "session": session,
                         "tmux_pane": pane_id,
                         "pid": agent_pid,
-                        "tmux_socket": tmux_util.default_tmux_socket() or "", # Fallback to configured default
+                        "tmux_socket": pane.get("tmux_socket") or tmux_util.default_tmux_socket() or "", # Prefer tmux-reported socket; fallback to configured default
                         "wrapper_pid": None,
                         "status": "unknown",
                         "waiting_approval": False,
@@ -296,12 +305,12 @@ def get_agents_for_registry() -> list[dict]:
 
 def publish_event(event_type: str, payload: dict) -> dict:
     """Publishes a best-effort in-memory event for live observers such as a TUI."""
-    global event_seq
+    global event_sequence_id
     with event_lock:
-        event_seq += 1
+        event_sequence_id += 1
         event = {
             **payload,
-            "seq": event_seq,
+            "seq": event_sequence_id,
             "type": event_type,
             "timestamp": time.time(),
         }
@@ -311,32 +320,69 @@ def publish_event(event_type: str, payload: dict) -> dict:
         return event.copy()
 
 
-def wait_events(since: int = 0, timeout: float = 25.0, filters: dict | None = None) -> dict:
+def update_watchlist_lease(client_id: str, watch_list: list[str], lease_seconds: float) -> None:
+    """Atomically registers or replaces a client watchlist lease with a set TTL."""
+    with watchlist_lock:
+        expires_at = time.time() + lease_seconds
+        active_watchlists[client_id] = {
+            "expires_at": expires_at,
+            "watch_list": set(watch_list)
+        }
+        logging.debug(f"Updated watchlist lease for client {client_id} with TTL {lease_seconds}s. Watchlist: {watch_list}")
+
+
+def sweep_expired_watchlists() -> None:
+    """Sweeps and purges expired client watchlists from in-memory tracking."""
+    now = time.time()
+    with watchlist_lock:
+        expired = [cid for cid, data in active_watchlists.items() if data["expires_at"] < now]
+        for cid in expired:
+            active_watchlists.pop(cid)
+            logging.info(f"Purged expired watchlist lease for client {cid}")
+
+
+def wait_events(since: int = 0, timeout: float = 25.0, filters: dict | None = None, client_id: str | None = None, watch_list: list[str] | None = None) -> dict:
     """Best-effort event long-poll for observers; callers must still read durable inboxes."""
     deadline = time.time() + max(0.0, min(float(timeout), 30.0))
     filters = filters or {}
+    
+    effective_watchlist = set()
+    if watch_list:
+        effective_watchlist.update(watch_list)
+    if client_id:
+        effective_watchlist.add(client_id)
 
     def event_matches(event: dict) -> bool:
+        # Backward-compatibility filters
         target_agent_id = filters.get("target_agent_id")
         target_agent_name = filters.get("target_agent_name")
         if target_agent_id and event.get("target_agent_id") != target_agent_id:
             return False
         if target_agent_name and event.get("target_agent_name") != target_agent_name:
             return False
+            
+        # Active watchlist-based filtering
+        if effective_watchlist:
+            t_id = event.get("target_agent_id")
+            t_name = event.get("target_agent_name")
+            sender = event.get("sender")
+            # Match if either the target ID, target name, or sender is in effective watchlist
+            if not (t_id in effective_watchlist or t_name in effective_watchlist or sender in effective_watchlist):
+                return False
         return True
 
     with event_lock:
         while True:
-            reset = since > event_seq
-            first_seq = events[0]["seq"] if events else event_seq + 1
+            reset = since > event_sequence_id
+            first_seq = events[0]["seq"] if events else event_sequence_id + 1
             gap = bool(events and since < first_seq - 1)
             effective_since = 0 if reset else since
             matching = [event.copy() for event in events if event["seq"] > effective_since and event_matches(event)]
             if matching or reset or gap:
-                return {"events": matching, "last_seq": event_seq, "reset": reset, "gap": gap}
+                return {"events": matching, "last_seq": event_sequence_id, "reset": reset, "gap": gap}
             remaining = deadline - time.time()
             if remaining <= 0:
-                return {"events": [], "last_seq": event_seq, "reset": False, "gap": False}
+                return {"events": [], "last_seq": event_sequence_id, "reset": False, "gap": False}
             event_lock.wait(timeout=remaining)
 
 
@@ -408,3 +454,159 @@ def get_local_configs_for_registry() -> list[dict]:
     except Exception:
         pass
     return configs
+
+
+def _get_group_timeline_path(group_id: str) -> str:
+    group_hash = hashlib.md5(group_id.encode("utf-8")).hexdigest()
+    return os.path.join(GROUP_TIMELINE_DIR, f"{group_hash}.jsonl")
+
+
+def append_to_group_timeline(group_id: str, message_payload: dict) -> None:
+    msg_id = message_payload.get("message_id")
+    if not msg_id:
+        return
+
+    os.makedirs(GROUP_TIMELINE_DIR, exist_ok=True)
+    timeline_path = _get_group_timeline_path(group_id)
+
+    with group_timelines_lock:
+        exists = False
+        if os.path.exists(timeline_path):
+            try:
+                with open(timeline_path, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            if entry.get("message_id") == msg_id:
+                                exists = True
+                                break
+                        except json.JSONDecodeError:
+                            continue
+            except Exception as e:
+                logging.warning("failed to read group timeline for deduplication: %s", e)
+
+        if exists:
+            return
+
+        try:
+            with open(timeline_path, "a") as f:
+                f.write(json.dumps(message_payload) + "\n")
+        except Exception as e:
+            logging.warning("failed to append to group timeline %s: %s", timeline_path, e)
+
+
+def read_group_timeline(group_id: str, last_n: int = 200) -> list[dict]:
+    timeline_path = _get_group_timeline_path(group_id)
+    if not os.path.exists(timeline_path):
+        return []
+
+    entries = []
+    try:
+        with open(timeline_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    entries.append(entry)
+                except json.JSONDecodeError:
+                    continue
+    except Exception as e:
+        logging.warning("failed to read group timeline %s: %s", timeline_path, e)
+        return []
+
+    entries.sort(key=lambda e: e.get("timestamp", ""))
+    return entries[-last_n:]
+
+
+def update_group_watch(watch_id: str, group_id: str, members: list[str], lease_seconds: float, include_body: bool = True, reply_to_tracker_id: str | None = None) -> None:
+    watch_key = f"{reply_to_tracker_id}:{watch_id}" if reply_to_tracker_id else watch_id
+    with group_watches_lock:
+        active_group_watches[watch_key] = {
+            "expires_at": time.time() + lease_seconds,
+            "group_id": group_id,
+            "members": set(members),
+            "include_body": include_body,
+            "reply_to_tracker_id": reply_to_tracker_id
+        }
+
+
+def sweep_expired_group_watches() -> None:
+    now = time.time()
+    with group_watches_lock:
+        expired = [wid for wid, watch in active_group_watches.items() if watch.get("expires_at", 0) < now]
+        for wid in expired:
+            del active_group_watches[wid]
+            logging.info("swept expired group watch lease watch_id=%s", wid)
+
+
+def normalize_group_member(member: str) -> dict:
+    """Normalizes a qualified group member address into registry, hostname, and agent bare name."""
+    addr = member
+    if addr.startswith("remote:"):
+        addr = addr[len("remote:"):]
+
+    if "/" in addr:
+        parts = addr.split("/")
+        host_part = parts[0]
+        agent_part = parts[1]
+        if ":" in host_part:
+            host_part = host_part.split(":")[-1]
+        return {
+            "hostname": host_part,
+            "agent": agent_part
+        }
+    else:
+        if ":" in addr:
+            addr = addr.split(":")[-1]
+        return {
+            "hostname": None,
+            "agent": addr
+        }
+
+
+def _member_matches(member_address: str, logical_name: str) -> bool:
+    norm = normalize_group_member(member_address)
+    return norm.get("agent") == logical_name
+
+
+def record_to_matching_group_timelines(sender: str, recipient: str, msg_obj: dict) -> None:
+    sweep_expired_group_watches()
+    with group_watches_lock:
+        for watch_id, watch in active_group_watches.items():
+            members = watch.get("members", set())
+            has_sender = any(_member_matches(m, sender) for m in members)
+            has_recipient = any(_member_matches(m, recipient) for m in members)
+            
+            if has_sender and has_recipient:
+                group_id = watch["group_id"]
+                
+                timeline_payload = {
+                    "message_id": msg_obj.get("message_id"),
+                    "sender": sender,
+                    "sender_agent_id": msg_obj.get("sender_agent_id"),
+                    "sender_tracker_id": msg_obj.get("sender_tracker_id"),
+                    "recipient": recipient,
+                    "recipient_agent_id": get_agent_id_by_name(recipient) or msg_obj.get("recipient_agent_id"),
+                    "timestamp": msg_obj.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "message": msg_obj.get("message") if watch.get("include_body", True) else "[Observed Body Encrypted/Omitted]"
+                }
+                
+                append_to_group_timeline(group_id, timeline_payload)
+                logging.info("observed message message_id=%s recorded to group timeline group_id=%s", msg_obj.get("message_id"), group_id)
+                
+                reply_tid = watch.get("reply_to_tracker_id")
+                if reply_tid:
+                    try:
+                        import registry_client
+                        registry_client.publish_tracker_event(reply_tid, "group_message_observed", {
+                            "group_id": group_id,
+                            "message": timeline_payload
+                        })
+                        logging.info("emitted group_message_observed back to requester tracker %s", reply_tid)
+                    except Exception as re:
+                        logging.warning("failed to propagate delegated group_message_observed: %s", re)

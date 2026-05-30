@@ -9,6 +9,7 @@ import registry_client
 import datetime
 import time
 import os
+import threading
 import uuid
 import subprocess
 import struct
@@ -18,6 +19,7 @@ from contextlib import contextmanager
 
 BUFFER_SIZE = 4096
 LOCAL_HOSTNAME = os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
+REMOTE_BROAD_WATCH_ENABLED = os.environ.get("AGENT_TRACKER_BROAD_WATCH_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 DEFAULT_CAPTURE_PANE_LINES = 25
 
 
@@ -55,6 +57,10 @@ class DeliveryTargetNotFound(ValueError):
 
 
 class DeliveryValidationError(ValueError):
+    pass
+
+
+class CursorExpiredError(ValueError):
     pass
 
 
@@ -295,7 +301,7 @@ def handle_ensure_mailbox(params: dict) -> dict:
         "agent_type": existing.get("agent_type", "agent-communicator-ui"),
         "agent_cmd": existing.get("agent_cmd", "agent-communicator-electron"),
         "no_notify_with_send_keys": True,
-        "no_registry": True,
+        "no_registry": params.get("no_registry", True),
         "cwd": params.get("cwd") or existing.get("cwd"),
         "last_heartbeat": time.time(),
         "recovered_at": None,
@@ -491,6 +497,9 @@ def _maybe_focus_remote_delivery(info: dict, current_name: str, msg_obj: dict) -
 
 def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: str | None = None, verify: bool = False) -> str:
     """Writes a message to a local agent inbox and triggers/queues notification."""
+    msg_id = msg_obj.get("message_id") or str(uuid.uuid4())
+    msg_obj["message_id"] = msg_id
+
     info = state.get_agent(target_name_or_id)
     if not info:
         raise DeliveryTargetNotFound("Target agent not found")
@@ -500,7 +509,6 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
     inbox_file = os.path.join(state.INBOX_DIR, f"{uuid_str}.inbox")
     notify_sender = notify_sender or msg_obj.get("sender", "unknown")
     attach_dir = None
-    msg_id = msg_obj.get("message_id")
 
     try:
         with _locked_inbox(inbox_file):
@@ -547,6 +555,11 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
 
             with open(inbox_file, "a") as f:
                 f.write(json.dumps(msg_obj) + "\n")
+
+        try:
+            state.record_to_matching_group_timelines(notify_sender, current_name, msg_obj)
+        except Exception as ge:
+            logging.warning("Failed to record observed message to group timelines: %s", ge)
 
         notification = {
             "target_agent_id": info.get("agent_id"),
@@ -978,21 +991,183 @@ def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
     )
 
 
-def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
-    """Best-effort event long-poll for observers; clients must read inbox for truth."""
+def handle_get_group_timeline(params: dict) -> dict:
+    """Handles get_group_timeline RPC call by reading directly from the group's cached timeline file."""
+    group_id = params.get("group_id")
+    last_n = params.get("last_n", 200)
+
+    if not group_id:
+        raise ValueError("group_id is required")
+    if not isinstance(group_id, str):
+        raise ValueError("group_id must be a string")
+
+    if last_n is not None:
+        try:
+            last_n = int(last_n)
+            if last_n <= 0:
+                raise ValueError("last_n must be a positive integer")
+        except ValueError:
+            raise ValueError("last_n must be a positive integer")
+
+    messages = state.read_group_timeline(group_id, last_n)
+    return {"messages": messages}
+
+
+def _delegate_group_watch_to_remote_trackers(watch_id: str, group_id: str, members: list[str], lease_seconds: float, include_body: bool) -> None:
+    """Delegates group watch request to active remote trackers over the registry."""
+    status, body = registry_client.fetch_trackers()
+    if status != 200:
+        logging.warning("Failed to fetch active trackers for group watch delegation")
+        return
+
+    trackers = body.get("trackers") or []
+    remote_hosts = set()
+    for m in members:
+        norm = state.normalize_group_member(m)
+        host = norm.get("hostname")
+        if host and host != registry_client.HOSTNAME:
+            remote_hosts.add(host)
+
+    for host in remote_hosts:
+        target_tid = None
+        for t in trackers:
+            if t.get("hostname") == host:
+                target_tid = t.get("tracker_id")
+                break
+
+        if target_tid:
+            try:
+                registry_client.publish_tracker_event(target_tid, "watch_group_request", {
+                    "watch_id": watch_id,
+                    "group_id": group_id,
+                    "members": members,
+                    "include_body": include_body,
+                    "lease_seconds": lease_seconds,
+                    "reply_to_tracker_id": registry_client.TRACKER_ID
+                })
+                logging.info("delegated watch_group_request to remote tracker host=%s tid=%s", host, target_tid)
+            except Exception as e:
+                logging.warning("failed to delegate group watch to host %s: %s", host, e)
+
+
+def handle_update_watchlist(params: dict) -> bool:
+    """Handles update_watchlist RPC call supporting group watch mode with expiries."""
+    watch_id = params.get("watch_id")
+    mode = params.get("mode", "standard")
+    lease_seconds = params.get("lease_seconds", 120)
+
+    if not watch_id:
+        raise ValueError("watch_id is required")
+    if not isinstance(watch_id, str):
+        raise ValueError("watch_id must be a string")
+
     try:
-        since = int(params.get("since", 0) if params.get("since") is not None else 0)
+        lease_seconds = float(lease_seconds)
+    except ValueError:
+        raise ValueError("lease_seconds must be a number")
+
+    if mode == "group":
+        group_id = params.get("group_id")
+        members = params.get("members", [])
+        include_body = params.get("include_body", True)
+
+        if not group_id:
+            raise ValueError("group_id is required for group watch mode")
+        if not isinstance(group_id, str):
+            raise ValueError("group_id must be a string")
+        if not isinstance(members, list):
+            raise ValueError("members must be a list of strings")
+
+        state.update_group_watch(watch_id, group_id, members, lease_seconds, include_body)
+        
+        # Asynchronously delegate watch requests to remote trackers
+        threading.Thread(
+            target=_delegate_group_watch_to_remote_trackers,
+            args=(watch_id, group_id, members, lease_seconds, include_body),
+            daemon=True
+        ).start()
+        return True
+    else:
+        watchlist = params.get("watchlist", [])
+        state.update_watchlist_lease(watch_id, watchlist, lease_seconds)
+        return True
+
+
+def handle_wait_events(params: dict, caller_pid: int = None) -> dict:
+    """Best-effort cursored, lease-bound event long-poll or legacy filters-based poll."""
+    try:
+        cursor = int(params.get("cursor", params.get("since", 0)) if params.get("cursor", params.get("since")) is not None else 0)
         timeout = float(params.get("timeout", 25.0) if params.get("timeout") is not None else 25.0)
     except (TypeError, ValueError):
-        raise ValueError("since must be an integer and timeout must be a number")
-    if since < 0 or timeout < 0:
-        raise ValueError("since and timeout must be non-negative")
-    filters = {
-        key: params[key]
-        for key in ("target_agent_id", "target_agent_name")
-        if params.get(key)
+        raise ValueError("cursor/since must be an integer and timeout must be a number")
+    if cursor < 0 or timeout < 0:
+        raise ValueError("cursor/since and timeout must be non-negative")
+
+    client_id = params.get("client_id")
+    watch_list = params.get("watch_list")
+    lease_seconds = params.get("lease_seconds")
+    scope = params.get("scope", "narrow")
+    
+    if client_id:
+        if not isinstance(client_id, str):
+            raise ValueError("client_id must be a string")
+        if watch_list is not None and not isinstance(watch_list, list):
+            raise ValueError("watch_list must be a list of strings")
+        if not isinstance(scope, str) or scope not in {"narrow", "broad"}:
+            raise ValueError("scope must be narrow or broad")
+            
+        if scope == "broad" and not REMOTE_BROAD_WATCH_ENABLED:
+            raise ValueError("Broad passive remote observation is disabled on this tracker")
+
+        if lease_seconds is not None:
+            try:
+                lease_seconds = float(lease_seconds)
+            except ValueError:
+                raise ValueError("lease_seconds must be a number")
+        else:
+            lease_seconds = 60.0  # Default lease to 60 seconds if not specified
+            
+        # Atomically register/renew client lease
+        state.update_watchlist_lease(client_id, watch_list or [], lease_seconds)
+
+        # Classify local vs remote watched targets
+        remote_watchlist = [item for item in (watch_list or []) if "/" in item]
+        if remote_watchlist:
+            try:
+                registry_client.set_remote_watch_leases(client_id, remote_watchlist, lease_seconds, scope=scope)
+            except Exception as e:
+                logging.warning(f"Failed to delegate remote watch lease to registry: {e}")
+        else:
+            try:
+                registry_client.clear_remote_watch_leases(client_id)
+            except Exception as e:
+                logging.debug(f"Failed to clear remote watch lease on registry: {e}")
+
+    # Enforce buffer queue eviction checks
+    with state.event_lock:
+        oldest_seq = state.events[0]["seq"] if state.events else state.event_sequence_id
+        if cursor > 0 and cursor < oldest_seq - 1:
+            raise CursorExpiredError("cursor_expired")
+
+    # Extract backward-compatibility filters if client_id not used
+    filters = None
+    if not client_id:
+        filters = {
+            key: params[key]
+            for key in ("target_agent_id", "target_agent_name")
+            if params.get(key)
+        }
+
+    return state.wait_events(since=cursor, timeout=timeout, filters=filters, client_id=client_id, watch_list=watch_list)
+
+
+def handle_tracker_info(params: dict) -> dict:
+    """Returns this tracker's registry identity."""
+    return {
+        "hostname": registry_client.HOSTNAME,
+        "tracker_id": registry_client.TRACKER_ID,
+        "http_port": registry_client.HTTP_PORT,
     }
-    return state.wait_events(since=since, timeout=timeout, filters=filters)
 
 
 def handle_whoami(params: dict, caller_pid: int = None) -> dict:
@@ -1141,7 +1316,10 @@ dispatcher = {
     "send_message": handle_send_message,
     "send_input": handle_send_input,
     "get_inbox": handle_get_inbox,
+    "get_group_timeline": handle_get_group_timeline,
+    "update_watchlist": handle_update_watchlist,
     "wait_events": handle_wait_events,
+    "tracker_info": handle_tracker_info,
     "whoami": handle_whoami,
     "unregister": handle_unregister,
     "publish_tracker_event": handle_publish_tracker_event,
@@ -1193,6 +1371,8 @@ def handle_client(conn: socket.socket) -> None:
                     result = handler(params, caller_pid=caller_pid)
                 else:
                     result = handler(params)
+            except CursorExpiredError as e:
+                error = {"code": -32001, "message": "cursor_expired"}
             except ValueError as e:
                 error = {"code": -32602, "message": str(e)}
             except RuntimeError as e:

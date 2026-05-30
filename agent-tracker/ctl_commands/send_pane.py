@@ -5,6 +5,16 @@ import socket
 import uuid
 from .common import call_rpc, default_capture_pane_lines
 
+
+def _local_tracker_hostname():
+    try:
+        info = call_rpc("tracker_info", {}) or {}
+        if info.get("hostname"):
+            return info["hostname"]
+    except Exception:
+        pass
+    return os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
+
 def register(subparsers):
     parser = subparsers.add_parser("send-pane", help="Send a tmux pane snapshot to a target agent")
     parser.add_argument("target_address", help="Target agent address (e.g., 'alice', 'host-a/alice')")
@@ -57,7 +67,7 @@ def handle(args):
                 print(f"Error: Could not determine tracker ID for remote host '{remote_host}'.", file=sys.stderr)
                 sys.exit(1)
                 
-            local_hostname = os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
+            local_hostname = _local_tracker_hostname()
             target_delivery_address = args.target_address
             if "/" not in target_delivery_address:
                 target_delivery_address = f"{local_hostname}/{target_delivery_address}"
