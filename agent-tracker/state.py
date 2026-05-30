@@ -6,6 +6,7 @@ import subprocess
 import os
 import hashlib
 import json
+import re
 import tmux_util
 
 CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "agent-tracker")
@@ -36,6 +37,22 @@ TRANSIENT_COMMS = {
     "ps", "grep", "pgrep", "ls", "cat", "sleep", "which", "sh", "bash", "zsh",
     "fish", "tmux", "home-manager", "nix", "env"
 }
+
+
+def normalize_model_type(*values: str | None) -> str:
+    """Returns the canonical UI model type for agent metadata."""
+    for value in values:
+        if not value:
+            continue
+        basename = os.path.basename(str(value).strip()).lower()
+        tokens = {token for token in re.split(r"[^a-z0-9]+", basename) if token}
+        if "claude" in tokens or basename == "claude-code":
+            return "claude"
+        if "codex" in tokens:
+            return "codex"
+        if "pi" in tokens or basename == "pi-coding-agent":
+            return "pi"
+    return "unknown"
 
 
 def discover_agent_process(pane_id: str, agent_cmd: str | None = None) -> dict | None:
@@ -224,6 +241,11 @@ def set_agent(name: str, info: dict) -> None:
         normalized["name"] = name
         if "aliases" not in normalized:
             normalized["aliases"] = []
+        normalized["model_type"] = normalize_model_type(
+            normalized.get("model_type"),
+            normalized.get("agent_type"),
+            normalized.get("agent_cmd"),
+        )
 
         existing = state.get(agent_id)
         if existing:
@@ -263,6 +285,8 @@ def update_agent(name_or_id: str, **kwargs) -> bool:
         old_pane = info.get("tmux_pane")
         for k, v in kwargs.items():
             info[k] = v
+        if any(k in kwargs for k in ("model_type", "agent_type", "agent_cmd")):
+            info["model_type"] = normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd"))
         new_pane = info.get("tmux_pane")
         if old_pane != new_pane:
             if old_pane and pane_index.get(old_pane) == agent_id:
@@ -299,6 +323,7 @@ def get_agents_for_registry() -> list[dict]:
             "status": info.get("status", "unknown"),
             "agent_type": info.get("agent_type", "unknown"),
             "agent_cmd": info.get("agent_cmd", "unknown"),
+            "model_type": normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd")),
             "cwd": info.get("cwd"),
         } for agent_id, info in state.items() if not info.get("no_registry", False)]
 

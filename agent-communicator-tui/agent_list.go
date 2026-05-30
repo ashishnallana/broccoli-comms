@@ -25,8 +25,10 @@ type ctlAgent struct {
 	Hostname      string   `json:"hostname"`
 	TargetAddress string   `json:"target_address"`
 	TrackerID     string   `json:"tracker_id"`
+	RegistryName  string   `json:"registry_name"`
 	TmuxPane      string   `json:"tmux_pane"`
 	AgentCmd      string   `json:"agent_cmd"`
+	ModelType     string   `json:"model_type"`
 }
 
 func loadAgents(local localClient) tea.Cmd {
@@ -95,8 +97,10 @@ func rowFromCtlAgent(key string, agent ctlAgent) agentRow {
 		Hostname:      agent.Hostname,
 		TargetAddress: agent.TargetAddress,
 		TrackerID:     agent.TrackerID,
+		RegistryName:  agent.RegistryName,
 		TmuxPane:      agent.TmuxPane,
 		AgentCmd:      agent.AgentCmd,
+		ModelType:     agent.ModelType,
 	})
 }
 
@@ -120,10 +124,13 @@ func rowFromTrackerAgent(key string, agent tracker.Agent) agentRow {
 			Scope:         "local",
 			Status:        agent.Status,
 			CWD:           fallback(agent.CWD, "unknown"),
+			Hostname:      agent.Hostname,
 			TmuxPane:      agent.TmuxPane,
 			AgentCmd:      agent.AgentCmd,
 			AgentID:       agent.AgentID,
 			TrackerID:     agent.TrackerID,
+			RegistryName:  agent.RegistryName,
+			ModelType:     agent.ModelType,
 		}
 	}
 	host, name := splitRemoteTarget(target)
@@ -145,6 +152,8 @@ func rowFromTrackerAgent(key string, agent tracker.Agent) agentRow {
 		AgentCmd:      agent.AgentCmd,
 		AgentID:       agent.AgentID,
 		TrackerID:     agent.TrackerID,
+		RegistryName:  agent.RegistryName,
+		ModelType:     agent.ModelType,
 	}
 }
 

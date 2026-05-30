@@ -12,6 +12,7 @@ type Agent struct {
 	WaitingApproval bool     `json:"waiting_approval"`
 	AgentType       string   `json:"agent_type"`
 	AgentCmd        string   `json:"agent_cmd"`
+	ModelType       string   `json:"model_type"`
 	Aliases         []string `json:"aliases"`
 	IsThisMe        bool     `json:"is_this_me"`
 	CWD             string   `json:"cwd,omitempty"`
@@ -19,6 +20,7 @@ type Agent struct {
 	Hostname        string   `json:"hostname,omitempty"`
 	TargetAddress   string   `json:"target_address,omitempty"`
 	TrackerID       string   `json:"tracker_id,omitempty"`
+	RegistryName    string   `json:"registry_name,omitempty"`
 }
 
 type Attachment struct {

@@ -89,15 +89,21 @@ class TestState(unittest.TestCase):
     def test_get_agents_for_registry_omits_local_fields(self):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "session": "s", "cwd": "/work/project"})
         self.assertEqual(state.get_agents_for_registry(), [{
-            "agent_id": "id-1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "unknown", "agent_cmd": "unknown", "cwd": "/work/project"
+            "agent_id": "id-1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": "/work/project"
         }])
 
     def test_get_agents_for_registry_skips_no_registry_agents(self):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "no_registry": True})
         state.set_agent("agent2", {"agent_id": "id-2", "status": "working"})
         self.assertEqual(state.get_agents_for_registry(), [{
-            "agent_id": "id-2", "name": "agent2", "aliases": [], "status": "working", "agent_type": "unknown", "agent_cmd": "unknown", "cwd": None
+            "agent_id": "id-2", "name": "agent2", "aliases": [], "status": "working", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": None
         }])
+
+    def test_normalize_model_type(self):
+        self.assertEqual(state.normalize_model_type("claude-code"), "claude")
+        self.assertEqual(state.normalize_model_type(None, "codex"), "codex")
+        self.assertEqual(state.normalize_model_type(None, None, "/nix/store/pi-coding-agent"), "pi")
+        self.assertEqual(state.normalize_model_type("other"), "unknown")
 
     def test_event_buffer_bounds_and_eviction(self):
         state.events = []

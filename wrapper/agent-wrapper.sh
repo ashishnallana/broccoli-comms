@@ -58,6 +58,7 @@ wrapper_pid="$$"
 suggested_name="${SUGGESTED_AGENT_NAME:-}"
 agent_type=$(basename "$cmd")
 agent_cmd=$(basename "$cmd")
+model_type="${AGENT_MODEL_TYPE:-${MODEL_TYPE:-}}"
 agent_id="${AGENT_ID:-$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4())
@@ -67,9 +68,9 @@ export AGENT_ID="$agent_id"
 current_cwd=$("${tmux_cmd[@]}" display-message -p -t "$pane_id" '#{pane_current_path}' 2>/dev/null || pwd)
 
 rpc_register() {
-  python3 - "$session_name" "$pane_id" "$wrapper_pid" "$tmux_socket" "$suggested_name" "$agent_type" "$agent_cmd" "$agent_id" "$no_notify_with_send_keys" "$no_registry" "$current_cwd" <<'PY'
+  python3 - "$session_name" "$pane_id" "$wrapper_pid" "$tmux_socket" "$suggested_name" "$agent_type" "$agent_cmd" "$model_type" "$agent_id" "$no_notify_with_send_keys" "$no_registry" "$current_cwd" <<'PY'
 import json, os, socket, sys
-session, pane, wrapper_pid, tmux_socket, name, agent_type, agent_cmd, agent_id, no_notify, no_registry, cwd = sys.argv[1:]
+session, pane, wrapper_pid, tmux_socket, name, agent_type, agent_cmd, model_type, agent_id, no_notify, no_registry, cwd = sys.argv[1:]
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(3)
 s.connect(os.environ["AGENT_TRACKER_SOCKET"])
@@ -84,6 +85,7 @@ req = {
     "name": name,
     "agent_type": agent_type,
     "agent_cmd": agent_cmd,
+    "model_type": model_type,
     "agent_id": agent_id,
     "no_notify_with_send_keys": no_notify.lower() == "true",
     "no_registry": no_registry.lower() == "true",

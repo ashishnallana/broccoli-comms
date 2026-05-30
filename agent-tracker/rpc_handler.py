@@ -132,6 +132,7 @@ def handle_register(params: dict) -> str:
     name = params.get("name")
     agent_type = params.get("agent_type", "unknown")
     agent_cmd = params.get("agent_cmd", "unknown")
+    model_type = state.normalize_model_type(params.get("model_type"), agent_type, agent_cmd)
     agent_id = params.get("agent_id") or str(uuid.uuid4())
     no_notify_with_send_keys = bool(params.get("no_notify_with_send_keys", False))
     no_registry = bool(params.get("no_registry", False))
@@ -169,6 +170,7 @@ def handle_register(params: dict) -> str:
         "uuid": agent_id,
         "agent_type": agent_type or (existing_info or {}).get("agent_type", "unknown"),
         "agent_cmd": agent_cmd or (existing_info or {}).get("agent_cmd", "unknown"),
+        "model_type": model_type,
         "no_notify_with_send_keys": no_notify_with_send_keys,
         "no_registry": no_registry,
         "cwd": cwd or (existing_info or {}).get("cwd"),
@@ -204,12 +206,31 @@ def _fetch_registry_agents_for_list() -> dict:
                 key = f"{registry_name}:{base_key}"
             elif base_key not in remote_agents and any(k.endswith(f":{base_key}") for k in remote_agents):
                 key = f"{registry_name}:{base_key}"
-            remote_agents[key] = {**agent, "name": key, "scope": "remote", "target_address": key, "registry_name": registry_name}
+            remote_agents[key] = {
+                **agent,
+                "name": key,
+                "scope": "remote",
+                "target_address": key,
+                "registry_name": registry_name,
+                "model_type": state.normalize_model_type(agent.get("model_type"), agent.get("agent_type"), agent.get("agent_cmd")),
+            }
     return remote_agents
 
 
+def _local_agent_list_row(name: str, info: dict) -> dict:
+    return {
+        **info,
+        "name": info.get("name") or name,
+        "scope": "local",
+        "hostname": info.get("hostname") or registry_client.HOSTNAME,
+        "tracker_id": info.get("tracker_id") or registry_client.TRACKER_ID,
+        "target_address": info.get("target_address") or name,
+        "model_type": state.normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd")),
+    }
+
+
 def _merge_registry_agents_for_list(local_agents: dict, remote_agents: dict) -> dict:
-    merged = {name: {**info, "name": info.get("name") or name, "scope": info.get("scope", "local"), "target_address": info.get("target_address") or name} for name, info in (local_agents or {}).items()}
+    merged = {name: _local_agent_list_row(name, info) for name, info in (local_agents or {}).items()}
     local_agent_ids = {info.get("agent_id") for info in (local_agents or {}).values() if info.get("agent_id")}
     for name, info in (remote_agents or {}).items():
         if info.get("agent_id") in local_agent_ids:
@@ -228,15 +249,7 @@ def handle_list(params: dict, caller_pid: int = None) -> dict:
     if params.get("include_remote"):
         agents = _merge_registry_agents_for_list(agents, _fetch_registry_agents_for_list())
     else:
-        agents = {
-            name: {
-                **info,
-                "name": info.get("name") or name,
-                "scope": info.get("scope", "local"),
-                "target_address": info.get("target_address") or name,
-            }
-            for name, info in (agents or {}).items()
-        }
+        agents = {name: _local_agent_list_row(name, info) for name, info in (agents or {}).items()}
     caller_name = _identify_agent(params, caller_pid)
     
     if caller_name and caller_name in agents:
@@ -300,6 +313,7 @@ def handle_ensure_mailbox(params: dict) -> dict:
         "uuid": existing.get("uuid") or existing.get("agent_id") or agent_id,
         "agent_type": existing.get("agent_type", "agent-communicator-ui"),
         "agent_cmd": existing.get("agent_cmd", "agent-communicator-electron"),
+        "model_type": state.normalize_model_type(existing.get("model_type"), existing.get("agent_type", "agent-communicator-ui"), existing.get("agent_cmd", "agent-communicator-electron")),
         "no_notify_with_send_keys": True,
         "no_registry": params.get("no_registry", True),
         "cwd": params.get("cwd") or existing.get("cwd"),

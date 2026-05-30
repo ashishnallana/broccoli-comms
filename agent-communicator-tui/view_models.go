@@ -130,16 +130,33 @@ func rowMachineLabel(row agentRow) string {
 }
 
 func modelBadge(row agentRow) string {
-	cmd := strings.ToLower(strings.TrimSpace(row.AgentCmd))
-	switch {
-	case strings.Contains(cmd, "claude"):
+	modelType := strings.ToLower(strings.TrimSpace(row.ModelType))
+	if modelType == "" || modelType == "unknown" {
+		modelType = inferredModelType(row.AgentCmd)
+	}
+	switch modelType {
+	case "claude":
 		return "Cl"
-	case strings.Contains(cmd, "codex"):
+	case "codex":
 		return "Cx"
-	case strings.Contains(cmd, "pi"):
+	case "pi":
 		return "Pi"
 	default:
 		return "??"
+	}
+}
+
+func inferredModelType(agentCmd string) string {
+	cmd := strings.ToLower(strings.TrimSpace(agentCmd))
+	switch {
+	case strings.Contains(cmd, "claude"):
+		return "claude"
+	case strings.Contains(cmd, "codex"):
+		return "codex"
+	case strings.Contains(cmd, "pi"):
+		return "pi"
+	default:
+		return "unknown"
 	}
 }
 

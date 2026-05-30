@@ -9,18 +9,22 @@ import (
 
 func TestModelBadgeMapping(t *testing.T) {
 	cases := []struct {
-		cmd  string
-		want string
+		modelType string
+		cmd       string
+		want      string
 	}{
-		{"claude-code", "Cl"},
-		{"/nix/store/bin/codex", "Cx"},
-		{"pi-coding-agent", "Pi"},
-		{"unknown-agent", "??"},
-		{"", "??"},
+		{"claude", "", "Cl"},
+		{"codex", "pi", "Cx"},
+		{"pi", "codex", "Pi"},
+		{"unknown", "claude-code", "Cl"},
+		{"", "/nix/store/bin/codex", "Cx"},
+		{"", "pi-coding-agent", "Pi"},
+		{"", "unknown-agent", "??"},
+		{"", "", "??"},
 	}
 	for _, tc := range cases {
-		if got := modelBadge(agentRow{AgentCmd: tc.cmd}); got != tc.want {
-			t.Fatalf("modelBadge(%q) = %q, want %q", tc.cmd, got, tc.want)
+		if got := modelBadge(agentRow{ModelType: tc.modelType, AgentCmd: tc.cmd}); got != tc.want {
+			t.Fatalf("modelBadge(model=%q cmd=%q) = %q, want %q", tc.modelType, tc.cmd, got, tc.want)
 		}
 	}
 }

@@ -70,10 +70,21 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual(info["tmux_pane"], "%2")
         self.assertEqual(info["tmux_socket"], "new-sock")
         self.assertEqual(info["wrapper_pid"], 222)
+        self.assertEqual(info["model_type"], "pi")
         self.assertFalse(info.get("no_notify_with_send_keys", False))
         self.assertFalse(info.get("no_registry", False))
         self.assertIn("last_heartbeat", info)
         self.assertEqual(len(state.state), 1)
+
+    def test_handle_list_includes_local_metadata_and_model_type(self):
+        with mock.patch.object(registry_client, "HOSTNAME", "test-host"), mock.patch.object(registry_client, "TRACKER_ID", "tracker-1"):
+            state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "agent_type": "codex", "agent_cmd": "codex"})
+            result = rpc_handler.handle_list({})
+        self.assertEqual(result["agent1"]["scope"], "local")
+        self.assertEqual(result["agent1"]["hostname"], "test-host")
+        self.assertEqual(result["agent1"]["tracker_id"], "tracker-1")
+        self.assertEqual(result["agent1"]["target_address"], "agent1")
+        self.assertEqual(result["agent1"]["model_type"], "codex")
 
     @mock.patch("tmux_util.set_pane_title")
     @mock.patch("tmux_util.set_agent_no_registry")
