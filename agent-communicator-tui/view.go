@@ -139,6 +139,15 @@ func (m model) conversationTitle() string {
 }
 
 func (m model) composerBox(width int) string {
+	input := m.composerInputBox(width)
+	buttons := m.composerModeButtons(width)
+	if buttons == "" {
+		return input
+	}
+	return input + "\n" + buttons
+}
+
+func (m model) composerInputBox(width int) string {
 	if m.width < 70 {
 		return mobileComposerBoxStyle.Width(width).MaxWidth(width).Render(m.composerView(width))
 	}
@@ -157,8 +166,8 @@ func (m model) footer(width int) string {
 	}
 	lines := []string{
 		statusBarStyle.Render(status),
-		"c-t view · tab section · c-n/p agent · F1-F4 input · c-a read · c-o prompts · c-h hide · c-f save · c-s save agent",
-		fmt.Sprintf("↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · /msg message · /text /key pane control (%s) · /broadcast disabled · c-q quit · c-x debug capture", directScope),
+		"c-t view · tab section · c-n/p agent · F1-F3 input · c-a read · c-o prompts · c-h hide · c-f save · c-s save agent",
+		fmt.Sprintf("↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · /msg message · /text /key pane control (%s) · c-q quit · c-x debug capture", directScope),
 	}
 	if m.paneCaptureStatus != "" {
 		lines = append([]string{m.paneCaptureStatus}, lines...)
@@ -544,14 +553,14 @@ func (m model) composerLines(width int) []string {
 		prompt = prefix + cursor + mutedStyle.Render(placeholder)
 	}
 	wrapped := wrapLine(prompt, max(1, width-1))
-	bodyMaxLines := max(1, composerMaxLines-1)
+	bodyMaxLines := max(1, composerMaxLines)
 	if len(wrapped) > bodyMaxLines {
 		wrapped = wrapped[len(wrapped)-bodyMaxLines:]
 	}
 	for i := range wrapped {
 		wrapped[i] = truncateCells(wrapped[i], max(1, width-1))
 	}
-	return append([]string{m.composerModeHint(width)}, wrapped...)
+	return wrapped
 }
 
 func (m model) composerPrefix() string {
@@ -569,13 +578,31 @@ func (m model) composerPlaceholder() string {
 	case inputModeKeys:
 		return "type key tokens, e.g. C-c Enter"
 	case inputModeBroadcast:
-		return "broadcast disabled; F1/F2/F3 to switch modes"
+		return "type message"
 	default:
 		return "type message"
 	}
 }
 
+type inputModeButton struct {
+	Mode  inputMode
+	Name  string
+	Label string
+}
+
+func inputModeButtons() []inputModeButton {
+	return []inputModeButton{
+		{Mode: inputModeMessage, Name: "msg", Label: "/msg"},
+		{Mode: inputModeText, Name: "text", Label: "/text"},
+		{Mode: inputModeKeys, Name: "key", Label: "/keys"},
+	}
+}
+
 func (m model) composerModeHint(width int) string {
+	return m.composerModeButtons(width)
+}
+
+func (m model) composerModeButtons(width int) string {
 	action := composerActionForMode(string(m.composer), m.inputMode)
 	active := m.inputMode.name()
 	if slashComposerCommand(string(m.composer)) {
@@ -584,21 +611,22 @@ func (m model) composerModeHint(width int) string {
 			active = "text"
 		case "direct_keys":
 			active = "key"
-		case "broadcast":
-			active = "broadcast"
 		default:
 			active = "msg"
 		}
 	}
-	tab := func(name, label string) string {
-		if active == name {
-			return activeModeTabStyle.Render(label)
+	buttons := []string{}
+	for i, button := range inputModeButtons() {
+		if i > 0 {
+			buttons = append(buttons, lipgloss.NewStyle().Width(1).Height(3).Render(""))
 		}
-		return modeTabStyle.Render(label)
+		style := modeTabStyle
+		if active == button.Name {
+			style = activeModeTabStyle
+		}
+		buttons = append(buttons, style.Render(button.Label))
 	}
-	context := mutedStyle.Render(" target " + m.sendingContextLine())
-	line := tab("msg", "F1 /msg inbox") + " " + tab("text", "F2 /text pane") + " " + tab("key", "F3 /key pane") + " " + tab("broadcast", "F4 /broadcast disabled") + context
-	return truncateCells(line, max(1, width-1))
+	return lipgloss.JoinHorizontal(lipgloss.Top, buttons...)
 }
 
 func (m model) sendingContextLine() string {

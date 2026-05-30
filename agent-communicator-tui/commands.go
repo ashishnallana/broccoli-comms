@@ -295,11 +295,15 @@ func parseComposerAction(input string) composerAction {
 		}
 		return composerAction{Kind: "direct_text", Text: rest, Submit: submit, Original: input}
 	}
-	if trimmed == "/key" {
+	if trimmed == "/key" || trimmed == "/keys" {
 		return composerAction{Kind: "direct_keys", Original: input}
 	}
 	if strings.HasPrefix(trimmed, "/key ") {
 		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/key"))
+		return composerAction{Kind: "direct_keys", Keys: strings.Fields(rest), Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/keys ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/keys"))
 		return composerAction{Kind: "direct_keys", Keys: strings.Fields(rest), Original: input}
 	}
 	if trimmed == "/broadcast" {

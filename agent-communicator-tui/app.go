@@ -320,7 +320,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inputMode = inputModeKeys
 			return m, nil
 		case tea.KeyF4:
-			m.inputMode = inputModeBroadcast
 			return m, nil
 		case tea.KeyEnter:
 			if m.mode != savedView && m.canSendCurrent() && strings.TrimSpace(string(m.composer)) != "" {

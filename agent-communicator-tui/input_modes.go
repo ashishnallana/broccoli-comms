@@ -42,7 +42,7 @@ func composerActionForMode(input string, mode inputMode) composerAction {
 
 func slashComposerCommand(input string) bool {
 	trimmed := strings.TrimSpace(input)
-	for _, prefix := range []string{"/msg", "/text", "/key", "/broadcast"} {
+	for _, prefix := range []string{"/msg", "/text", "/key", "/keys", "/broadcast"} {
 		if trimmed == prefix || strings.HasPrefix(trimmed, prefix+" ") {
 			return true
 		}

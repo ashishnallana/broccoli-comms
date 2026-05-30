@@ -12,18 +12,18 @@ func TestFunctionKeysSwitchPersistentInputModes(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", ModelType: "pi", Hostname: "workstation"}}}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyF2})
 	m = updated.(model)
-	if m.inputMode != inputModeText || !strings.Contains(m.composerModeHint(120), "F2") {
+	if m.inputMode != inputModeText || !strings.Contains(m.composerModeHint(120), "/text") {
 		t.Fatalf("text mode not active: mode=%v hint=%q", m.inputMode, m.composerModeHint(120))
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF3})
 	m = updated.(model)
-	if m.inputMode != inputModeKeys {
-		t.Fatalf("key mode not active: %v", m.inputMode)
+	if m.inputMode != inputModeKeys || !strings.Contains(m.composerModeHint(120), "/keys") {
+		t.Fatalf("key mode not active: mode=%v hint=%q", m.inputMode, m.composerModeHint(120))
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF4})
 	m = updated.(model)
-	if m.inputMode != inputModeBroadcast || !strings.Contains(m.composerModeHint(120), "/broadcast disabled") {
-		t.Fatalf("broadcast tab not active/visible: mode=%v hint=%q", m.inputMode, m.composerModeHint(120))
+	if m.inputMode != inputModeKeys {
+		t.Fatalf("F4 should not expose broadcast mode: %v", m.inputMode)
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF1})
 	if updated.(model).inputMode != inputModeMessage {
@@ -59,27 +59,63 @@ func TestKeyModeSendsDirectKeysWithoutSlashPrefix(t *testing.T) {
 	}
 }
 
-func TestBroadcastModeIsVisibleDisabledAndDoesNotSend(t *testing.T) {
+func TestKeysSlashAliasSendsDirectKeys(t *testing.T) {
+	action := parseComposerAction("/keys C-c Enter")
+	if action.Kind != "direct_keys" || strings.Join(action.Keys, ",") != "C-c,Enter" {
+		t.Fatalf("/keys action = %+v", action)
+	}
+}
+
+func TestBroadcastSlashRemainsDisabledInternally(t *testing.T) {
 	local := &fakeLocal{}
-	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local, inputMode: inputModeBroadcast, sentMessages: map[string][]tracker.Message{}}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello all")})
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local, sentMessages: map[string][]tracker.Message{}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/broadcast hello all")})
 	m = updated.(model)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	if cmd == nil || local.sentBody != "" || local.directText != "" || local.directTarget != "" || len(m.outbox) != 0 {
 		t.Fatalf("broadcast should only schedule status clear and not send: cmd=%v sent=%q direct=%q/%q outbox=%+v", cmd, local.sentBody, local.directTarget, local.directText, m.outbox)
 	}
-	if !m.directInputStatusErr || !strings.Contains(m.directInputStatus, "Broadcast mode is disabled") || string(m.composer) != "hello all" {
+	if !m.directInputStatusErr || !strings.Contains(m.directInputStatus, "Broadcast mode is disabled") || string(m.composer) != "/broadcast hello all" {
 		t.Fatalf("broadcast disabled status/composer = %q err=%v composer=%q", m.directInputStatus, m.directInputStatusErr, string(m.composer))
 	}
 }
 
-func TestComposerHintIncludesTargetModelAndMachine(t *testing.T) {
+func TestComposerModeButtonsExcludeTargetAndBroadcast(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", ModelType: "pi", Hostname: "workstation"}}, inputMode: inputModeMessage}
 	hint := m.composerModeHint(160)
-	for _, want := range []string{"F1 /msg inbox", "F2 /text pane", "F3 /key pane", "F4 /broadcast disabled", "target alpha Pi @ works"} {
+	for _, want := range []string{"/msg", "/text", "/keys", "╭", "╰"} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("hint missing %q: %s", want, hint)
+		}
+	}
+	for _, unwanted := range []string{"target", "alpha Pi", "broadcast", "F4"} {
+		if strings.Contains(hint, unwanted) {
+			t.Fatalf("hint should not contain %q: %s", unwanted, hint)
+		}
+	}
+}
+
+func TestComposerInputAreaDoesNotIncludeModeButtons(t *testing.T) {
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, inputMode: inputModeMessage}
+	input := m.composerView(120)
+	for _, unwanted := range []string{"/msg", "/text", "/keys", "broadcast", "target"} {
+		if strings.Contains(input, unwanted) {
+			t.Fatalf("composer input should not contain %q: %s", unwanted, input)
+		}
+	}
+}
+
+func TestFooterDoesNotAdvertiseBroadcastOrF4(t *testing.T) {
+	footer := model{width: 160}.footer(160)
+	for _, unwanted := range []string{"broadcast", "F4"} {
+		if strings.Contains(footer, unwanted) {
+			t.Fatalf("footer should not contain %q: %s", unwanted, footer)
+		}
+	}
+	for _, want := range []string{"F1-F3 input", "/msg message", "/text /key pane control"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("footer missing %q: %s", want, footer)
 		}
 	}
 }

@@ -1,6 +1,9 @@
 package main
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
 
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	event := tea.MouseEvent(msg)
@@ -95,17 +98,26 @@ func (m model) mouseInputMode(x, y int) (inputMode, bool) {
 	if m.width < 70 {
 		composerTop = titleH
 	}
-	if y != composerTop {
+	inputH := lineCount(m.composerInputBox(innerW))
+	buttonTop := composerTop + inputH
+	buttonH := lineCount(m.composerModeButtons(innerW))
+	if y < buttonTop || y >= buttonTop+buttonH {
 		return inputModeMessage, false
 	}
-	if innerX < 13 {
-		return inputModeMessage, true
+	return inputModeButtonAtX(innerX)
+}
+
+func inputModeButtonAtX(x int) (inputMode, bool) {
+	cursor := 0
+	for i, button := range inputModeButtons() {
+		buttonWidth := lipgloss.Width(modeTabStyle.Render(button.Label))
+		if x >= cursor && x < cursor+buttonWidth {
+			return button.Mode, true
+		}
+		cursor += buttonWidth
+		if i < len(inputModeButtons())-1 {
+			cursor++
+		}
 	}
-	if innerX < 28 {
-		return inputModeText, true
-	}
-	if innerX < 41 {
-		return inputModeKeys, true
-	}
-	return inputModeBroadcast, true
+	return inputModeMessage, false
 }
