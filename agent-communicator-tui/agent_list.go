@@ -40,6 +40,7 @@ type ctlAgent struct {
 	RegistryName  string   `json:"registry_name"`
 	TmuxPane      string   `json:"tmux_pane"`
 	AgentCmd      string   `json:"agent_cmd"`
+	AgentType     string   `json:"agent_type"`
 	ModelType     string   `json:"model_type"`
 }
 
@@ -112,6 +113,7 @@ func rowFromCtlAgent(key string, agent ctlAgent) agentRow {
 		RegistryName:  agent.RegistryName,
 		TmuxPane:      agent.TmuxPane,
 		AgentCmd:      agent.AgentCmd,
+		AgentType:     agent.AgentType,
 		ModelType:     agent.ModelType,
 	})
 }
@@ -139,6 +141,7 @@ func rowFromTrackerAgent(key string, agent tracker.Agent) agentRow {
 			Hostname:      agent.Hostname,
 			TmuxPane:      agent.TmuxPane,
 			AgentCmd:      agent.AgentCmd,
+			AgentType:     agent.AgentType,
 			AgentID:       agent.AgentID,
 			TrackerID:     agent.TrackerID,
 			RegistryName:  agent.RegistryName,
@@ -162,6 +165,7 @@ func rowFromTrackerAgent(key string, agent tracker.Agent) agentRow {
 		CWD:           fallback(agent.CWD, "unavailable"),
 		TmuxPane:      agent.TmuxPane,
 		AgentCmd:      agent.AgentCmd,
+		AgentType:     agent.AgentType,
 		AgentID:       agent.AgentID,
 		TrackerID:     agent.TrackerID,
 		RegistryName:  agent.RegistryName,

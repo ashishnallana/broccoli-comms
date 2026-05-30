@@ -725,7 +725,7 @@ class TestRpcHandler(unittest.TestCase):
         self.assertIsNone(info.get("tmux_socket"))
         self.assertIsNone(info.get("wrapper_pid"))
         self.assertIsNone(info.get("pid"))
-        with self.assertRaisesRegex(RuntimeError, "no registered tmux pane"):
+        with self.assertRaisesRegex(RuntimeError, "UI/mailbox"):
             rpc_handler.handle_send_input({"agent_name": "agent-communicator", "input_type": "text", "text": "unsafe"})
 
     def test_ensure_mailbox_can_preserve_existing_pane_metadata(self):
@@ -746,8 +746,10 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual(info.get("tmux_socket"), "sock")
         self.assertEqual(info.get("wrapper_pid"), 123)
         self.assertEqual(info.get("pid"), 456)
-        self.assertFalse(info.get("no_registry"))
+        self.assertTrue(info.get("no_registry"))
         self.assertTrue(info.get("is_mailbox"))
+        with self.assertRaisesRegex(RuntimeError, "UI/mailbox"):
+            rpc_handler.handle_send_input({"agent_name": "agent-communicator", "input_type": "keys", "keys": ["Enter"]})
 
     def test_ensure_mailbox_rejects_remote_names(self):
         with self.assertRaises(ValueError):

@@ -35,7 +35,7 @@ type messageIDSender interface {
 	SendMessageWithID(context.Context, string, string, string, string, []tracker.Attachment) error
 }
 
-type agentRow struct{ Name, Scope, Status, CWD, TargetAddress, Hostname, AgentName, TmuxPane, AgentCmd, AgentID, TrackerID, RegistryName, ModelType string }
+type agentRow struct{ Name, Scope, Status, CWD, TargetAddress, Hostname, AgentName, TmuxPane, AgentCmd, AgentType, AgentID, TrackerID, RegistryName, ModelType string }
 type mailboxEnsured struct{ Err error }
 
 type agentsLoaded struct {
@@ -349,6 +349,9 @@ func sendOutboxRecord(local localClient, senderName string, row agentRow, record
 
 func sendDirectInput(local localClient, row agentRow, action composerAction, allowRemote bool) tea.Cmd {
 	return func() tea.Msg {
+		if rowDisallowsDirectInput(row) {
+			return directInputSent{Original: action.Original, Row: row, Mode: action.Kind, Err: errors.New("direct pane input to Broccoli Comms UI is disabled")}
+		}
 		if local == nil {
 			return directInputSent{Original: action.Original, Row: row, Mode: action.Kind, Err: errors.New("local tracker client unavailable")}
 		}
@@ -380,6 +383,18 @@ func sendDirectInput(local localClient, row agentRow, action composerAction, all
 		}
 		return directInputSent{Original: action.Original, Row: row, Mode: action.Kind, Err: err}
 	}
+}
+
+func rowDisallowsDirectInput(row agentRow) bool {
+	agentName := strings.TrimSpace(row.AgentName)
+	if agentName == "" {
+		agentName = strings.TrimSpace(row.Name)
+		if strings.Contains(agentName, "/") {
+			parts := strings.Split(agentName, "/")
+			agentName = parts[len(parts)-1]
+		}
+	}
+	return row.AgentType == "agent-communicator-ui" || agentName == "agent-communicator" || strings.Contains(row.AgentCmd, "agent-communicator")
 }
 
 func messageBodyForDelivery(body string) string {

@@ -535,6 +535,8 @@ def ui_launch_command() -> str:
         *tmux_env_assignments_for_pane(),
         shlex.quote(wrapper_path()),
         shlex.quote(tui_path()),
+        "--no-notify-with-send-keys",
+        "--no-registry",
     ])
 
 

@@ -337,11 +337,11 @@ def handle_ensure_mailbox(params: dict) -> dict:
         "waiting_approval": existing.get("waiting_approval", False),
         "agent_id": existing.get("agent_id") or agent_id,
         "uuid": existing.get("uuid") or existing.get("agent_id") or agent_id,
-        "agent_type": existing.get("agent_type", "agent-communicator-ui"),
-        "agent_cmd": existing.get("agent_cmd", "agent-communicator-electron"),
-        "model_type": state.normalize_model_type(existing.get("model_type"), existing.get("agent_type", "agent-communicator-ui"), existing.get("agent_cmd", "agent-communicator-electron")),
+        "agent_type": "agent-communicator-ui",
+        "agent_cmd": existing.get("agent_cmd", "agent-communicator"),
+        "model_type": state.normalize_model_type("agent-communicator-ui", "agent-communicator-ui", existing.get("agent_cmd", "agent-communicator")),
         "no_notify_with_send_keys": True,
-        "no_registry": existing.get("no_registry", params.get("no_registry", True)) if preserve_pane else params.get("no_registry", True),
+        "no_registry": True,
         "cwd": params.get("cwd") or existing.get("cwd"),
         "last_heartbeat": time.time(),
         "recovered_at": None,
@@ -772,6 +772,12 @@ def _route_remote_send_input(params: dict, caller_pid: int = None) -> dict | Non
     raise RuntimeError(f"Remote pane input failed: {(body or {}).get('message', 'unknown error')}")
 
 
+def _is_mailbox_or_ui_agent(info: dict) -> bool:
+    if not info:
+        return False
+    return bool(info.get("is_mailbox")) or info.get("agent_type") == "agent-communicator-ui"
+
+
 def handle_send_input(params: dict, caller_pid: int = None) -> dict:
     """Sends direct pane input to a registered agent pane.
 
@@ -794,6 +800,8 @@ def handle_send_input(params: dict, caller_pid: int = None) -> dict:
     info = state.get_agent(agent_name)
     if not info:
         raise ValueError("Target agent not found")
+    if _is_mailbox_or_ui_agent(info):
+        raise RuntimeError("Target is a Broccoli Comms UI/mailbox; direct pane input is disabled")
     tmux_pane = info.get("tmux_pane")
     tmux_socket = info.get("tmux_socket")
     if not tmux_pane:

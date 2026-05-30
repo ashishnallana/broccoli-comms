@@ -363,6 +363,22 @@ func TestSlashKeySendsDirectKeys(t *testing.T) {
 	}
 }
 
+func TestDirectInputToCommunicatorUIRejectedBeforeDispatch(t *testing.T) {
+	local := &fakeLocal{}
+	m := model{rows: []agentRow{{Name: "host/agent-communicator", AgentName: "agent-communicator", AgentType: "agent-communicator-ui", Scope: "remote", TargetAddress: "host/agent-communicator"}}, local: local, runtime: runtimeInfo{RemoteDirectInputEnabled: true}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/key Enter")})
+	m = updated.(model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	m, _ = mustUpdate(m, cmd())
+	if local.directTarget != "" || len(local.directKeys) != 0 {
+		t.Fatalf("direct input dispatched to communicator UI: target=%q keys=%+v", local.directTarget, local.directKeys)
+	}
+	if string(m.composer) != "/key Enter" || !m.directInputStatusErr || !strings.Contains(m.directInputStatus, "Broccoli Comms UI") {
+		t.Fatalf("composer=%q status=%q statusErr=%v", string(m.composer), m.directInputStatus, m.directInputStatusErr)
+	}
+}
+
 func TestDirectInputFailureRestoresComposerAndDoesNotAppendOutbox(t *testing.T) {
 	local := &fakeLocal{directErr: errors.New("boom")}
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local, sentMessages: map[string][]tracker.Message{}}
