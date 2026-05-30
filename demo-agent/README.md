@@ -1,6 +1,6 @@
 # Broccoli Comms demo-agent
 
-`demo-agent` is a deterministic, non-AI Broccoli Comms agent for demos. It polls its local tracker inbox and replies with scripted messages using:
+`demo-agent` is a deterministic, non-AI Broccoli Comms agent for demos. It polls its local tracker inbox and replies with scripted messages through the local tracker `send_message` API, equivalent to:
 
 ```sh
 broccoli-comms agent-tracker send-message <target> <message>

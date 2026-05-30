@@ -21,7 +21,6 @@ from pathlib import Path
 import re
 import signal
 import socket  # Unix-domain socket only, for local tracker JSON-RPC.
-import subprocess
 import sys
 import tempfile
 import time
@@ -72,8 +71,15 @@ def infer_role(name: str | None) -> str:
     return "generic"
 
 
+def strip_ui_reply_instruction(text: str) -> str:
+    """Remove the Agent Communicator markdown-reply hint from command text."""
+    cleaned = text or ""
+    cleaned = re.sub(r"\s*\(?\s*PS:\s*Reply in markdown format\.\s*\)?\s*$", "", cleaned, flags=re.I)
+    return cleaned.strip()
+
+
 def normalize_message(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip().lower())
+    return re.sub(r"\s+", " ", strip_ui_reply_instruction(text).lower())
 
 
 def path_is_under(path: Path, root: Path) -> bool:
@@ -212,7 +218,7 @@ class DemoAgent:
         self.state = DemoState(choose_state_dir(args.state_dir, safe_key))
         self.tracker_socket = os.environ.get("AGENT_TRACKER_SOCKET", "")
         self.outbound_count = 0
-        self.broccoli_bin = os.environ.get("BROCCOLI_COMMS_BIN") or "broccoli-comms"
+        self.identity_configured = False
 
     def rpc(self, method: str, params: dict[str, Any]) -> Any:
         if not self.tracker_socket:
@@ -251,15 +257,12 @@ class DemoAgent:
             log(f"refusing unsafe or remote-looking send target: {target!r}")
             return False
         body = (message or "")[:MAX_OUTBOUND_LEN]
-        env = os.environ.copy()
-        env["AGENT_NAME"] = self.name
-        cmd = [self.broccoli_bin, "agent-tracker", "send-message", target, body]
+        params = {"sender_name": self.name, "agent_name": target, "message": body}
+        if os.environ.get("AGENT_ID"):
+            params["sender_id"] = os.environ["AGENT_ID"]
         try:
-            subprocess.run(cmd, check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
-        except FileNotFoundError:
-            log(f"send failed: {self.broccoli_bin!r} not found")
-            return False
-        except subprocess.SubprocessError as exc:
+            self.rpc("send_message", params)
+        except Exception as exc:
             log(f"send failed to {target}: {exc}")
             return False
         self.outbound_count += 1
@@ -502,10 +505,23 @@ class DemoAgent:
         else:
             self.send(origin, f"{self.peer_reviewer} blocked task {task_id}. Scripted workflow complete with blocker: add missing validation before approval.")
 
+    def configure_tracker_identity(self) -> None:
+        if self.identity_configured:
+            return
+        params: dict[str, Any] = {"no_notify_with_send_keys": True}
+        if os.environ.get("AGENT_ID"):
+            params["agent_id"] = os.environ["AGENT_ID"]
+        else:
+            params["agent_name"] = self.name
+        self.rpc("update_agent", params)
+        self.identity_configured = True
+        log("configured tracker identity: no_notify_with_send_keys=true")
+
     def loop(self) -> None:
         log(f"role={self.role} name={self.name} tracker={self.tracker_socket or '<unset>'}")
         while running:
             try:
+                self.configure_tracker_identity()
                 inbox = self.get_inbox()
                 if inbox.get("mode") == "history":
                     time.sleep(self.poll_interval)

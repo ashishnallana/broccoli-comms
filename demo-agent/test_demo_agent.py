@@ -63,6 +63,50 @@ class DemoAgentTests(unittest.TestCase):
                 else:
                     os.environ["BROCCOLI_COMMS_CACHE_DIR"] = old_cache
 
+    def test_ui_markdown_reply_instruction_is_stripped_from_commands(self):
+        self.assertEqual(demo_agent.normalize_message("hello\n\n(PS: Reply in markdown format.)"), "hello")
+        self.assertEqual(demo_agent.normalize_message("HELP (ps: reply in markdown format.)"), "help")
+
+    def test_send_uses_tracker_rpc_send_message(self):
+        with tempfile.TemporaryDirectory() as root:
+            old_env = {key: os.environ.get(key) for key in ("BROCCOLI_COMMS_CACHE_DIR", "AGENT_TRACKER_SOCKET", "AGENT_ID", "AGENT_NAME")}
+            os.environ["BROCCOLI_COMMS_CACHE_DIR"] = root
+            os.environ["AGENT_TRACKER_SOCKET"] = str(Path(root) / "tracker.sock")
+            os.environ["AGENT_ID"] = "demo-id"
+            os.environ["AGENT_NAME"] = "demo-pi"
+            try:
+                agent = demo_agent.DemoAgent(args(role="generic", name="demo-pi"))
+                calls = []
+                agent.rpc = lambda method, params: calls.append((method, params)) or True
+                self.assertTrue(agent.send("agent-communicator", "hello"))
+                self.assertEqual(calls, [("send_message", {"sender_name": "demo-pi", "agent_name": "agent-communicator", "message": "hello", "sender_id": "demo-id"})])
+            finally:
+                for key, value in old_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+    def test_configure_tracker_identity_disables_tmux_notifications(self):
+        with tempfile.TemporaryDirectory() as root:
+            old_env = {key: os.environ.get(key) for key in ("BROCCOLI_COMMS_CACHE_DIR", "AGENT_TRACKER_SOCKET", "AGENT_ID", "AGENT_NAME")}
+            os.environ["BROCCOLI_COMMS_CACHE_DIR"] = root
+            os.environ["AGENT_TRACKER_SOCKET"] = str(Path(root) / "tracker.sock")
+            os.environ["AGENT_ID"] = "demo-id"
+            try:
+                agent = demo_agent.DemoAgent(args(role="generic", name="demo-pi"))
+                calls = []
+                agent.rpc = lambda method, params: calls.append((method, params)) or True
+                agent.configure_tracker_identity()
+                agent.configure_tracker_identity()
+                self.assertEqual(calls, [("update_agent", {"no_notify_with_send_keys": True, "agent_id": "demo-id"})])
+            finally:
+                for key, value in old_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
     def test_coder_implement_feature_is_bounded_and_targets_reviewer(self):
         with tempfile.TemporaryDirectory() as root:
             old_env = {key: os.environ.get(key) for key in ("BROCCOLI_COMMS_CACHE_DIR", "AGENT_TRACKER_SOCKET", "AGENT_ID", "AGENT_NAME")}
