@@ -574,6 +574,19 @@ func TestLoadInboxUsesOwnInboxAndFiltersBySelectedAgent(t *testing.T) {
 	}
 }
 
+func TestLoadInboxUsesStableLocalSenderFilters(t *testing.T) {
+	local := &fakeLocal{inbox: []tracker.Message{{Sender: "alpha", SenderAgentID: "agent-1", SenderTrackerID: "local-tracker", Body: "from local"}}}
+	row := agentRow{Name: "alpha", Scope: "local", AgentID: "agent-1", TrackerID: "local-tracker"}
+	msg := loadInbox(local, "agent-communicator", row)()
+	loaded := msg.(inboxLoaded)
+	if len(loaded.Messages) != 1 {
+		t.Fatalf("loaded messages = %+v", loaded.Messages)
+	}
+	if local.lastSenderID != "agent-1" || local.lastTracker != "local-tracker" || local.lastSender != "" {
+		t.Fatalf("local sender filters id=%q tracker=%q name=%q", local.lastSenderID, local.lastTracker, local.lastSender)
+	}
+}
+
 func TestLoadInboxUsesStableRemoteSenderFilters(t *testing.T) {
 	local := &fakeLocal{inbox: []tracker.Message{{Sender: "alpha", SenderAgentID: "agent-1", SenderTrackerID: "tracker-1", Body: "from remote"}}}
 	row := agentRow{Name: "host/alpha", Scope: "remote", AgentID: "agent-1", TrackerID: "tracker-1", Hostname: "host", AgentName: "alpha", TargetAddress: "host/alpha"}
@@ -583,7 +596,7 @@ func TestLoadInboxUsesStableRemoteSenderFilters(t *testing.T) {
 		t.Fatalf("loaded messages = %+v", loaded.Messages)
 	}
 	if local.lastSenderID != "agent-1" || local.lastTracker != "tracker-1" || local.lastSender != "" {
-		t.Fatalf("sender filters id=%q tracker=%q name=%q", local.lastSenderID, local.lastTracker, local.lastSender)
+		t.Fatalf("remote sender filters id=%q tracker=%q name=%q", local.lastSenderID, local.lastTracker, local.lastSender)
 	}
 }
 

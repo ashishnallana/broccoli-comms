@@ -895,8 +895,11 @@ def _read_and_update_inbox_file(
             def matches_filters(msg):
                 if sender_agent_id and msg.get("sender_agent_id") != sender_agent_id:
                     return False
-                if sender_tracker_id and msg.get("sender_tracker_id") != sender_tracker_id:
-                    return False
+                if sender_tracker_id:
+                    msg_tracker_id = msg.get("sender_tracker_id")
+                    if msg_tracker_id != sender_tracker_id:
+                        if not (sender_tracker_id == registry_client.TRACKER_ID and not msg_tracker_id):
+                            return False
                 if sender_name and msg.get("sender") != sender_name:
                     return False
                 return True

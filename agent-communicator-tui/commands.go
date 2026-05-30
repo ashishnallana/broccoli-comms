@@ -187,9 +187,7 @@ func loadUnreadCounts(local localClient, inboxOwner string) tea.Cmd {
 func rowInboxFilters(row agentRow) (senderAgentID, senderTrackerID, senderName string) {
 	if row.AgentID != "" {
 		senderAgentID = row.AgentID
-		if row.Scope == "remote" {
-			senderTrackerID = row.TrackerID
-		}
+		senderTrackerID = row.TrackerID
 		return senderAgentID, senderTrackerID, ""
 	}
 	if row.Scope == "remote" {
