@@ -159,8 +159,8 @@ func (m model) footer(width int) string {
 	}
 	lines := []string{
 		statusBarStyle.Render(status),
-		"c-t view · tab section · c-n/p agent · c-a read · c-o prompts · c-h hide · c-f save · c-s save agent",
-		fmt.Sprintf("↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · /msg message · /text, /key pane control (%s) · c-q quit · c-x debug capture", directScope),
+		"c-t view · tab section · c-n/p agent · F1-F4 input · c-a read · c-o prompts · c-h hide · c-f save · c-s save agent",
+		fmt.Sprintf("↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · /msg message · /text /key pane control (%s) · /broadcast disabled · c-q quit · c-x debug capture", directScope),
 	}
 	if m.paneCaptureStatus != "" {
 		lines = append([]string{m.paneCaptureStatus}, lines...)
@@ -542,7 +542,7 @@ func (m model) composerLines(width int) []string {
 	prefix := m.composerPrefix()
 	prompt := prefix + string(m.composer) + cursor
 	if len(m.composer) == 0 {
-		placeholder := "type message"
+		placeholder := m.composerPlaceholder()
 		if m.agentListStale {
 			placeholder = "agent tracker unavailable; sending disabled"
 		}
@@ -567,13 +567,33 @@ func (m model) composerPrefix() string {
 	return mutedStyle.Render("> ")
 }
 
+func (m model) composerPlaceholder() string {
+	switch m.inputMode {
+	case inputModeText:
+		return "type pane text (F1 returns to message mode)"
+	case inputModeKeys:
+		return "type key tokens, e.g. C-c Enter"
+	case inputModeBroadcast:
+		return "broadcast disabled; F1/F2/F3 to switch modes"
+	default:
+		return "type message"
+	}
+}
+
 func (m model) composerModeHint(width int) string {
-	action := parseComposerAction(string(m.composer))
-	active := "msg"
-	if action.Kind == "direct_text" {
-		active = "text"
-	} else if action.Kind == "direct_keys" {
-		active = "key"
+	action := composerActionForMode(string(m.composer), m.inputMode)
+	active := m.inputMode.name()
+	if slashComposerCommand(string(m.composer)) {
+		switch action.Kind {
+		case "direct_text":
+			active = "text"
+		case "direct_keys":
+			active = "key"
+		case "broadcast":
+			active = "broadcast"
+		default:
+			active = "msg"
+		}
 	}
 	tab := func(name, label string) string {
 		if active == name {
@@ -581,10 +601,24 @@ func (m model) composerModeHint(width int) string {
 		}
 		return modeTabStyle.Render(label)
 	}
-	target := fallback(m.currentRow().Name, "no target")
-	context := mutedStyle.Render(" target " + target)
-	line := tab("msg", "/msg inbox") + " " + tab("text", "/text pane") + " " + tab("key", "/key pane") + context
+	context := mutedStyle.Render(" target " + m.sendingContextLine())
+	line := tab("msg", "F1 /msg inbox") + " " + tab("text", "F2 /text pane") + " " + tab("key", "F3 /key pane") + " " + tab("broadcast", "F4 /broadcast disabled") + context
 	return truncateCells(line, max(1, width-1))
+}
+
+func (m model) sendingContextLine() string {
+	row := m.currentRow()
+	if row.Name == "" {
+		return "no target"
+	}
+	parts := []string{row.Name}
+	if badge := modelBadge(row); badge != "??" {
+		parts = append(parts, badge)
+	}
+	if machine := rowMachineLabel(row); machine != "" {
+		parts = append(parts, "@ "+machine)
+	}
+	return strings.Join(parts, " ")
 }
 
 func truncateLines(s string, height int) string {

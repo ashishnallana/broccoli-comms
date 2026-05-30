@@ -302,6 +302,13 @@ func parseComposerAction(input string) composerAction {
 		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/key"))
 		return composerAction{Kind: "direct_keys", Keys: strings.Fields(rest), Original: input}
 	}
+	if trimmed == "/broadcast" {
+		return composerAction{Kind: "broadcast", Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/broadcast ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/broadcast"))
+		return composerAction{Kind: "broadcast", Body: rest, Original: input}
+	}
 	return action
 }
 

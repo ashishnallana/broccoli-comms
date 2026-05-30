@@ -51,6 +51,7 @@ type model struct {
 	agentListLoading        bool
 	agentListFrame          int
 	composer                []rune
+	inputMode               inputMode
 	err                     error
 	eventSeq                int64
 	health                  tracker.TrackerInfo
@@ -307,11 +308,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messageOffset = clampMessageOffset(m.messageOffset+messagePageSize(m.height), len(m.messageLinesForWidth(m.messageContentWidth())), m.messageVisibleLines())
 		case tea.KeyCtrlJ:
 			return m, switchToAgentPane(m.currentRow())
+		case tea.KeyF1:
+			m.inputMode = inputModeMessage
+			return m, nil
+		case tea.KeyF2:
+			m.inputMode = inputModeText
+			return m, nil
+		case tea.KeyF3:
+			m.inputMode = inputModeKeys
+			return m, nil
+		case tea.KeyF4:
+			m.inputMode = inputModeBroadcast
+			return m, nil
 		case tea.KeyEnter:
 			if m.mode != savedView && m.canSendCurrent() && strings.TrimSpace(string(m.composer)) != "" {
 				input := string(m.composer)
 				row := m.rows[m.selected]
-				action := parseComposerAction(input)
+				action := composerActionForMode(input, m.inputMode)
+				if action.Kind == "broadcast" {
+					m.directInputStatus = "Broadcast mode is disabled in this milestone; no message was sent"
+					m.directInputStatusErr = true
+					return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return clearDirectInputStatusTick{} })
+				}
 				if action.Kind == "direct_text" || action.Kind == "direct_keys" {
 					m.composer = nil
 					m.directInputStatus = fmt.Sprintf("Sending pane control to %s...", row.Name)

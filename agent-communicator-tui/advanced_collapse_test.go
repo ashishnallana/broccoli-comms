@@ -8,7 +8,7 @@ import (
 )
 
 func TestAdvancedViewCollapsesUnselectedNonLastMessages(t *testing.T) {
-	m := model{mode: advancedView, width: 100, height: 30, messageSelected: 1, allMessages: []tracker.Message{
+	m := model{mode: advancedView, width: 100, height: 34, messageSelected: 1, allMessages: []tracker.Message{
 		{Sender: "a", Body: "a1\na2\na3\na4\na5", Timestamp: "2026-01-01T00:00:00Z"},
 		{Sender: "b", Body: "b1\nb2\nb3\nb4", Timestamp: "2026-01-01T00:01:00Z"},
 		{Sender: "c", Body: "c1\nc2\nc3\nc4", Timestamp: "2026-01-01T00:02:00Z"},
