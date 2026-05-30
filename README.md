@@ -1,17 +1,25 @@
 # Broccoli Comms
 
-Standalone agent communication runtime extracted from `home-manager-core`.
+Broccoli Comms is a standalone, private agent workspace runtime. It runs terminal-based coding agents, tracks their panes/inboxes, and provides a terminal UI for messaging and control without depending on a user's Home Manager setup, tmux config, shell hooks, or global agent-tracker service.
 
-The goal is to run an agent workspace without depending on the user's Home Manager, tmux config, shell hooks, or existing tmux sessions.
+## What it is
 
-## Intended runtime model
+`broccoli-comms` owns an isolated runtime containing:
 
-`broccoli-comms` owns:
+- a private tmux server/socket for managed agent panes and the TUI
+- a private `agent-tracker` daemon/socket for registration, inboxes, pane capture, and local direct input
+- managed agent windows launched through `agent-wrapper`
+- the `agent-communicator` TUI as the primary interface
+- optional `agent-registry` connectivity for multi-device discovery and queued cross-machine messages
 
-- a private tmux server/socket
-- a private `agent-tracker` daemon/socket
-- managed agent panes/windows launched through `agent-wrapper`
-- the `agent-communicator` TUI as the primary UI
+Typical local workflow:
+
+```sh
+broccoli-comms start       # start private tracker/tmux and configured agents
+broccoli-comms ui          # open the terminal UI; alias: open
+broccoli-comms status      # inspect runtime state
+broccoli-comms stop        # stop the private runtime
+```
 
 Default private paths:
 
@@ -21,42 +29,79 @@ Default private paths:
 - config: `$XDG_CONFIG_HOME/broccoli-comms/config.json`
 - logs/cache: `$XDG_CACHE_HOME/broccoli-comms`
 
-## New-machine bootstrap
+## Install and quick start
 
-Recommended Nix path from a checkout:
+### Nix machine
+
+Run directly from a checkout:
 
 ```sh
+git clone https://github.com/tanmayv/broccoli-comms.git
+cd broccoli-comms
 nix run .#broccoli-comms -- doctor
 nix run .#broccoli-comms -- start
-nix run .#broccoli-comms -- open
+nix run .#broccoli-comms -- ui
 ```
 
-For a persistent install from a checkout:
+Run directly from GitHub:
 
 ```sh
-nix profile install .#broccoli-comms
-broccoli-comms doctor --json
+nix run github:tanmayv/broccoli-comms#broccoli-comms -- doctor
+nix run github:tanmayv/broccoli-comms#broccoli-comms -- ui
+```
+
+Install persistently with Nix:
+
+```sh
+nix profile install github:tanmayv/broccoli-comms#broccoli-comms
+broccoli-comms doctor
 broccoli-comms start
-broccoli-comms open
+broccoli-comms ui
 ```
 
-Nix packages include the runtime dependencies they launch, including `tmux`. Manual/non-Nix installs must provide `python3`, `tmux`, and configured agent commands (for example `pi`, `claude`, or `codex`) on `PATH`.
+Nix packages include the runtime dependencies they launch, including `tmux`. The agent commands you want to run, such as `pi`, `claude`, or `codex`, must still be available on `PATH`.
 
-## Nix usage
+### Non-Nix machine
+
+A non-Nix install builds the TUI from source and uses system dependencies.
+
+Prerequisites:
+
+- `python3`
+- `go`
+- `tmux`
+- agent commands on `PATH`, for example `pi`, `claude`, or `codex`
+
+Build and run:
 
 ```sh
-nix run .#broccoli-comms -- doctor
-nix run .#broccoli-comms
-nix run .#broccoli-comms -- status --json
-nix run .#broccoli-comms -- attach
-nix run .#broccoli-comms -- agent focus main
-nix run .#broccoli-comms -- agent-tracker list
-nix run .#broccoli-comms -- registry start --host 127.0.0.1 --port 8080 --name local --noauth
-nix run .#broccoli-comms -- registry status
-nix run .#broccoli-comms -- stop
+git clone https://github.com/tanmayv/broccoli-comms.git
+cd broccoli-comms
+make build
+./bin/broccoli-comms doctor
+./bin/broccoli-comms start
+./bin/broccoli-comms ui
 ```
 
-Exposed packages:
+Optional: put `./bin` on `PATH` or copy/symlink `bin/broccoli-comms` somewhere on `PATH`.
+
+## Common commands
+
+```sh
+broccoli-comms doctor
+broccoli-comms start
+broccoli-comms ui             # alias: open
+broccoli-comms status --json
+broccoli-comms attach
+broccoli-comms agent list --json
+broccoli-comms agent focus main
+broccoli-comms agent-tracker list
+broccoli-comms registry start --host 127.0.0.1 --port 8080 --name local --noauth
+broccoli-comms registry status
+broccoli-comms stop
+```
+
+Exposed Nix packages:
 
 - `broccoliComms` / `default`
 - `agent-tracker`
@@ -66,18 +111,61 @@ Exposed packages:
 - `agent-registry`
 - `agent-registry-managed-agent`
 
-## Standalone non-Nix usage
+## Usage modes
 
-Requires `python3`, `go`, and system `tmux` on `PATH` for building/running, plus any configured agent commands on `PATH`.
+### 1. Local-only, no registry
+
+This is the simplest mode. Agents on the same machine communicate through the private local tracker only. No central registry is needed.
 
 ```sh
-make build
-./bin/broccoli-comms doctor --json
-./bin/broccoli-comms doctor
-./bin/broccoli-comms start
-./bin/broccoli-comms attach
-./bin/broccoli-comms stop
+broccoli-comms start
+broccoli-comms ui
 ```
+
+Use this when all agents you care about are running under the same Broccoli Comms runtime.
+
+### 2. Use an existing central registry
+
+A central `agent-registry` is required for multi-device communication. Each machine runs its own local `broccoli-comms`/`agent-tracker`, and all trackers publish to and poll the same registry for discovery and queued messages.
+
+Start Broccoli Comms with an existing registry URL:
+
+```sh
+AGENT_REGISTRIES_JSON='[{"name":"home","url":"https://registry.example.com","token-file":"/home/user/.config/broccoli-comms/registry-token"}]' \
+  broccoli-comms start
+broccoli-comms ui
+broccoli-comms agent-tracker registry-status
+```
+
+For an unauthenticated local/dev registry:
+
+```sh
+AGENT_REGISTRIES_JSON='[{"name":"local","url":"http://127.0.0.1:8080"}]' \
+  broccoli-comms start
+```
+
+### 3. Run a standalone registry with Broccoli Comms
+
+One machine can host the central registry service, while every participating machine points its tracker at that registry URL.
+
+```sh
+# On the registry host:
+broccoli-comms registry start --host 0.0.0.0 --port 8080 --name home --auth --token-file ~/.config/broccoli-comms/registry-token
+broccoli-comms registry status
+
+# On each client machine:
+AGENT_REGISTRIES_JSON='[{"name":"home","url":"http://REGISTRY_HOST:8080","token-file":"/home/user/.config/broccoli-comms/registry-token"}]' \
+  broccoli-comms start
+broccoli-comms agent-tracker registry-status
+```
+
+For loopback-only local testing, the registry can be started without auth:
+
+```sh
+broccoli-comms registry start --host 127.0.0.1 --port 8080 --name local --noauth
+```
+
+`--noauth` is only safe for loopback/local development. Registry startup does not enable remote direct pane input; remote direct input has separate security gates and remains disabled unless explicitly configured.
 
 ## Configured agents
 
