@@ -261,6 +261,18 @@ broccoli-comms attach
 
 `start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
 
+### Track an ad-hoc command in the current pane
+
+Use `broccoli-comms track` when you want to run a command yourself in the current terminal/tmux pane but still have it register with Agent Communicator:
+
+```sh
+broccoli-comms track --name my-agent -- my-agent
+broccoli-comms track --name repo-coder --cwd ~/repo -- pi
+broccoli-comms track -- /opt/agents/my-agent --flag value
+```
+
+`track` starts the private tracker if needed, resolves Broccoli's bundled `agent-wrapper`, and then `exec`s it in the current terminal. `agent-wrapper` does not need to be on `PATH`. The command you run, such as `my-agent` or `pi`, must still be on `PATH` unless you pass an absolute path. If `--name` is omitted, the command basename is used as the suggested Agent Communicator name.
+
 ### Agent-tracker saved agent templates
 
 Broccoli Comms managed agents live in `$XDG_CONFIG_HOME/broccoli-comms/config.json` and are controlled with `broccoli-comms agent ...`. The lower-level agent tracker also supports saved agent templates under:

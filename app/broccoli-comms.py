@@ -624,6 +624,52 @@ def agent_attach(args: argparse.Namespace) -> None:
     os.execvpe("tmux", ["tmux", "-S", str(paths()["tmux_socket"]), "attach", "-t", window["window_id"]], base_env())
 
 
+def _derive_track_name(command: list[str], cwd: str | None = None) -> str:
+    basename = Path(command[0]).name if command else ""
+    candidate = re.sub(r"[^A-Za-z0-9_.-]", "-", basename).strip("-._")
+    if candidate:
+        return candidate
+    if cwd:
+        cwd_name = re.sub(r"[^A-Za-z0-9_.-]", "-", Path(cwd).resolve().name).strip("-._")
+        if cwd_name:
+            return cwd_name
+    return "agent"
+
+
+def track(args: argparse.Namespace) -> None:
+    command = list(getattr(args, "command", None) or [])
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        raise SystemExit("track requires a command after --")
+
+    cwd = None
+    if args.cwd:
+        cwd = os.path.abspath(os.path.expanduser(args.cwd))
+        if not os.path.isdir(cwd):
+            raise SystemExit(f"track cwd does not exist or is not a directory: {cwd}")
+
+    name = args.name or _derive_track_name(command, cwd)
+    try:
+        validate_agent_name(name)
+    except ValueError as e:
+        raise SystemExit(str(e))
+
+    wrapper = wrapper_path()
+    if not os.path.exists(wrapper) or not os.access(wrapper, os.X_OK):
+        raise SystemExit(f"agent-wrapper not found or not executable: {wrapper}")
+
+    ensure_tracker()
+    env = base_env()
+    for key in ("TMUX", "TMUX_PANE"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    env["SUGGESTED_AGENT_NAME"] = name
+    if cwd:
+        os.chdir(cwd)
+    os.execvpe(wrapper, [wrapper, *command], env)
+
+
 def stop(_args: argparse.Namespace) -> None:
     p = paths()
     tmux("kill-server", check=False)
@@ -1345,6 +1391,12 @@ def main() -> None:
     doctor_parser = sub.add_parser("doctor", help="Check new-machine/runtime readiness")
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON doctor results")
     doctor_parser.set_defaults(func=doctor)
+
+    track_parser = sub.add_parser("track", help="Run a command through agent-wrapper so it appears in Agent Communicator")
+    track_parser.add_argument("--name", help="Suggested registered agent name; defaults to command basename")
+    track_parser.add_argument("--cwd", help="Working directory for the command")
+    track_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to run after --")
+    track_parser.set_defaults(func=track)
 
     agent_tracker_parser = sub.add_parser("agent-tracker", help="Run agent-tracker-ctl against the Broccoli Comms private runtime", add_help=False)
     agent_tracker_parser.add_argument("tracker_args", nargs=argparse.REMAINDER)

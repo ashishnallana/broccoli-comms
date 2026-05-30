@@ -222,6 +222,17 @@ Disable shell fallback if needed:
 broccoli-comms agent-tracker spin --no-fallback /home/user/project pi
 ```
 
+### Track an ad-hoc command in the current pane
+
+Use `broccoli-comms track` when you want to run a command in the current terminal/tmux pane but still have it register with Agent Communicator. This resolves Broccoli's bundled `agent-wrapper`; `agent-wrapper` does not need to be on `PATH`.
+
+```bash
+broccoli-comms track --name scratch-coder -- pi
+broccoli-comms track --name custom --cwd /repo -- /opt/my-agent/bin/my-agent
+```
+
+The command itself (`pi`, `/opt/my-agent/bin/my-agent`, etc.) must be available on `PATH` or passed as an absolute path.
+
 ### Manage configured Broccoli agents
 
 Broccoli Comms also has higher-level managed-agent commands. Use these when you want named agents to persist in Broccoli Comms config and be reconciled by `broccoli-comms start`.
