@@ -25,7 +25,7 @@ Default paths/mode:
 
 - runtime: `$XDG_RUNTIME_DIR/broccoli-comms`
 - tracker socket: `$XDG_RUNTIME_DIR/broccoli-comms/agent-tracker.sock`
-- tmux mode: `default` (uses your normal tmux server and a `broccoli-comms` session)
+- tmux mode: `default` (uses your normal tmux server and a `broccoli-comms-agents` session)
 - private tmux compatibility: set `BROCCOLI_COMMS_TMUX_MODE=private` to use `$XDG_RUNTIME_DIR/broccoli-comms/tmux.sock`
 - config: `$XDG_CONFIG_HOME/broccoli-comms/config.json`
 - logs/cache: `$XDG_CACHE_HOME/broccoli-comms`
@@ -260,7 +260,7 @@ broccoli-comms start
 broccoli-comms attach
 ```
 
-`start` reconciles configured agents into the `broccoli-comms` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker environment. By default this session is created in your normal tmux server. `broccoli-comms stop` kills only the `broccoli-comms` session and private tracker, not unrelated tmux sessions. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/ui/stop` to use the old Broccoli-owned private tmux socket behavior.
+`start` reconciles configured agents into the `broccoli-comms-agents` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker environment. By default this session is created in your normal tmux server, and an already-existing `broccoli-comms-agents` session is reused. `broccoli-comms stop` removes only Broccoli-owned windows plus the private tracker, leaving unrelated tmux sessions/windows alone. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/ui/stop` to use the Broccoli-owned private tmux socket behavior with the same session name.
 
 ### Track an ad-hoc command in the current pane
 
@@ -327,7 +327,7 @@ find ~/.config/agent-tracker/agents -maxdepth 2 -name config.json -print
 python3 -m json.tool ~/.config/agent-tracker/agents/broccoli-comms/config.json
 ```
 
-`open` / `ui` launches `agent-communicator` as a wrapped frontend in the `broccoli-comms` tmux session and attaches or switches to it. From inside an existing default-tmux client, `ui` uses `tmux switch-client` instead of attempting a nested attach. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views use the private tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
+`open` / `ui` launches or reuses `agent-communicator` as a wrapped frontend in the `broccoli-comms-agents` tmux session and attaches or switches to it. From inside an existing default-tmux client, `ui` uses `tmux switch-client` instead of attempting a nested attach. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views use the private tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
 
 Agent Communicator key highlights:
 
@@ -577,13 +577,15 @@ Run the Nix/package checks and private runtime lifecycle smoke tests with isolat
 ```sh
 nix flake check
 bash scripts/smoke-private-runtime.sh
+bash scripts/smoke-default-session-reuse.sh
 bash scripts/smoke-managed-agents.sh
 # or
 make smoke-private-runtime
+make smoke-default-session-reuse
 make smoke-managed-agents
 ```
 
-The runtime test starts `broccoli-comms`, verifies the private tracker and active tmux mode/session, checks status JSON, stops the runtime, and verifies cleanup. The managed-agent test adds a harmless `sleep 60` configured agent, verifies reconciliation/no duplicates/restart/remove, and cleans up isolated temp state.
+The runtime test starts `broccoli-comms`, verifies the private tracker and active tmux mode/session, checks status JSON, stops the runtime, and verifies cleanup. The default-session reuse smoke verifies `broccoli-comms-agents` reuse, `ui`/`open` UI-window reuse, `attach` targeting, and stop safety for unrelated windows. The managed-agent test adds a harmless `sleep 60` configured agent, verifies reconciliation/no duplicates/restart/remove, and cleans up isolated temp state.
 
 ## Source copied from home-manager-core
 

@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 app_name="broccoli-comms"
-session_name="broccoli-comms"
+session_name="broccoli-comms-agents"
 
 tmpdir="$(mktemp -d)"
 export HOME="$tmpdir/home"
@@ -132,7 +132,7 @@ checks = {
     "tracker.socket": status.get("tracker", {}).get("socket") == f"{expected_runtime}/agent-tracker.sock",
     "tmux.mode": status.get("tmux", {}).get("mode") == "private",
     "tmux.socket": status.get("tmux", {}).get("socket") == f"{expected_runtime}/tmux.sock",
-    "tmux.session": status.get("tmux", {}).get("session") == "broccoli-comms",
+    "tmux.session": status.get("tmux", {}).get("session") == "broccoli-comms-agents",
     "agents.configured_count": status.get("agents", {}).get("configured_count") == 0,
     "agents.managed_running_count": status.get("agents", {}).get("managed_running_count") == 0,
 }

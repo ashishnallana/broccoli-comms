@@ -32,7 +32,7 @@ broccoli-comms ui
 broccoli-comms stop
 ```
 
-Should use the default tmux server. Broccoli-managed windows/session should appear in the user's normal tmux server under the `broccoli-comms` session.
+Should use the default tmux server. Broccoli-managed windows/session should appear in the user's normal tmux server under the `broccoli-comms-agents` session.
 
 `broccoli-comms stop` must stop only the Broccoli Comms session/windows and private tracker. It must **not** kill the user's entire default tmux server.
 
@@ -68,7 +68,7 @@ Reject unknown values with a clear error.
 1. In `default` mode, never run `tmux kill-server`.
 2. In `default` mode, do not apply Broccoli's private tmux config globally to the user's default tmux server.
 3. In `default` mode, do not set global tmux options such as `status off` or `mouse on` on the user's server.
-4. In `default` mode, only create/kill the `broccoli-comms` session and Broccoli-managed windows.
+4. In `default` mode, create/reuse only the `broccoli-comms-agents` session and remove only Broccoli-managed windows.
 5. Keep the private tracker socket unchanged.
 6. Remote direct pane input gates must remain unchanged and disabled by default.
 7. `broccoli-comms ui` must be safe when run both outside tmux and from inside an existing tmux client.
@@ -208,7 +208,7 @@ Default mode:
 - otherwise create:
 
 ```sh
-tmux new-session -d -s broccoli-comms -c "$HOME" bash
+tmux new-session -d -s broccoli-comms-agents -c "$HOME" bash
 ```
 
 Optionally set only safe session/window-local options after session creation. Do not change global server options.
@@ -217,17 +217,13 @@ Optionally set only safe session/window-local options after session creation. Do
 
 Private mode:
 
-- keep old `tmux kill-server` behavior for the private tmux socket
-- clean private socket if unreachable
+- use the `broccoli-comms-agents` session on the private tmux socket
+- remove Broccoli-owned windows and clean the private socket once the private tmux server is unreachable
 
 Default mode:
 
-- run:
-
-```sh
-tmux kill-session -t broccoli-comms
-```
-
+- remove only Broccoli-owned windows in `broccoli-comms-agents` (managed agent windows, the marked UI window, and the placeholder shell window Broccoli created)
+- if `broccoli-comms-agents` already existed, preserve unrelated windows and let that session survive
 - do not unlink or inspect `$runtime/tmux.sock` as authoritative
 - stop the private tracker exactly as before
 
@@ -330,7 +326,7 @@ Human status should show something like:
 
 ```text
 tmux mode:      default
-tmux session:   broccoli-comms
+tmux session:   broccoli-comms-agents
 tmux socket:    default
 ```
 
@@ -342,7 +338,7 @@ JSON status should include:
 {
   "tmux": {
     "mode": "default",
-    "session": "broccoli-comms",
+    "session": "broccoli-comms-agents",
     "socket": null,
     "running": true
   }
@@ -355,7 +351,7 @@ or, for private mode:
 {
   "tmux": {
     "mode": "private",
-    "session": "broccoli-comms",
+    "session": "broccoli-comms-agents",
     "socket": "/run/user/.../broccoli-comms/tmux.sock",
     "running": true
   }
@@ -416,8 +412,8 @@ python app/broccoli-comms.py stop
 Verify:
 
 - no `$BROCCOLI_COMMS_RUNTIME_DIR/tmux.sock` is required/created as the authoritative socket
-- default tmux has/had a `broccoli-comms` session
-- `stop` removes only the `broccoli-comms` session, not the default tmux server
+- default tmux has/had a `broccoli-comms-agents` session
+- `stop` removes only Broccoli-owned windows from `broccoli-comms-agents`, not the default tmux server or unrelated windows
 - private tracker starts/stops normally
 - `agent-tracker list` works
 

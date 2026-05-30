@@ -27,8 +27,10 @@ import urllib.request
 
 APP = "broccoli-comms"
 VERSION = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
-SESSION = "broccoli-comms"
+SESSION = "broccoli-comms-agents"
 MANAGED_AGENT_OPTION = "@broccoli_managed_agent"
+SHELL_WINDOW_OPTION = "@broccoli_shell_window"
+UI_WINDOW_OPTION = "@broccoli_ui_window"
 UI_WINDOW_NAME = "ui"
 UI_AGENT_NAME = "agent-communicator"
 UI_AGENT_ID = "00000000-0000-5000-8000-000000000001"
@@ -251,9 +253,12 @@ def ensure_tmux() -> None:
         return
     if use_private_tmux():
         write_tmux_conf()
-        tmux("-f", str(paths()["tmux_conf"]), "new-session", "-d", "-s", SESSION, "-c", str(Path.home()), "bash")
+        result = tmux("-f", str(paths()["tmux_conf"]), "new-session", "-d", "-P", "-F", "#{window_id}", "-s", SESSION, "-c", str(Path.home()), "bash")
     else:
-        tmux("new-session", "-d", "-s", SESSION, "-c", str(Path.home()), "bash")
+        result = tmux("new-session", "-d", "-P", "-F", "#{window_id}", "-s", SESSION, "-c", str(Path.home()), "bash")
+    window_id = result.stdout.strip()
+    if window_id:
+        tmux("set-option", "-w", "-t", window_id, SHELL_WINDOW_OPTION, "1", check=False)
 
 
 def default_config() -> dict:
@@ -371,6 +376,62 @@ def kill_agent_window(name: str) -> bool:
     return killed_any
 
 
+def session_windows() -> list[dict[str, str]]:
+    if not tmux_up():
+        return []
+    fmt = f"#{{window_id}}\t#{{window_name}}\t#{{pane_id}}\t#{{{MANAGED_AGENT_OPTION}}}\t#{{{UI_WINDOW_OPTION}}}\t#{{{SHELL_WINDOW_OPTION}}}"
+    result = tmux("list-windows", "-t", SESSION, "-F", fmt, check=False)
+    if result.returncode != 0:
+        return []
+    windows = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t", 5)
+        if len(parts) != 6:
+            continue
+        window_id, window_name, pane_id, managed_agent, ui_marker, shell_marker = parts
+        windows.append({
+            "window_id": window_id,
+            "window_name": window_name,
+            "pane_id": pane_id,
+            "managed_agent": managed_agent,
+            "ui_marker": ui_marker,
+            "shell_marker": shell_marker,
+        })
+    return windows
+
+
+def ui_tracker_pane() -> str | None:
+    if not can_connect(paths()["tracker_socket"]):
+        return None
+    ui_info = tracker_agents().get(UI_AGENT_NAME) or {}
+    return ui_info.get("tmux_pane")
+
+
+def is_broccoli_tmux_window(window: dict[str, str], ui_pane: str | None = None) -> bool:
+    pane_id = window.get("pane_id")
+    return (
+        bool(window.get("managed_agent"))
+        or window.get("ui_marker") == "1"
+        or bool(ui_pane and pane_id == ui_pane and window.get("window_name") == UI_WINDOW_NAME)
+        or window.get("shell_marker") == "1"
+    )
+
+
+def has_broccoli_tmux_windows() -> bool:
+    ui_pane = ui_tracker_pane()
+    return any(is_broccoli_tmux_window(window, ui_pane) for window in session_windows())
+
+
+def kill_broccoli_tmux_windows() -> None:
+    ui_pane = ui_tracker_pane()
+    for window in session_windows():
+        if not is_broccoli_tmux_window(window, ui_pane):
+            continue
+        pane_id = window.get("pane_id")
+        if tmux("kill-window", "-t", window["window_id"], check=False).returncode == 0:
+            unregister_agent_pane(pane_id)
+
+
 def tmux_env_assignments_for_pane() -> list[str]:
     if not use_private_tmux():
         return []
@@ -427,16 +488,24 @@ def start(_args: argparse.Namespace) -> None:
 def ui_window() -> dict[str, str] | None:
     if not tmux_up():
         return None
-    result = tmux("list-windows", "-t", SESSION, "-F", "#{window_id}\t#{window_name}\t#{pane_id}", check=False)
+    fmt = f"#{{window_id}}\t#{{window_name}}\t#{{pane_id}}\t#{{{UI_WINDOW_OPTION}}}"
+    result = tmux("list-windows", "-t", SESSION, "-F", fmt, check=False)
     if result.returncode != 0:
         return None
+    named_candidates = []
     for line in result.stdout.splitlines():
-        parts = line.split("\t", 2)
-        if len(parts) != 3:
+        parts = line.split("\t", 3)
+        if len(parts) != 4:
             continue
-        window_id, window_name, pane_id = parts
+        window_id, window_name, pane_id, ui_marker = parts
+        window = {"window_id": window_id, "window_name": window_name, "pane_id": pane_id}
+        if ui_marker == "1":
+            return window
         if window_name == UI_WINDOW_NAME:
-            return {"window_id": window_id, "window_name": window_name, "pane_id": pane_id}
+            named_candidates.append(window)
+    for window in named_candidates:
+        if ui_window_registered(window):
+            return window
     return None
 
 
@@ -487,6 +556,8 @@ def ensure_ui_window() -> dict[str, str]:
         ui_launch_command(),
     )
     window_id, pane_id = result.stdout.strip().split("\t", 1)
+    if window_id:
+        tmux("set-option", "-w", "-t", window_id, UI_WINDOW_OPTION, "1", check=False)
     return {"window_id": window_id, "window_name": UI_WINDOW_NAME, "pane_id": pane_id}
 
 
@@ -742,20 +813,13 @@ def track(args: argparse.Namespace) -> None:
 
 def stop(_args: argparse.Namespace) -> None:
     p = paths()
-    if use_private_tmux():
-        tmux("kill-server", check=False)
-        for _ in range(50):
-            if tmux("has-session", "-t", SESSION, check=False).returncode != 0:
-                break
-            time.sleep(0.1)
-        if p["tmux_socket"].exists() and tmux("has-session", "-t", SESSION, check=False).returncode != 0:
-            p["tmux_socket"].unlink(missing_ok=True)
-    else:
-        tmux("kill-session", "-t", SESSION, check=False)
-        for _ in range(50):
-            if tmux("has-session", "-t", SESSION, check=False).returncode != 0:
-                break
-            time.sleep(0.1)
+    kill_broccoli_tmux_windows()
+    for _ in range(50):
+        if tmux("has-session", "-t", SESSION, check=False).returncode != 0 or not has_broccoli_tmux_windows():
+            break
+        time.sleep(0.1)
+    if use_private_tmux() and p["tmux_socket"].exists() and tmux("list-sessions", check=False).returncode != 0:
+        p["tmux_socket"].unlink(missing_ok=True)
 
     pid_file = p["tracker_pid"]
     if pid_file.exists():

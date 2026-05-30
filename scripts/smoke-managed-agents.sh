@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 app_name="broccoli-comms"
-session_name="broccoli-comms"
+session_name="broccoli-comms-agents"
 agent_name="sleeper"
 
 tmpdir="$(mktemp -d)"
@@ -14,6 +14,7 @@ export BROCCOLI_COMMS_CONFIG_DIR="$tmpdir/config"
 export AGENT_TRACKER_SOCKET="$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock"
 export XDG_CACHE_HOME="$BROCCOLI_COMMS_CACHE_DIR"
 export AGENT_TRACKER_HTTP_PORT="0"
+export BROCCOLI_COMMS_TMUX_MODE="private"
 unset AGENT_REGISTRIES_JSON AGENT_REGISTRY_TOKEN AGENT_TRACKER_DAEMON TMUX TMUX_PANE
 
 nix_cmd=(nix --extra-experimental-features "nix-command flakes")

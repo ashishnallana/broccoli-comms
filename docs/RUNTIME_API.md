@@ -36,7 +36,7 @@ Example:
     "mode": "default",
     "socket": null,
     "up": true,
-    "session": "broccoli-comms"
+    "session": "broccoli-comms-agents"
   },
   "config": {
     "path": "/home/user/.config/broccoli-comms/config.json"
@@ -80,7 +80,7 @@ Example:
   "runtime": {
     "tracker_up": true,
     "tmux_up": true,
-    "tmux_session": "broccoli-comms",
+    "tmux_session": "broccoli-comms-agents",
     "tmux_mode": "default",
     "tmux_socket": null
   },

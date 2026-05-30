@@ -12,7 +12,7 @@ This guide covers:
 
 Broccoli Comms is designed to avoid depending on a user's existing Home Manager or global tracker setup. The app owns:
 
-- a `broccoli-comms` session in the user's default tmux server by default
+- a `broccoli-comms-agents` session in the user's default tmux server by default
 - a private `agent-tracker` daemon/socket
 - managed agent windows launched through `agent-wrapper`
 - the `agent-communicator` TUI launched with explicit private socket environment
