@@ -297,9 +297,9 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	if lipgloss.Width(nameLine) > inner {
 		nameLine = truncateCells(statusDot(view.Status)+" "+view.Name, inner)
 	}
-	detailParts := nonEmpty([]string{view.ModelBadge, view.StatusLabel, view.RegistryLabel})
+	detailParts := nonEmpty([]string{view.ModelBadge, view.RegistryLabel})
 	if view.HostnameLabel != "" {
-		detailParts = append(detailParts, "host "+view.HostnameLabel)
+		detailParts = append(detailParts, view.HostnameLabel)
 	}
 	detailLine := strings.Join(detailParts, " · ")
 	lines := nameLine + "\n" + mutedStyle.Render(truncateCells(detailLine, inner))
