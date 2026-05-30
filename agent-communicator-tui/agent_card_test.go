@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
 func TestAgentCardUsesRequestedWidth(t *testing.T) {
@@ -68,6 +69,22 @@ func TestCompactCWD(t *testing.T) {
 	for input, want := range cases {
 		if got := compactCWD(input); got != want {
 			t.Fatalf("compactCWD(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestAgentCardShowsDetectionCountdownAndResult(t *testing.T) {
+	m := model{}
+	row := agentRow{
+		Name:      "claude-agent",
+		Scope:     "local",
+		ModelType: "claude",
+		Detection: tracker.DetectionStatus{Configured: true, Enabled: true, SecondsUntilNextScan: 3, LastResult: "no_match"},
+	}
+	card := m.agentCard(row, false, 80)
+	for _, want := range []string{"⟳3s", "detect clear"} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("agent card missing %q:\n%s", want, card)
 		}
 	}
 }

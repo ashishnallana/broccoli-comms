@@ -6,6 +6,7 @@ import socket
 import state
 import tmux_util
 import registry_client
+import permission_detection
 import datetime
 import time
 import os
@@ -274,6 +275,11 @@ def handle_list(params: dict, caller_pid: int = None) -> dict:
         agents = {name: _local_agent_list_row(name, info) for name, info in (agents or {}).items()}
     caller_name = _identify_agent(params, caller_pid)
     
+    detection_status = permission_detection.detection_status_snapshot()
+    for name, detection in detection_status.items():
+        if name in agents:
+            agents[name]["detection"] = detection
+
     if caller_name and caller_name in agents:
         agents[caller_name]["is_this_me"] = True
         

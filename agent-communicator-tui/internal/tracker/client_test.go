@@ -48,6 +48,20 @@ func TestDefaultSocketPathPrefersExplicitAgentTrackerSocket(t *testing.T) {
 	}
 }
 
+func TestListDecodesDetectionStatus(t *testing.T) {
+	client := fakeClient(t, func(req rpcRequest) any {
+		return map[string]Agent{"alpha": {Detection: DetectionStatus{Configured: true, Enabled: true, Provider: "claude", SecondsUntilNextScan: 4, LastResult: "no_match"}}}
+	})
+	agents, err := client.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	status := agents["alpha"].Detection
+	if !status.Configured || !status.Enabled || status.Provider != "claude" || status.SecondsUntilNextScan != 4 || status.LastResult != "no_match" {
+		t.Fatalf("unexpected detection status: %+v", status)
+	}
+}
+
 func TestListSetsAgentNamesFromMapKeys(t *testing.T) {
 	client := fakeClient(t, func(req rpcRequest) any {
 		if req.Method != "list" {

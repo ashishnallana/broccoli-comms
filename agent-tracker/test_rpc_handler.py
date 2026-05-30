@@ -88,6 +88,13 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual(result["agent1"]["target_address"], "agent1")
         self.assertEqual(result["agent1"]["model_type"], "codex")
 
+    def test_handle_list_includes_detection_status(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "agent_type": "claude", "agent_cmd": "claude"})
+        detection = {"enabled": True, "configured": True, "provider": "claude", "seconds_until_next_scan": 4, "last_result": "no_match"}
+        with mock.patch.object(rpc_handler.permission_detection, "detection_status_snapshot", return_value={"agent1": detection}):
+            result = rpc_handler.handle_list({})
+        self.assertEqual(result["agent1"]["detection"], detection)
+
     def test_get_inbox_missing_agent_has_structured_error_data(self):
         with self.assertRaises(rpc_handler.RPCStructuredError) as ctx:
             rpc_handler.handle_get_inbox({"agent_name": "missing"})

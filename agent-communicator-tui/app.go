@@ -142,6 +142,7 @@ func initialLoadCmds(m model) tea.Cmd {
 		loadConfigItemsCmd(m.local),
 		loadUnreadCounts(m.local, m.ownName),
 		tickRefresh(),
+		tickDetectionCountdown(),
 		waitEvents(m.local, 0),
 	)
 }
@@ -411,6 +412,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshTick:
 		m.agentListLoading = true
 		return m, tea.Batch(loadHealth(m.local), loadAgents(m.local), loadOutboxCmd(), loadUnreadCounts(m.local, m.ownName), tickRefresh(), tickAgentListSpinner())
+	case detectionTick:
+		return m, tickDetectionCountdown()
 	case agentListSpinnerTick:
 		if m.agentListLoading {
 			m.agentListFrame++

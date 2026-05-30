@@ -17,6 +17,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
         permission_detection._config_cache = None
         permission_detection._last_scan_by_agent.clear()
         permission_detection._recent_notifications.clear()
+        permission_detection._status_by_agent.clear()
 
     def tearDown(self):
         if self.old_config_env is None:
@@ -26,6 +27,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
         permission_detection._config_cache = None
         permission_detection._last_scan_by_agent.clear()
         permission_detection._recent_notifications.clear()
+        permission_detection._status_by_agent.clear()
 
     def test_missing_config_disables_detection(self):
         os.environ[permission_detection.CONFIG_ENV] = "/tmp/does-not-exist-agent-tracker-detection.json"
@@ -314,6 +316,36 @@ What would you like to work on today?
             detection = send.call_args.args[1]
             self.assertEqual(detection.pane_title, "Codex approval required")
             self.assertEqual(detection.matched_keywords, ("codex", "approval required"))
+
+    def test_detection_status_snapshot_reports_countdown_and_result(self):
+        cfg = permission_detection.DetectionConfig(
+            enabled=True,
+            notify_target="agent-communicator",
+            sender_name="permission-monitor",
+            default=None,
+            providers={
+                "claude": permission_detection.AgentDetectionConfig(
+                    enabled=True,
+                    capture_lines=10,
+                    scan_interval_seconds=5,
+                    notify_cooldown_seconds=300,
+                    keyword_matches_required=2,
+                    max_excerpt_chars=2000,
+                    keywords=("wants to use bash", "do you want to allow"),
+                )
+            },
+            agents={},
+        )
+        with mock.patch.object(permission_detection, "load_detection_config", return_value=cfg), \
+             mock.patch.object(permission_detection.state, "get_all_agents", return_value={"claude-1": {"agent_id": "a1", "tmux_pane": "%1", "agent_type": "claude", "agent_cmd": "claude"}}), \
+             mock.patch.object(permission_detection.tmux_util, "capture_pane_visible_text", return_value="ordinary pane text"), \
+             mock.patch.object(permission_detection.tmux_util, "get_pane_title", return_value=""):
+            self.assertEqual(permission_detection.detection_monitor_once(now=1000.0), 0)
+        status = permission_detection.detection_status_snapshot(now=1002.0)["claude-1"]
+        self.assertTrue(status["enabled"])
+        self.assertEqual(status["provider"], "claude")
+        self.assertEqual(status["last_result"], "no_match")
+        self.assertEqual(status["seconds_until_next_scan"], 3)
 
     def test_monitor_sends_notification_once_with_cooldown(self):
         cfg = permission_detection.DetectionConfig(

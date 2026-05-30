@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -65,6 +67,8 @@ class BlockingDetection:
 _config_cache: tuple[str, float | None, DetectionConfig] | None = None
 _last_scan_by_agent: dict[str, float] = {}
 _recent_notifications: dict[str, float] = {}
+_status_lock = threading.Lock()
+_status_by_agent: dict[str, dict[str, Any]] = {}
 
 
 def detection_config_path() -> str:
@@ -202,6 +206,40 @@ def agent_detection_config(config: DetectionConfig, agent_name: str, info: dict[
     return config.agents.get(agent_name) or config.providers.get(provider) or config.default
 
 
+def _status_payload(agent_name: str, info: dict[str, Any], cfg: AgentDetectionConfig | None, now: float, result: str, **extra: Any) -> dict[str, Any]:
+    last_scan = _last_scan_by_agent.get(agent_name)
+    payload = {
+        "enabled": bool(cfg and cfg.enabled),
+        "configured": bool(cfg and cfg.keywords),
+        "provider": agent_provider(info),
+        "capture_lines": cfg.capture_lines if cfg else 0,
+        "scan_interval_seconds": cfg.scan_interval_seconds if cfg else 0,
+        "last_scan_at": last_scan or 0,
+        "next_scan_at": (last_scan + cfg.scan_interval_seconds) if cfg and last_scan is not None else 0,
+        "last_result": result,
+        "updated_at": now,
+    }
+    payload.update({k: v for k, v in extra.items() if v is not None})
+    return payload
+
+
+def _record_status(agent_name: str, payload: dict[str, Any]) -> None:
+    with _status_lock:
+        _status_by_agent[agent_name] = payload
+
+
+def detection_status_snapshot(now: float | None = None) -> dict[str, dict[str, Any]]:
+    """Returns a copy of per-agent detection-loop status for UI display."""
+    now = now if now is not None else time.time()
+    with _status_lock:
+        snapshot = {name: status.copy() for name, status in _status_by_agent.items()}
+    for status in snapshot.values():
+        next_scan = status.get("next_scan_at")
+        if isinstance(next_scan, (int, float)):
+            status["seconds_until_next_scan"] = max(0, int(math.ceil(next_scan - now)))
+    return snapshot
+
+
 def normalize_text(text: str) -> str:
     return " ".join((text or "").lower().split())
 
@@ -284,6 +322,7 @@ def detection_monitor_once(now: float | None = None) -> int:
             continue
         agent_cfg = agent_detection_config(config, agent_name, info)
         if not agent_cfg or not agent_cfg.enabled or not agent_cfg.keywords:
+            _record_status(agent_name, _status_payload(agent_name, info, agent_cfg, now, "disabled"))
             continue
 
         last_scan = _last_scan_by_agent.get(agent_name, 0.0)
@@ -300,6 +339,7 @@ def detection_monitor_once(now: float | None = None) -> int:
             )
         except Exception as e:
             logging.debug("Skipping detection for %s; pane capture failed: %s", agent_name, e)
+            _record_status(agent_name, _status_payload(agent_name, info, agent_cfg, now, "capture_error", error=str(e)))
             continue
         try:
             pane_title = tmux_util.get_pane_title(info.get("tmux_pane"), info.get("tmux_socket"))
@@ -309,19 +349,29 @@ def detection_monitor_once(now: float | None = None) -> int:
 
         detection = detect_blocking_prompt(agent_name, info, pane_text, agent_cfg, pane_title=pane_title)
         if not detection:
+            _record_status(agent_name, _status_payload(agent_name, info, agent_cfg, now, "no_match", pane_title=pane_title))
             continue
 
         last_notified = _recent_notifications.get(detection.fingerprint, 0.0)
+        detection_details = {
+            "pane_title": pane_title,
+            "matched_keywords": list(detection.matched_keywords),
+            "fingerprint": detection.fingerprint,
+            "last_detected_at": now,
+        }
         if now - last_notified < agent_cfg.notify_cooldown_seconds:
+            _record_status(agent_name, _status_payload(agent_name, info, agent_cfg, now, "detected_cooldown", last_notified_at=last_notified, **detection_details))
             continue
 
         _sweep_recent_notifications(now, agent_cfg.notify_cooldown_seconds)
         try:
             _send_detection_notification(config, detection)
             _recent_notifications[detection.fingerprint] = now
+            _record_status(agent_name, _status_payload(agent_name, info, agent_cfg, now, "detected_notified", last_notified_at=now, **detection_details))
             sent += 1
             logging.info("Permission/blocking prompt detected for %s pane=%s fingerprint=%s", agent_name, detection.pane_id, detection.fingerprint[:12])
         except Exception as e:
+            _record_status(agent_name, _status_payload(agent_name, info, agent_cfg, now, "notify_error", error=str(e), **detection_details))
             logging.warning("Failed to notify %s about blocked agent %s: %s", config.notify_target, agent_name, e)
     return sent
 

@@ -35,7 +35,23 @@ type messageIDSender interface {
 	SendMessageWithID(context.Context, string, string, string, string, []tracker.Attachment) error
 }
 
-type agentRow struct{ Name, Scope, Status, CWD, TargetAddress, Hostname, AgentName, TmuxPane, AgentCmd, AgentType, AgentID, TrackerID, RegistryName, ModelType string }
+type agentRow struct {
+	Name          string
+	Scope         string
+	Status        string
+	CWD           string
+	TargetAddress string
+	Hostname      string
+	AgentName     string
+	TmuxPane      string
+	AgentCmd      string
+	AgentType     string
+	AgentID       string
+	TrackerID     string
+	RegistryName  string
+	ModelType     string
+	Detection     tracker.DetectionStatus
+}
 type mailboxEnsured struct{ Err error }
 
 type agentsLoaded struct {
@@ -76,6 +92,7 @@ type eventsLoaded struct {
 }
 type refreshTick struct{}
 type retryEvents struct{}
+type detectionTick struct{}
 type agentListSpinnerTick struct{}
 type clearDirectInputStatusTick struct{}
 
@@ -440,6 +457,9 @@ func tickRefresh() tea.Cmd {
 }
 func tickAgentListSpinner() tea.Cmd {
 	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return agentListSpinnerTick{} })
+}
+func tickDetectionCountdown() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return detectionTick{} })
 }
 func retryWaitEvents() tea.Cmd {
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return retryEvents{} })

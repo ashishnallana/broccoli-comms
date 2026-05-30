@@ -28,20 +28,21 @@ func loadHealth(local localClient) tea.Cmd {
 }
 
 type ctlAgent struct {
-	Name          string   `json:"name"`
-	Aliases       []string `json:"aliases"`
-	AgentID       string   `json:"agent_id"`
-	Scope         string   `json:"scope"`
-	Status        string   `json:"status"`
-	CWD           string   `json:"cwd"`
-	Hostname      string   `json:"hostname"`
-	TargetAddress string   `json:"target_address"`
-	TrackerID     string   `json:"tracker_id"`
-	RegistryName  string   `json:"registry_name"`
-	TmuxPane      string   `json:"tmux_pane"`
-	AgentCmd      string   `json:"agent_cmd"`
-	AgentType     string   `json:"agent_type"`
-	ModelType     string   `json:"model_type"`
+	Name          string                  `json:"name"`
+	Aliases       []string                `json:"aliases"`
+	AgentID       string                  `json:"agent_id"`
+	Scope         string                  `json:"scope"`
+	Status        string                  `json:"status"`
+	CWD           string                  `json:"cwd"`
+	Hostname      string                  `json:"hostname"`
+	TargetAddress string                  `json:"target_address"`
+	TrackerID     string                  `json:"tracker_id"`
+	RegistryName  string                  `json:"registry_name"`
+	TmuxPane      string                  `json:"tmux_pane"`
+	AgentCmd      string                  `json:"agent_cmd"`
+	AgentType     string                  `json:"agent_type"`
+	ModelType     string                  `json:"model_type"`
+	Detection     tracker.DetectionStatus `json:"detection"`
 }
 
 func loadAgents(local localClient) tea.Cmd {
@@ -115,6 +116,7 @@ func rowFromCtlAgent(key string, agent ctlAgent) agentRow {
 		AgentCmd:      agent.AgentCmd,
 		AgentType:     agent.AgentType,
 		ModelType:     agent.ModelType,
+		Detection:     agent.Detection,
 	})
 }
 
@@ -146,6 +148,7 @@ func rowFromTrackerAgent(key string, agent tracker.Agent) agentRow {
 			TrackerID:     agent.TrackerID,
 			RegistryName:  agent.RegistryName,
 			ModelType:     agent.ModelType,
+			Detection:     agent.Detection,
 		}
 	}
 	host, name := splitRemoteTarget(target)
@@ -170,6 +173,7 @@ func rowFromTrackerAgent(key string, agent tracker.Agent) agentRow {
 		TrackerID:     agent.TrackerID,
 		RegistryName:  agent.RegistryName,
 		ModelType:     agent.ModelType,
+		Detection:     agent.Detection,
 	}
 }
 

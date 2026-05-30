@@ -2,25 +2,43 @@ package tracker
 
 import "time"
 
+type DetectionStatus struct {
+	Enabled              bool     `json:"enabled"`
+	Configured           bool     `json:"configured"`
+	Provider             string   `json:"provider"`
+	CaptureLines         int      `json:"capture_lines"`
+	ScanIntervalSeconds  float64  `json:"scan_interval_seconds"`
+	LastScanAt           float64  `json:"last_scan_at"`
+	NextScanAt           float64  `json:"next_scan_at"`
+	SecondsUntilNextScan int      `json:"seconds_until_next_scan"`
+	LastResult           string   `json:"last_result"`
+	LastDetectedAt       float64  `json:"last_detected_at"`
+	LastNotifiedAt       float64  `json:"last_notified_at"`
+	MatchedKeywords      []string `json:"matched_keywords"`
+	PaneTitle            string   `json:"pane_title"`
+	Error                string   `json:"error"`
+}
+
 type Agent struct {
-	Name            string   `json:"name"`
-	AgentID         string   `json:"agent_id"`
-	UUID            string   `json:"uuid"`
-	Session         string   `json:"session"`
-	TmuxPane        string   `json:"tmux_pane"`
-	Status          string   `json:"status"`
-	WaitingApproval bool     `json:"waiting_approval"`
-	AgentType       string   `json:"agent_type"`
-	AgentCmd        string   `json:"agent_cmd"`
-	ModelType       string   `json:"model_type"`
-	Aliases         []string `json:"aliases"`
-	IsThisMe        bool     `json:"is_this_me"`
-	CWD             string   `json:"cwd,omitempty"`
-	Scope           string   `json:"scope,omitempty"`
-	Hostname        string   `json:"hostname,omitempty"`
-	TargetAddress   string   `json:"target_address,omitempty"`
-	TrackerID       string   `json:"tracker_id,omitempty"`
-	RegistryName    string   `json:"registry_name,omitempty"`
+	Name            string          `json:"name"`
+	AgentID         string          `json:"agent_id"`
+	UUID            string          `json:"uuid"`
+	Session         string          `json:"session"`
+	TmuxPane        string          `json:"tmux_pane"`
+	Status          string          `json:"status"`
+	WaitingApproval bool            `json:"waiting_approval"`
+	AgentType       string          `json:"agent_type"`
+	AgentCmd        string          `json:"agent_cmd"`
+	ModelType       string          `json:"model_type"`
+	Aliases         []string        `json:"aliases"`
+	IsThisMe        bool            `json:"is_this_me"`
+	CWD             string          `json:"cwd,omitempty"`
+	Scope           string          `json:"scope,omitempty"`
+	Hostname        string          `json:"hostname,omitempty"`
+	TargetAddress   string          `json:"target_address,omitempty"`
+	TrackerID       string          `json:"tracker_id,omitempty"`
+	RegistryName    string          `json:"registry_name,omitempty"`
+	Detection       DetectionStatus `json:"detection,omitempty"`
 }
 
 type Attachment struct {
