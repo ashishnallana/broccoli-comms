@@ -75,7 +75,7 @@ in
       services.agent-tracker.httpPort = mkDefault (agentTrackerSettings.http-port or 19876);
       services.agent-tracker.registryHeartbeatSeconds = mkDefault (agentTrackerSettings.registry-heartbeat-seconds or 30);
       services.agent-tracker.enableReliableSendKeys = mkDefault (agentTrackerSettings.enable-reliable-send-keys or true);
-      services.agent-tracker.capturePaneDefaultLines = mkDefault (agentTrackerSettings.capture-pane-default-lines or 25);
+      services.agent-tracker.capturePaneDefaultLines = mkDefault (agentTrackerSettings.capture-pane-default-lines or 20);
     }
 
     (mkIf cfg.enable {

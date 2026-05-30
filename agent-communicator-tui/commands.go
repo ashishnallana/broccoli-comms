@@ -574,7 +574,7 @@ type clearPaneCaptureStatusTick struct{}
 
 func requestPaneCaptureCmd(targetAddress string) tea.Cmd {
 	return func() tea.Msg {
-		args := []string{"send-pane", "agent-communicator", "--source", targetAddress, "--note", "Requested from agent-communicator"}
+		args := []string{"send-pane", "agent-communicator", "--source", targetAddress, "--last", "20", "--note", "Requested from agent-communicator"}
 		cmd := exec.Command("agent-tracker-ctl", args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {

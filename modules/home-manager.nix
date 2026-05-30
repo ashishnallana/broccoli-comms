@@ -163,7 +163,7 @@ in {
       registryToken = mkOption { type = types.nullOr types.str; default = null; description = "Inline registry token. Prefer registryTokenFile for secrets."; };
       registryHeartbeatSeconds = mkOption { type = types.ints.positive; default = 30; };
       enableReliableSendKeys = mkOption { type = types.bool; default = true; };
-      capturePaneDefaultLines = mkOption { type = types.ints.positive; default = 25; };
+      capturePaneDefaultLines = mkOption { type = types.ints.positive; default = 20; };
       remotePaneInput.enable = mkOption { type = types.bool; default = false; };
       environment = mkOption { type = types.attrsOf types.str; default = {}; description = "Extra environment for the tracker service."; };
     };

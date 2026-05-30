@@ -20,7 +20,7 @@ from contextlib import contextmanager
 BUFFER_SIZE = 4096
 LOCAL_HOSTNAME = os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
 REMOTE_BROAD_WATCH_ENABLED = os.environ.get("AGENT_TRACKER_BROAD_WATCH_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
-DEFAULT_CAPTURE_PANE_LINES = 25
+DEFAULT_CAPTURE_PANE_LINES = 20
 
 
 def _default_capture_pane_lines() -> int:

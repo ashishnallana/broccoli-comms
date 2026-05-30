@@ -37,8 +37,8 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             path = Path(td) / "detection.json"
             path.write_text(json.dumps({
                 "enabled": True,
-                "agents": {
-                    "claude-1": {
+                "providers": {
+                    "claude": {
                         "capture_lines": 100,
                         "keywords": ["allow"]
                     }
@@ -46,8 +46,28 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             }))
             os.environ[permission_detection.CONFIG_ENV] = str(path)
             cfg = permission_detection.load_detection_config()
-            self.assertTrue(cfg.agents["claude-1"].enabled)
-            self.assertEqual(cfg.agents["claude-1"].capture_lines, 10)
+            self.assertTrue(cfg.providers["claude"].enabled)
+            self.assertEqual(cfg.providers["claude"].capture_lines, 10)
+
+    def test_agent_detection_config_uses_provider_type(self):
+        provider_cfg = permission_detection.AgentDetectionConfig(
+            enabled=True,
+            capture_lines=10,
+            scan_interval_seconds=1,
+            notify_cooldown_seconds=300,
+            keyword_matches_required=2,
+            max_excerpt_chars=2000,
+            keywords=("type something", "chat about this"),
+        )
+        config = permission_detection.DetectionConfig(
+            enabled=True,
+            notify_target="agent-communicator",
+            sender_name="permission-monitor",
+            providers={"claude": provider_cfg},
+            agents={},
+            default=None,
+        )
+        self.assertIs(permission_detection.agent_detection_config(config, "any-claude-name", {"agent_type": "claude", "agent_cmd": "claude"}), provider_cfg)
 
     def test_detect_requires_configured_keyword_count(self):
         cfg = permission_detection.AgentDetectionConfig(
@@ -82,6 +102,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             enabled=True,
             notify_target="agent-communicator",
             sender_name="permission-monitor",
+            providers={},
             agents={},
             default=None,
         )
@@ -111,6 +132,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             enabled=True,
             notify_target="agent-communicator",
             sender_name="permission-monitor",
+            providers={},
             agents={},
             default=None,
         )
@@ -189,6 +211,30 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             "no, and tell codex",
         ))
 
+    def test_real_claude_web_search_prompt_is_detected(self):
+        cfg = permission_detection.AgentDetectionConfig(
+            enabled=True,
+            capture_lines=10,
+            scan_interval_seconds=1,
+            notify_cooldown_seconds=300,
+            keyword_matches_required=2,
+            max_excerpt_chars=2000,
+            keywords=("tool use", "web search", "claude wants to search the web", "do you want to proceed"),
+        )
+        prompt = """────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Tool use
+
+   Web Search("IPL 2026 standings points table")
+   Claude wants to search the web for: IPL 2026 standings points table
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for Web Search commands in /home/tanmay/projects/nix/broccoli-comms
+   3. No"""
+        hit = permission_detection.detect_blocking_prompt("claude-1", {"agent_id": "a1", "tmux_pane": "%1"}, prompt, cfg)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.matched_keywords, ("tool use", "web search", "claude wants to search the web", "do you want to proceed"))
+
     def test_real_claude_task_prompt_is_detected_by_type_something(self):
         cfg = permission_detection.AgentDetectionConfig(
             enabled=True,
@@ -246,8 +292,8 @@ What would you like to work on today?
             notify_target="agent-communicator",
             sender_name="permission-monitor",
             default=None,
-            agents={
-                "codex-1": permission_detection.AgentDetectionConfig(
+            providers={
+                "codex": permission_detection.AgentDetectionConfig(
                     enabled=True,
                     capture_lines=10,
                     scan_interval_seconds=1,
@@ -257,9 +303,10 @@ What would you like to work on today?
                     keywords=("codex", "approval required"),
                 )
             },
+            agents={},
         )
         with mock.patch.object(permission_detection, "load_detection_config", return_value=cfg), \
-             mock.patch.object(permission_detection.state, "get_all_agents", return_value={"codex-1": {"agent_id": "a1", "tmux_pane": "%100"}}), \
+             mock.patch.object(permission_detection.state, "get_all_agents", return_value={"codex-1": {"agent_id": "a1", "tmux_pane": "%100", "agent_type": "codex", "agent_cmd": "codex"}}), \
              mock.patch.object(permission_detection.tmux_util, "capture_pane_visible_text", return_value="ordinary pane text"), \
              mock.patch.object(permission_detection.tmux_util, "get_pane_title", return_value="Codex approval required"), \
              mock.patch.object(permission_detection, "_send_detection_notification") as send:
@@ -274,8 +321,8 @@ What would you like to work on today?
             notify_target="agent-communicator",
             sender_name="permission-monitor",
             default=None,
-            agents={
-                "claude-1": permission_detection.AgentDetectionConfig(
+            providers={
+                "claude": permission_detection.AgentDetectionConfig(
                     enabled=True,
                     capture_lines=10,
                     scan_interval_seconds=1,
@@ -285,9 +332,10 @@ What would you like to work on today?
                     keywords=("wants to use bash", "do you want to allow"),
                 )
             },
+            agents={},
         )
         with mock.patch.object(permission_detection, "load_detection_config", return_value=cfg), \
-             mock.patch.object(permission_detection.state, "get_all_agents", return_value={"claude-1": {"agent_id": "a1", "tmux_pane": "%1"}}), \
+             mock.patch.object(permission_detection.state, "get_all_agents", return_value={"claude-1": {"agent_id": "a1", "tmux_pane": "%1", "agent_type": "claude", "agent_cmd": "claude"}}), \
              mock.patch.object(permission_detection.tmux_util, "capture_pane_visible_text", return_value="Claude wants to use Bash\nDo you want to allow this?"), \
              mock.patch.object(permission_detection.tmux_util, "get_pane_title", return_value=""), \
              mock.patch.object(permission_detection, "_send_detection_notification") as send:

@@ -100,7 +100,7 @@ with lib;
 
     capturePaneDefaultLines = mkOption {
       type = types.ints.positive;
-      default = 25;
+      default = 20;
       description = "Default number of tmux pane history lines captured by agent-tracker capture-pane and send-pane commands when --last is omitted.";
     };
   };

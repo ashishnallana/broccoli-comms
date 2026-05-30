@@ -45,6 +45,7 @@ class DetectionConfig:
     enabled: bool
     notify_target: str
     sender_name: str
+    providers: dict[str, AgentDetectionConfig]
     agents: dict[str, AgentDetectionConfig]
     default: AgentDetectionConfig | None
 
@@ -138,20 +139,26 @@ def _agent_config(raw: dict[str, Any], inherited: AgentDetectionConfig | None = 
 
 
 def _load_config_uncached(path: str) -> DetectionConfig:
+    disabled = DetectionConfig(enabled=False, notify_target=DEFAULT_NOTIFY_TARGET, sender_name=DEFAULT_SENDER_NAME, providers={}, agents={}, default=None)
     if not os.path.exists(path):
-        return DetectionConfig(enabled=False, notify_target=DEFAULT_NOTIFY_TARGET, sender_name=DEFAULT_SENDER_NAME, agents={}, default=None)
+        return disabled
     try:
         with open(path, "r") as f:
             raw = json.load(f)
     except Exception as e:
         logging.warning("Failed to read detection config %s: %s", path, e)
-        return DetectionConfig(enabled=False, notify_target=DEFAULT_NOTIFY_TARGET, sender_name=DEFAULT_SENDER_NAME, agents={}, default=None)
+        return disabled
     if not isinstance(raw, dict):
         logging.warning("Detection config %s must be a JSON object", path)
-        return DetectionConfig(enabled=False, notify_target=DEFAULT_NOTIFY_TARGET, sender_name=DEFAULT_SENDER_NAME, agents={}, default=None)
+        return disabled
 
     default_raw = raw.get("default") if isinstance(raw.get("default"), dict) else {}
     default_cfg = _agent_config(default_raw)
+    providers_raw = raw.get("providers") if isinstance(raw.get("providers"), dict) else {}
+    providers = {
+        str(name).lower(): _agent_config(provider_raw if isinstance(provider_raw, dict) else {}, default_cfg, agent_entry=True)
+        for name, provider_raw in providers_raw.items()
+    }
     agents_raw = raw.get("agents") if isinstance(raw.get("agents"), dict) else {}
     agents = {
         str(name): _agent_config(agent_raw if isinstance(agent_raw, dict) else {}, default_cfg, agent_entry=True)
@@ -163,6 +170,7 @@ def _load_config_uncached(path: str) -> DetectionConfig:
         enabled=_coerce_bool(raw.get("enabled"), True),
         notify_target=notify_target,
         sender_name=sender_name,
+        providers=providers,
         agents=agents,
         default=default_cfg,
     )
@@ -183,10 +191,15 @@ def load_detection_config() -> DetectionConfig:
     return cfg
 
 
-def agent_detection_config(config: DetectionConfig, agent_name: str) -> AgentDetectionConfig | None:
+def agent_provider(info: dict[str, Any]) -> str:
+    return state.normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd"))
+
+
+def agent_detection_config(config: DetectionConfig, agent_name: str, info: dict[str, Any]) -> AgentDetectionConfig | None:
     if not config.enabled:
         return None
-    return config.agents.get(agent_name) or config.default
+    provider = agent_provider(info)
+    return config.agents.get(agent_name) or config.providers.get(provider) or config.default
 
 
 def normalize_text(text: str) -> str:
@@ -269,7 +282,7 @@ def detection_monitor_once(now: float | None = None) -> int:
     for agent_name, info in state.get_all_agents().items():
         if _should_skip_agent(agent_name, info, config.notify_target):
             continue
-        agent_cfg = agent_detection_config(config, agent_name)
+        agent_cfg = agent_detection_config(config, agent_name, info)
         if not agent_cfg or not agent_cfg.enabled or not agent_cfg.keywords:
             continue
 
@@ -349,22 +362,30 @@ _SAMPLE_CONFIG = {
         "keyword_matches_required": 2,
         "keywords": ["permission", "approve", "allow", "blocked", "would you like to run the following command", "requires approval", "do you want to proceed", "yes, proceed", "what would you like to work on today", "type something"],
     },
-    "agents": {
-        "claude-1": {
+    "providers": {
+        "claude": {
             "enabled": True,
             "capture_lines": 10,
             "scan_interval_seconds": 3,
             "notify_cooldown_seconds": 300,
             "keyword_matches_required": 2,
-            "keywords": ["bash command", "requires approval", "do you want to proceed", "wants to use bash", "do you want to allow", "allow this command", "what would you like to work on today", "type something", "chat about this"],
+            "keywords": ["bash command", "requires approval", "do you want to proceed", "wants to use bash", "do you want to allow", "allow this command", "tool use", "web search", "claude wants to search the web", "what would you like to work on today", "type something", "chat about this"],
         },
-        "codex-1": {
+        "codex": {
             "enabled": True,
             "capture_lines": 10,
             "scan_interval_seconds": 3,
             "notify_cooldown_seconds": 300,
             "keyword_matches_required": 2,
             "keywords": ["would you like to run the following command", "yes, proceed", "don't ask again", "no, and tell codex", "approve", "allow command", "command execution", "accept", "decline"],
+        },
+        "pi": {
+            "enabled": False,
+            "capture_lines": 10,
+            "scan_interval_seconds": 5,
+            "notify_cooldown_seconds": 300,
+            "keyword_matches_required": 2,
+            "keywords": ["permission", "approve", "allow", "blocked"],
         },
     },
 }

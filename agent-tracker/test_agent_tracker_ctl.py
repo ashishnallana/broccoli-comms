@@ -209,7 +209,7 @@ class TestAgentTrackerCtl(unittest.TestCase):
         self.assertIsNone(parsed2.target)
         self.assertEqual(parsed2.id, "some-uuid")
         self.assertEqual(parsed2.pane, "%5")
-        self.assertEqual(parsed2.last, 25) # default
+        self.assertEqual(parsed2.last, 20) # default
 
     @mock.patch.dict(os.environ, {}, clear=True)
     def test_send_pane_parser_registration(self):
@@ -228,7 +228,7 @@ class TestAgentTrackerCtl(unittest.TestCase):
         self.assertEqual(parsed2.subcommand, "send-pane")
         self.assertEqual(parsed2.target_address, "alice")
         self.assertIsNone(parsed2.source)
-        self.assertEqual(parsed2.last, 25)
+        self.assertEqual(parsed2.last, 20)
         self.assertIsNone(parsed2.note)
         self.assertEqual(parsed2.format, "markdown")
 

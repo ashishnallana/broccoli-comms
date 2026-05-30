@@ -619,11 +619,11 @@ def _handle_remote_pane_capture(payload: dict):
     source = payload.get("source")
     target = payload.get("target")
     try:
-        default_capture_lines = int(os.environ.get("AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES", "25"))
+        default_capture_lines = int(os.environ.get("AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES", "20"))
     except (TypeError, ValueError):
-        default_capture_lines = 25
+        default_capture_lines = 20
     if default_capture_lines <= 0:
-        default_capture_lines = 25
+        default_capture_lines = 20
     last = payload.get("last", default_capture_lines)
     fmt = payload.get("format", "markdown")
     note = payload.get("note")

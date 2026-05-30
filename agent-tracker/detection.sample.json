@@ -21,8 +21,9 @@
       "type something"
     ]
   },
-  "agents": {
-    "claude-1": {
+  "providers": {
+    "claude": {
+      "enabled": true,
       "capture_lines": 10,
       "scan_interval_seconds": 3,
       "notify_cooldown_seconds": 300,
@@ -34,12 +35,16 @@
         "wants to use bash",
         "do you want to allow",
         "allow this command",
+        "tool use",
+        "web search",
+        "claude wants to search the web",
         "what would you like to work on today",
         "type something",
         "chat about this"
       ]
     },
-    "codex-1": {
+    "codex": {
+      "enabled": true,
       "capture_lines": 10,
       "scan_interval_seconds": 3,
       "notify_cooldown_seconds": 300,
@@ -54,6 +59,19 @@
         "command execution",
         "accept",
         "decline"
+      ]
+    },
+    "pi": {
+      "enabled": false,
+      "capture_lines": 10,
+      "scan_interval_seconds": 5,
+      "notify_cooldown_seconds": 300,
+      "keyword_matches_required": 2,
+      "keywords": [
+        "permission",
+        "approve",
+        "allow",
+        "blocked"
       ]
     }
   }
