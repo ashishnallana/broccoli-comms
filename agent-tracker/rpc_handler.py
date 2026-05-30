@@ -306,10 +306,10 @@ def _publish_message_notified(info: dict, agent_name: str, pending_item):
 def handle_ensure_mailbox(params: dict) -> dict:
     """Ensures a local UI/mailbox identity exists without tmux pane control.
 
-    Native frontends such as the Electron communicator need a stable local inbox
-    identity but should not masquerade as a pane-backed coding agent. Mailbox
-    identities are local-only, no-registry, no-notify records that can send and
-    receive normal tracker messages but cannot receive direct pane input.
+    Native frontends such as the Electron communicator need a stable inbox
+    identity but should not masquerade as a controllable coding-agent pane.
+    Mailbox identities are no-notify records that can be registry-visible for
+    normal cross-host messages but cannot receive direct pane input.
     """
     name = params.get("agent_name") or params.get("name")
     if not isinstance(name, str) or not name.strip() or "/" in name or name.startswith("registry:"):
@@ -341,7 +341,8 @@ def handle_ensure_mailbox(params: dict) -> dict:
         "agent_cmd": existing.get("agent_cmd", "agent-communicator"),
         "model_type": state.normalize_model_type("agent-communicator-ui", "agent-communicator-ui", existing.get("agent_cmd", "agent-communicator")),
         "no_notify_with_send_keys": True,
-        "no_registry": True,
+        "no_registry": existing.get("no_registry", params.get("no_registry", False)) if preserve_pane else params.get("no_registry", False),
+        "direct_input_disabled": True,
         "cwd": params.get("cwd") or existing.get("cwd"),
         "last_heartbeat": time.time(),
         "recovered_at": None,
@@ -775,7 +776,7 @@ def _route_remote_send_input(params: dict, caller_pid: int = None) -> dict | Non
 def _is_mailbox_or_ui_agent(info: dict) -> bool:
     if not info:
         return False
-    return bool(info.get("is_mailbox")) or info.get("agent_type") == "agent-communicator-ui"
+    return bool(info.get("direct_input_disabled")) or bool(info.get("is_mailbox")) or info.get("agent_type") == "agent-communicator-ui"
 
 
 def handle_send_input(params: dict, caller_pid: int = None) -> dict:

@@ -536,7 +536,6 @@ def ui_launch_command() -> str:
         shlex.quote(wrapper_path()),
         shlex.quote(tui_path()),
         "--no-notify-with-send-keys",
-        "--no-registry",
     ])
 
 
