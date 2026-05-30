@@ -166,7 +166,7 @@ func (m model) footer(width int) string {
 	}
 	lines := []string{
 		statusBarStyle.Render(status),
-		"c-t view · tab section · c-n/p agent · F1-F3 input · c-a read · c-o prompts · c-h hide · c-f save · c-s save agent",
+		"c-t view · tab section · c-n/p agent · F1-F3 input · c-a read · c-o prompts · c-H hide · c-f save · c-s save agent",
 		fmt.Sprintf("↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · /msg message · /text /key pane control (%s) · c-q quit · c-x debug capture", directScope),
 	}
 	if m.paneCaptureStatus != "" {
