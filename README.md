@@ -116,7 +116,17 @@ broccoli-comms attach
 
 `start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
 
-`open` / `ui` launches `agent-communicator` as a wrapped frontend in the private tmux session and attaches to it, with `AGENT_TRACKER_SOCKET` and private tmux socket variables set to the app-owned runtime. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views work without depending on the user's tmux or tracker. The TUI shows a small Broccoli Comms runtime/tracker status line when launched in this app mode.
+`open` / `ui` launches `agent-communicator` as a wrapped frontend in the private tmux session and attaches to it, with `AGENT_TRACKER_SOCKET` and private tmux socket variables set to the app-owned runtime. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views work without depending on the user's tmux or tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
+
+Agent Communicator key highlights:
+
+- `F1` `/msg inbox`: normal inbox message mode; `Enter` sends to the selected conversation.
+- `F2` `/text pane`: explicit direct text mode; `Enter` sends composer text to the selected pane through the existing direct-input backend.
+- `F3` `/key pane`: explicit direct key mode; `Enter` sends whitespace-separated key tokens.
+- `F4` `/broadcast`: visible but disabled; pressing `Enter` does not send.
+- `n` jumps to the next unread conversation; `Ctrl-N` / `Ctrl-P` keep next/previous agent navigation.
+
+Legacy slash commands (`/msg`, `/text`, `/text --no-submit`, `/key`) remain supported. The composer context line shows the selected target plus model badge and machine where known.
 
 `agent focus <name>` selects a running managed-agent window by private tmux metadata/window id, and `agent attach <name>` attaches directly to that managed window.
 

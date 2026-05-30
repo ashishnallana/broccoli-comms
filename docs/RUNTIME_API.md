@@ -139,6 +139,133 @@ Check objects include at least:
 
 Current checks cover executable availability, writable runtime/cache/config directories, configured agent command lookup where practical, and tracker/tmux socket reachability when the runtime is up.
 
+## Tracker agent/list metadata
+
+Tracker `list` responses are additive and include UI-friendly identity fields when known:
+
+- `agent_id` / `uuid`: stable agent identity.
+- `scope`: `local` for local tracker rows, `remote` for registry-discovered rows.
+- `hostname`: machine identity for grouping/display.
+- `tracker_id`: stable tracker identity.
+- `target_address`: address frontends should use for message/direct-input actions.
+- `registry_name`: registry route prefix when a remote row is registry-qualified.
+- `model_type`: canonical model label normalized from explicit `model_type`, `agent_type`, or command basename (`pi`, `claude`, `codex`, or `unknown`).
+
+Clients should prefer `model_type` for badges and fall back to `agent_type` / `agent_cmd` only for legacy trackers.
+
+## Tracker mailbox and message APIs
+
+`ensure_mailbox` creates or refreshes a mailbox-only tracker agent for frontends such as `agent-communicator` without requiring an attached agent pane. It returns:
+
+```json
+{
+  "name": "agent-communicator",
+  "agent_id": "...",
+  "uuid": "..."
+}
+```
+
+Structured JSON-RPC errors may include `error.data` with:
+
+- `error_code`
+- `agent`
+- `hostname`
+- `operation`
+- `retryable`
+
+Existing clients may continue to display the raw error message; newer frontends can use `operation` and `retryable` for actionable error bars/retry affordances.
+
+Inbox message objects preserve legacy fields and may include these optional attribution/read-status fields:
+
+```json
+{
+  "sender": "alice",
+  "sender_agent_id": "...",
+  "sender_tracker_id": "...",
+  "sender_hostname": "workstation-a",
+  "sender_model_type": "pi",
+  "sender_agent_type": "pi",
+  "sender_agent_cmd": "pi --profile reviewer",
+  "kind": "text",
+  "timestamp": "2026-05-30T10:00:00+00:00",
+  "message": "hello",
+  "read": false,
+  "message_id": "..."
+}
+```
+
+Local sends enrich sender metadata from tracker state. Registry-routed remote delivery preserves these fields when present. Legacy messages without sender metadata remain valid.
+
+`get_unread_counts` returns durable unread counts derived from inbox `read` flags without marking messages read:
+
+```json
+{
+  "counts": {
+    "local:<agent_id>": 2,
+    "remote:<tracker_id>:<agent_id>": 1,
+    "sender:<legacy-sender>": 1
+  },
+  "total": 4
+}
+```
+
+Stable keys intentionally distinguish local and remote agents even when display names or agent IDs collide. Opening/reading a local conversation matches explicit local `sender_tracker_id` plus legacy local messages missing tracker IDs, but excludes explicit remote tracker IDs.
+
+## Tracker health and events
+
+`tracker_info` returns local identity plus a UI-friendly health snapshot:
+
+```json
+{
+  "hostname": "workstation-a",
+  "tracker_id": "...",
+  "http_port": 19876,
+  "status": "ok",
+  "agent_count": 3,
+  "online_agent_count": 2,
+  "registry_connected": true,
+  "registries": [
+    {
+      "name": "mundus",
+      "connected": true,
+      "registry_url": "https://agents.example",
+      "last_operation": "heartbeat",
+      "status_code": 200,
+      "last_attempt": 1780137000.0,
+      "last_success": 1780137000.0
+    }
+  ],
+  "remote_tracker_count": 2,
+  "online_remote_tracker_count": 1
+}
+```
+
+Health should degrade gracefully: missing registry status means `registry_connected` may be null/omitted, and clients should treat unknown fields as additive.
+
+`wait_events` remains backward-compatible. Event objects may include lifecycle/system event types and extra fields:
+
+- `agent_registered`
+- `agent_unregistered`
+- `agent_status_changed`
+- `message_delivered`
+- `message_read`
+- `remote_agent_event`
+
+Common optional fields include `target_agent_id`, `target_agent_name`, `hostname`, `tracker_id`, `status`, `old_status`, `model_type`, `agent_type`, `agent_cmd`, `sender`, `message_id`, and `message`. Existing consumers should ignore unknown event types/fields.
+
+## Agent Communicator TUI key behavior
+
+The TUI composer has persistent input tabs:
+
+- `F1` `/msg inbox`: normal inbox message mode. `Enter` sends a message to the selected conversation.
+- `F2` `/text pane`: explicit direct text mode. `Enter` sends composer text to the selected pane through the existing direct-input backend.
+- `F3` `/key pane`: explicit direct key mode. `Enter` sends whitespace-separated key tokens.
+- `F4` `/broadcast`: visible but disabled unless a future backend is implemented. Pressing `Enter` in this mode surfaces a disabled status and does not send.
+
+Legacy slash commands remain supported from any mode: `/msg`, `/text`, `/text --no-submit`, `/key`, and `/broadcast`. The composer context line shows the selected target plus model badge and machine where known.
+
+Unread navigation: `n` jumps to the next unread conversation, while `Ctrl-N` / `Ctrl-P` keep their existing next/previous agent behavior.
+
 ## Direct pane input capability
 
 Direct pane input is separate from inbox messaging. It controls a registered tmux pane directly and does not create inbox/outbox conversation history.
