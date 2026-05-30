@@ -29,10 +29,10 @@ func TestModelBadgeMapping(t *testing.T) {
 	}
 }
 
-func TestGroupAgentViewsByMachine(t *testing.T) {
+func TestGroupAgentViewsByScope(t *testing.T) {
 	rows := []agentRow{
 		{Name: "local-a", Scope: "local", Hostname: "alpha-host", AgentCmd: "pi"},
-		{Name: "local-b", Scope: "local", Hostname: "alpha-host", AgentCmd: "codex"},
+		{Name: "local-b", Scope: "local", Hostname: "other-host", AgentCmd: "codex"},
 		{Name: "remote-a", Scope: "remote", Hostname: "beta-host", AgentCmd: "claude"},
 	}
 	views := deriveAgentViews(rows, nil, nil)
@@ -40,10 +40,10 @@ func TestGroupAgentViewsByMachine(t *testing.T) {
 	if len(groups) != 2 {
 		t.Fatalf("groups = %+v, want 2", groups)
 	}
-	if groups[0].Header != "Local · alpha-host" || len(groups[0].Agents) != 2 {
+	if groups[0].Header != "Local" || len(groups[0].Agents) != 2 {
 		t.Fatalf("first group = %+v", groups[0])
 	}
-	if groups[1].Header != "Remote · beta-host" || len(groups[1].Agents) != 1 {
+	if groups[1].Header != "Remote" || len(groups[1].Agents) != 1 {
 		t.Fatalf("second group = %+v", groups[1])
 	}
 }

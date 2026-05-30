@@ -46,10 +46,6 @@ func newAgentView(row agentRow, hidden bool, unreadCount int) AgentView {
 	machine := rowMachineLabel(row)
 	hostname := rowHostnameLabel(row)
 	scope := strings.Title(fallback(row.Scope, "local"))
-	group := scope
-	if hostname != "" {
-		group += " · " + hostname
-	}
 	return AgentView{
 		Row:           row,
 		Name:          row.Name,
@@ -60,7 +56,7 @@ func newAgentView(row agentRow, hidden bool, unreadCount int) AgentView {
 		MachineLabel:  machine,
 		HostnameLabel: hostname,
 		RegistryLabel: rowRegistryLabel(row),
-		GroupHeader:   group,
+		GroupHeader:   scope,
 		CWD:           compactCWD(row.CWD),
 		Hidden:        hidden,
 		Unread:        unreadCount > 0,

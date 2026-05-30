@@ -25,12 +25,28 @@ func TestSelectedAgentCardUsesDoubleBorder(t *testing.T) {
 	}
 }
 
-func TestAgentCardShowsStatusRegistryAndFullHost(t *testing.T) {
+func TestAgentCardShowsStatusRegistryThenHostOnTwoContentLines(t *testing.T) {
 	m := model{}
 	card := m.agentCard(agentRow{Name: "alpha", Scope: "remote", Status: "idle", Hostname: "tanmayvijay-mac-ywd", RegistryName: "mundus", ModelType: "pi"}, false, 70)
-	for _, want := range []string{"alpha", "Pi · idle · mundus", "host tanmayvijay-mac-ywd"} {
+	for _, want := range []string{"alpha", "Pi · idle · mundus · host tanmayvijay-mac-ywd"} {
 		if !strings.Contains(card, want) {
 			t.Fatalf("agent card missing %q:\n%s", want, card)
+		}
+	}
+	if got := lineCount(card); got != agentCardHeight {
+		t.Fatalf("agent card height = %d, want %d:\n%s", got, agentCardHeight, card)
+	}
+}
+
+func TestAgentCardTruncatesLongNameAndHostWithoutWrapping(t *testing.T) {
+	m := model{}
+	card := m.agentCard(agentRow{Name: "agent-with-a-very-very-long-name-that-should-not-wrap", Scope: "remote", Status: "running", Hostname: "host-with-a-very-long-name-that-should-truncate.example.com", RegistryName: "registry-with-long-name", ModelType: "pi"}, false, 34)
+	if got := lineCount(card); got != agentCardHeight {
+		t.Fatalf("agent card wrapped, height=%d want %d:\n%s", got, agentCardHeight, card)
+	}
+	for _, line := range strings.Split(card, "\n") {
+		if got := lipgloss.Width(line); got != 34 {
+			t.Fatalf("line width=%d want 34 line=%q card=\n%s", got, line, card)
 		}
 	}
 }
