@@ -2,7 +2,7 @@
 
 Broccoli Comms is a private command center for terminal-based AI coding agents.
 
-It helps you run, message, monitor, and coordinate agents from one isolated workspace. Instead of mixing agent panes into your normal tmux setup or relying on a global tracker service, Broccoli Comms owns its own runtime: a private tmux socket, a private `agent-tracker`, managed agent windows, a terminal UI, and optional registry-based multi-device messaging.
+It helps you run, message, monitor, and coordinate agents from one workspace. Broccoli Comms owns a private `agent-tracker` runtime while, by default, placing managed agent panes in your normal tmux server under a `broccoli-comms` session. A private tmux compatibility mode is available for users who want full tmux isolation.
 
 ## Why customers use it
 
@@ -77,7 +77,7 @@ You may already have tmux sessions, shell hooks, or a Home Manager setup. You do
 Broccoli Comms owns a private runtime by default:
 
 - private tracker socket: `$XDG_RUNTIME_DIR/broccoli-comms/agent-tracker.sock`
-- private tmux socket: `$XDG_RUNTIME_DIR/broccoli-comms/tmux.sock`
+- tmux mode: default tmux server/session, or private socket mode with `BROCCOLI_COMMS_TMUX_MODE=private`
 - config under `$XDG_CONFIG_HOME/broccoli-comms`
 - logs/cache under `$XDG_CACHE_HOME/broccoli-comms`
 
@@ -89,7 +89,7 @@ broccoli-comms status --json
 broccoli-comms stop
 ```
 
-This keeps the agent workspace separate from your normal tmux server and from any global/default tracker you may already run.
+The private tracker keeps Broccoli Comms separate from any global/default tracker you may already run. The default tmux mode makes panes visible in your normal tmux workflow; use `BROCCOLI_COMMS_TMUX_MODE=private` when you need the old fully separate tmux socket.
 
 ### 4. The multi-device user
 
@@ -153,7 +153,7 @@ The same runtime can be used interactively through the TUI or programmatically t
 
 ### Private runtime
 
-Broccoli Comms starts and manages its own tracker and tmux socket. This isolates the agent workspace from your normal tmux sessions and from other tracker services.
+Broccoli Comms starts and manages its own private tracker. By default it creates a `broccoli-comms` session in your normal tmux server and `stop` removes only that session plus the private tracker. Set `BROCCOLI_COMMS_TMUX_MODE=private` to use the old private tmux socket behavior.
 
 ### Managed agents
 

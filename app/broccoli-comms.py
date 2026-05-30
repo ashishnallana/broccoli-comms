@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Standalone launcher for the Broccoli Comms agent runtime.
 
-This launcher owns a private tmux server and a private agent-tracker socket so it
-can run independently of a user's tmux/Home Manager setup.
+This launcher owns a private agent-tracker socket and a managed tmux session.
+By default the tmux session lives in the user's default tmux server; private tmux
+compatibility mode is available with BROCCOLI_COMMS_TMUX_MODE=private.
 """
 
 from __future__ import annotations
@@ -80,6 +81,21 @@ def ensure_dirs() -> None:
         paths()[key].mkdir(parents=True, exist_ok=True)
 
 
+def tmux_mode() -> str:
+    mode = os.environ.get("BROCCOLI_COMMS_TMUX_MODE", "default").lower()
+    if mode not in {"default", "private"}:
+        raise SystemExit("BROCCOLI_COMMS_TMUX_MODE must be 'default' or 'private'")
+    return mode
+
+
+def use_private_tmux() -> bool:
+    return tmux_mode() == "private"
+
+
+def tmux_socket_label() -> str | None:
+    return str(paths()["tmux_socket"]) if use_private_tmux() else None
+
+
 def base_env() -> dict[str, str]:
     p = paths()
     env = os.environ.copy()
@@ -90,12 +106,16 @@ def base_env() -> dict[str, str]:
         "BROCCOLI_COMMS_RUNTIME_DIR": str(p["runtime"]),
         "BROCCOLI_COMMS_CACHE_DIR": str(p["cache"]),
         "BROCCOLI_COMMS_CONFIG_DIR": str(p["config"]),
-        "BROCCOLI_COMMS_TMUX_SOCKET": str(p["tmux_socket"]),
         "AGENT_TRACKER_SOCKET": str(p["tracker_socket"]),
-        "AGENT_TRACKER_TMUX_SOCKET": str(p["tmux_socket"]),
         "XDG_CACHE_HOME": str(p["cache"]),
         "AGENT_TRACKER_HTTP_PORT": env.get("AGENT_TRACKER_HTTP_PORT", "19876"),
     })
+    if use_private_tmux():
+        env["BROCCOLI_COMMS_TMUX_SOCKET"] = str(p["tmux_socket"])
+        env["AGENT_TRACKER_TMUX_SOCKET"] = str(p["tmux_socket"])
+    else:
+        env.pop("BROCCOLI_COMMS_TMUX_SOCKET", None)
+        env.pop("AGENT_TRACKER_TMUX_SOCKET", None)
     apply_configured_registries(env)
     bin_dir = repo_root() / "bin"
     env["PATH"] = f"{bin_dir}:{repo_root() / 'wrapper'}:{env.get('PATH', '')}"
@@ -195,17 +215,45 @@ def write_tmux_conf() -> None:
     )
 
 
+def tmux_command(*args: str) -> list[str]:
+    if use_private_tmux():
+        return ["tmux", "-S", str(paths()["tmux_socket"]), *args]
+    return ["tmux", *args]
+
+
 def tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    p = paths()
-    return subprocess.run(["tmux", "-S", str(p["tmux_socket"]), *args], env=base_env(), check=check, text=True, capture_output=True)
+    return subprocess.run(tmux_command(*args), env=base_env(), check=check, text=True, capture_output=True)
+
+
+def in_tmux_client() -> bool:
+    return bool(os.environ.get("TMUX"))
+
+
+def exec_tmux_interactive(target: str) -> None:
+    if in_tmux_client():
+        if use_private_tmux():
+            raise SystemExit(
+                "Broccoli Comms is using a private tmux socket. Run this command outside tmux, or attach manually:\n"
+                f"  tmux -S {paths()['tmux_socket']} attach -t {target}"
+            )
+        result = subprocess.run(["tmux", "switch-client", "-t", target], env=os.environ.copy(), text=True, capture_output=True)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            suffix = f": {detail}" if detail else ""
+            raise SystemExit(f"failed to switch current tmux client to {target}{suffix}")
+        return
+    os.execvpe("tmux", tmux_command("attach", "-t", target), base_env())
 
 
 def ensure_tmux() -> None:
     ensure_dirs()
-    write_tmux_conf()
     if tmux("has-session", "-t", SESSION, check=False).returncode == 0:
         return
-    tmux("-f", str(paths()["tmux_conf"]), "new-session", "-d", "-s", SESSION, "-c", str(Path.home()), "bash")
+    if use_private_tmux():
+        write_tmux_conf()
+        tmux("-f", str(paths()["tmux_conf"]), "new-session", "-d", "-s", SESSION, "-c", str(Path.home()), "bash")
+    else:
+        tmux("new-session", "-d", "-s", SESSION, "-c", str(Path.home()), "bash")
 
 
 def default_config() -> dict:
@@ -323,13 +371,22 @@ def kill_agent_window(name: str) -> bool:
     return killed_any
 
 
+def tmux_env_assignments_for_pane() -> list[str]:
+    if not use_private_tmux():
+        return []
+    p = paths()
+    return [
+        f"AGENT_TRACKER_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
+        f"BROCCOLI_COMMS_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
+    ]
+
+
 def managed_agent_launch_command(name: str, command: str) -> str:
     p = paths()
     return " ".join([
         f"SUGGESTED_AGENT_NAME={shlex.quote(name)}",
         f"AGENT_TRACKER_SOCKET={shlex.quote(str(p['tracker_socket']))}",
-        f"AGENT_TRACKER_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
-        f"BROCCOLI_COMMS_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
+        *tmux_env_assignments_for_pane(),
         shlex.quote(wrapper_path()),
         command,
     ])
@@ -363,7 +420,8 @@ def start(_args: argparse.Namespace) -> None:
     reconcile_agents()
     print(f"{APP} runtime started")
     print(f"tracker socket: {paths()['tracker_socket']}")
-    print(f"tmux socket:    {paths()['tmux_socket']}")
+    print(f"tmux mode:      {tmux_mode()}")
+    print(f"tmux socket:    {tmux_socket_label() or 'default'}")
 
 
 def ui_window() -> dict[str, str] | None:
@@ -386,7 +444,11 @@ def ui_window_registered(window: dict[str, str] | None) -> bool:
     if not window:
         return False
     info = tracker_agents().get(UI_AGENT_NAME) or {}
-    return info.get("tmux_pane") == window.get("pane_id") and info.get("tmux_socket") == str(paths()["tmux_socket"])
+    if info.get("tmux_pane") != window.get("pane_id"):
+        return False
+    if use_private_tmux():
+        return info.get("tmux_socket") == str(paths()["tmux_socket"])
+    return True
 
 
 def ui_launch_command() -> str:
@@ -395,10 +457,9 @@ def ui_launch_command() -> str:
         f"AGENT_ID={shlex.quote(UI_AGENT_ID)}",
         f"SUGGESTED_AGENT_NAME={shlex.quote(UI_AGENT_NAME)}",
         f"AGENT_TRACKER_SOCKET={shlex.quote(str(p['tracker_socket']))}",
-        f"AGENT_TRACKER_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
         f"BROCCOLI_COMMS_APP_RUNTIME=1",
         f"BROCCOLI_COMMS_RUNTIME_DIR={shlex.quote(str(p['runtime']))}",
-        f"BROCCOLI_COMMS_TMUX_SOCKET={shlex.quote(str(p['tmux_socket']))}",
+        *tmux_env_assignments_for_pane(),
         shlex.quote(wrapper_path()),
         shlex.quote(tui_path()),
     ])
@@ -432,13 +493,13 @@ def ensure_ui_window() -> dict[str, str]:
 def ui(args: argparse.Namespace) -> None:
     start(args)
     window = ensure_ui_window()
-    os.execvpe("tmux", ["tmux", "-S", str(paths()["tmux_socket"]), "attach", "-t", window["window_id"]], base_env())
+    exec_tmux_interactive(window["window_id"])
 
 
 def attach(_args: argparse.Namespace) -> None:
     ensure_tracker()
     ensure_tmux()
-    os.execvpe("tmux", ["tmux", "-S", str(paths()["tmux_socket"]), "attach", "-t", SESSION], base_env())
+    exec_tmux_interactive(SESSION)
 
 
 def tracker_agents() -> dict:
@@ -468,6 +529,8 @@ def agent_list_payload() -> dict:
             "tracker_up": tracker_up,
             "tmux_up": runtime_up,
             "tmux_session": SESSION,
+            "tmux_mode": tmux_mode(),
+            "tmux_socket": tmux_socket_label(),
         },
         "agents": {
             name: {
@@ -509,7 +572,8 @@ def status_payload() -> dict:
             "up": tracker_up,
         },
         "tmux": {
-            "socket": str(p["tmux_socket"]),
+            "mode": tmux_mode(),
+            "socket": tmux_socket_label(),
             "up": session_up,
             "session": SESSION,
         },
@@ -524,7 +588,7 @@ def status_payload() -> dict:
         # Backward-compatible aliases used by existing smoke checks.
         "tracker_socket": str(p["tracker_socket"]),
         "tracker_up": tracker_up,
-        "tmux_socket": str(p["tmux_socket"]),
+        "tmux_socket": tmux_socket_label(),
         "tmux_up": session_up,
     }
 
@@ -602,7 +666,10 @@ def focus_managed_window(name: str) -> dict[str, str]:
     window = managed_window_for_agent(name)
     window_id = window["window_id"]
     tmux("select-window", "-t", window_id)
-    tmux("switch-client", "-t", window_id, check=False)
+    if in_tmux_client() and not use_private_tmux():
+        subprocess.run(["tmux", "switch-client", "-t", window_id], env=os.environ.copy(), check=False, text=True, capture_output=True)
+    else:
+        tmux("switch-client", "-t", window_id, check=False)
     return window
 
 
@@ -621,7 +688,7 @@ def agent_attach(args: argparse.Namespace) -> None:
     except ValueError as e:
         raise SystemExit(str(e))
     window = focus_managed_window(args.name)
-    os.execvpe("tmux", ["tmux", "-S", str(paths()["tmux_socket"]), "attach", "-t", window["window_id"]], base_env())
+    exec_tmux_interactive(window["window_id"])
 
 
 def _derive_track_name(command: list[str], cwd: str | None = None) -> str:
@@ -675,13 +742,20 @@ def track(args: argparse.Namespace) -> None:
 
 def stop(_args: argparse.Namespace) -> None:
     p = paths()
-    tmux("kill-server", check=False)
-    for _ in range(50):
-        if tmux("has-session", "-t", SESSION, check=False).returncode != 0:
-            break
-        time.sleep(0.1)
-    if p["tmux_socket"].exists() and tmux("has-session", "-t", SESSION, check=False).returncode != 0:
-        p["tmux_socket"].unlink(missing_ok=True)
+    if use_private_tmux():
+        tmux("kill-server", check=False)
+        for _ in range(50):
+            if tmux("has-session", "-t", SESSION, check=False).returncode != 0:
+                break
+            time.sleep(0.1)
+        if p["tmux_socket"].exists() and tmux("has-session", "-t", SESSION, check=False).returncode != 0:
+            p["tmux_socket"].unlink(missing_ok=True)
+    else:
+        tmux("kill-session", "-t", SESSION, check=False)
+        for _ in range(50):
+            if tmux("has-session", "-t", SESSION, check=False).returncode != 0:
+                break
+            time.sleep(0.1)
 
     pid_file = p["tracker_pid"]
     if pid_file.exists():
@@ -845,21 +919,27 @@ def doctor_payload() -> dict:
     else:
         _doctor_check(checks, "tracker socket", "ok", "runtime is not running; tracker socket not present", path=str(p["tracker_socket"]))
 
-    tmux_socket_exists = p["tmux_socket"].exists()
     tmux_reachable = bool(tmux_path) and tmux_up()
-    if tmux_reachable:
-        _doctor_check(checks, "tmux socket", "ok", "private tmux session is reachable", path=str(p["tmux_socket"]), session=SESSION)
-    elif tmux_socket_exists:
-        _doctor_check(checks, "tmux socket", "warning", "tmux socket exists but private session is not reachable", path=str(p["tmux_socket"]), session=SESSION)
+    if use_private_tmux():
+        tmux_socket_exists = p["tmux_socket"].exists()
+        if tmux_reachable:
+            _doctor_check(checks, "tmux session", "ok", "private tmux session is reachable", mode=tmux_mode(), path=str(p["tmux_socket"]), session=SESSION)
+        elif tmux_socket_exists:
+            _doctor_check(checks, "tmux session", "warning", "tmux socket exists but private session is not reachable", mode=tmux_mode(), path=str(p["tmux_socket"]), session=SESSION)
+        else:
+            _doctor_check(checks, "tmux session", "ok", "runtime is not running; private tmux socket not present", mode=tmux_mode(), path=str(p["tmux_socket"]), session=SESSION)
     else:
-        _doctor_check(checks, "tmux socket", "ok", "runtime is not running; tmux socket not present", path=str(p["tmux_socket"]), session=SESSION)
+        if tmux_reachable:
+            _doctor_check(checks, "tmux session", "ok", "default tmux server has Broccoli Comms session", mode=tmux_mode(), session=SESSION)
+        else:
+            _doctor_check(checks, "tmux session", "ok", "runtime is not running; default tmux session not present", mode=tmux_mode(), session=SESSION)
 
     return {
         "app": APP,
         "version": VERSION,
         "ok": not any(check["status"] == "error" for check in checks),
         "paths": {"runtime_dir": str(p["runtime"]), "cache_dir": str(p["cache"]), "config_dir": str(p["config"])},
-        "runtime": {"tracker_up": tracker_reachable, "tmux_up": tmux_reachable, "tmux_session": SESSION},
+        "runtime": {"tracker_up": tracker_reachable, "tmux_up": tmux_reachable, "tmux_session": SESSION, "tmux_mode": tmux_mode(), "tmux_socket": tmux_socket_label()},
         "checks": checks,
     }
 
@@ -1478,10 +1558,10 @@ def main() -> None:
     agent_restart_parser = agent_sub.add_parser("restart", help="Restart a configured agent window")
     agent_restart_parser.add_argument("name", help="Agent/window name")
     agent_restart_parser.set_defaults(func=agent_restart)
-    agent_focus_parser = agent_sub.add_parser("focus", help="Focus a running managed agent window in the private tmux session")
+    agent_focus_parser = agent_sub.add_parser("focus", help="Focus a running managed agent window in the Broccoli tmux session")
     agent_focus_parser.add_argument("name", help="Agent/window name")
     agent_focus_parser.set_defaults(func=agent_focus)
-    agent_attach_parser = agent_sub.add_parser("attach", help="Attach to a running managed agent window in the private tmux session")
+    agent_attach_parser = agent_sub.add_parser("attach", help="Attach/switch to a running managed agent window in the Broccoli tmux session")
     agent_attach_parser.add_argument("name", help="Agent/window name")
     agent_attach_parser.set_defaults(func=agent_attach)
     args = parser.parse_args()

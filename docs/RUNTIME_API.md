@@ -33,7 +33,8 @@ Example:
     "up": true
   },
   "tmux": {
-    "socket": "/run/user/1000/broccoli-comms/tmux.sock",
+    "mode": "default",
+    "socket": null,
     "up": true,
     "session": "broccoli-comms"
   },
@@ -79,7 +80,9 @@ Example:
   "runtime": {
     "tracker_up": true,
     "tmux_up": true,
-    "tmux_session": "broccoli-comms"
+    "tmux_session": "broccoli-comms",
+    "tmux_mode": "default",
+    "tmux_socket": null
   },
   "agents": {
     "main": {
@@ -105,7 +108,7 @@ Example:
         "name": "main",
         "agent_id": "...",
         "tmux_pane": "%2",
-        "tmux_socket": "/run/user/1000/broccoli-comms/tmux.sock",
+        "tmux_socket": "/tmp/tmux-1000/default",
         "status": "idle"
       }
     }
@@ -116,7 +119,7 @@ Example:
 Notes:
 
 - `configured` is the config source of truth.
-- `managed_windows` is derived from private tmux metadata.
+- `managed_windows` is derived from tmux metadata in the active tmux mode.
 - `running` is true when at least one managed window is present for the agent.
 - `tracker` is best-effort and may be null if the private tracker is down or the wrapper has not registered yet.
 - `cwd` and `command` remain as direct fields for simple clients; prefer `configured.cwd` and `configured.command` for new clients.
@@ -137,7 +140,7 @@ Check objects include at least:
 }
 ```
 
-Current checks cover executable availability, writable runtime/cache/config directories, configured agent command lookup where practical, and tracker/tmux socket reachability when the runtime is up.
+Current checks cover executable availability, writable runtime/cache/config directories, configured agent command lookup where practical, tracker reachability, and the Broccoli tmux session in the active tmux mode.
 
 ## Tracker agent/list metadata
 
@@ -271,13 +274,11 @@ Unread navigation: `n` jumps to the next unread conversation, while `Ctrl-N` / `
 `broccoli-comms agent-tracker <subcommand> [args...]` runs the repository's `agent-tracker/agent-tracker-ctl.py` against the Broccoli Comms private runtime. It is equivalent to `agent-tracker-ctl` but pins these environment values via `base_env()`:
 
 - `AGENT_TRACKER_SOCKET`
-- `AGENT_TRACKER_TMUX_SOCKET`
-- `BROCCOLI_COMMS_TMUX_SOCKET`
 - `BROCCOLI_COMMS_RUNTIME_DIR`
 - `BROCCOLI_COMMS_CACHE_DIR`
 - `BROCCOLI_COMMS_CONFIG_DIR`
 
-The wrapper does not require `agent-tracker-ctl` to be installed globally or present on the user's shell `PATH`. Pane-sensitive commands such as `send-text`, `send-key`, `focus`, and `capture-pane` use the private tmux socket.
+The wrapper does not require `agent-tracker-ctl` to be installed globally or present on the user's shell `PATH`. Pane-sensitive commands such as `send-text`, `send-key`, `focus`, and `capture-pane` use the registered tmux pane/socket metadata. Default mode uses the user's normal tmux server; `BROCCOLI_COMMS_TMUX_MODE=private` preserves the old private tmux socket behavior.
 
 `base_env()` also auto-loads enabled saved tracker registries from `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` into `AGENT_REGISTRIES_JSON` unless `AGENT_REGISTRIES_JSON` is already set by the caller or `BROCCOLI_COMMS_DISABLE_CONFIG_REGISTRIES=1` is set. Manage this file with `broccoli-comms registry add/list/remove/enable/disable/env`; token contents are not stored, only `token-file` paths.
 
@@ -338,6 +339,6 @@ broccoli-comms agent remove <name>
 broccoli-comms agent restart <name>
 ```
 
-`focus` selects a running managed-agent window using private tmux metadata/window ids and prints a JSON-friendly result. `attach` attaches the current terminal directly to that managed window. Other commands also print JSON-friendly results.
+`focus` selects a running managed-agent window using tmux metadata/window ids and prints a JSON-friendly result. `attach` attaches or switches the current terminal/client directly to that managed window. Other commands also print JSON-friendly results.
 
-When launched via `broccoli-comms open` / `broccoli-comms ui`, `agent-communicator` receives `AGENT_TRACKER_SOCKET`, `AGENT_TRACKER_TMUX_SOCKET`, and `BROCCOLI_COMMS_TMUX_SOCKET` for the app-owned runtime. Frontends should prefer these explicit sockets and avoid inherited/default tmux state in app mode.
+When launched via `broccoli-comms open` / `broccoli-comms ui`, `agent-communicator` always receives the private `AGENT_TRACKER_SOCKET`. In default tmux mode it relies on pane `TMUX` metadata for tmux operations; in private mode it also receives `AGENT_TRACKER_TMUX_SOCKET` and `BROCCOLI_COMMS_TMUX_SOCKET`.

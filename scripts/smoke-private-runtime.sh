@@ -11,6 +11,7 @@ export BROCCOLI_COMMS_RUNTIME_DIR="$tmpdir/runtime"
 export BROCCOLI_COMMS_CACHE_DIR="$tmpdir/cache"
 export BROCCOLI_COMMS_CONFIG_DIR="$tmpdir/config"
 export AGENT_TRACKER_SOCKET="$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock"
+export BROCCOLI_COMMS_TMUX_MODE="private"
 export XDG_CACHE_HOME="$BROCCOLI_COMMS_CACHE_DIR"
 export AGENT_TRACKER_HTTP_PORT="0"
 unset AGENT_REGISTRIES_JSON AGENT_REGISTRY_TOKEN AGENT_TRACKER_DAEMON
@@ -112,8 +113,8 @@ if not payload.get("runtime", {}).get("tracker_up") or not payload.get("runtime"
     print(json.dumps(payload, indent=2), file=sys.stderr)
     raise SystemExit("doctor did not report runtime sockets up after start")
 checks = {check.get("name"): check for check in payload.get("checks", [])}
-if checks.get("tracker socket", {}).get("status") != "ok" or checks.get("tmux socket", {}).get("status") != "ok":
-    raise SystemExit("doctor socket checks were not ok after start")
+if checks.get("tracker socket", {}).get("status") != "ok" or checks.get("tmux session", {}).get("status") != "ok":
+    raise SystemExit("doctor runtime checks were not ok after start")
 PY
 
 status_json="$(broccoli status --json)"
@@ -129,6 +130,7 @@ checks = {
     "tracker.up": status.get("tracker", {}).get("up") is True,
     "tmux.up": status.get("tmux", {}).get("up") is True,
     "tracker.socket": status.get("tracker", {}).get("socket") == f"{expected_runtime}/agent-tracker.sock",
+    "tmux.mode": status.get("tmux", {}).get("mode") == "private",
     "tmux.socket": status.get("tmux", {}).get("socket") == f"{expected_runtime}/tmux.sock",
     "tmux.session": status.get("tmux", {}).get("session") == "broccoli-comms",
     "agents.configured_count": status.get("agents", {}).get("configured_count") == 0,

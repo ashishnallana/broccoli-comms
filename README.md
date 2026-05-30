@@ -1,12 +1,12 @@
 # Broccoli Comms
 
-Broccoli Comms is a standalone, private agent workspace runtime. It runs terminal-based coding agents, tracks their panes/inboxes, and provides a terminal UI for messaging and control without depending on a user's Home Manager setup, tmux config, shell hooks, or global agent-tracker service.
+Broccoli Comms is a standalone agent workspace runtime. It runs terminal-based coding agents, tracks their panes/inboxes, and provides a terminal UI for messaging and control without depending on a user's Home Manager setup, shell hooks, or global agent-tracker service.
 
 ## What it is
 
 `broccoli-comms` owns an isolated runtime containing:
 
-- a private tmux server/socket for managed agent panes and the TUI
+- managed agent panes and the TUI in your default tmux server/session by default
 - a private `agent-tracker` daemon/socket for registration, inboxes, pane capture, and local direct input
 - managed agent windows launched through `agent-wrapper`
 - the `agent-communicator` TUI as the primary interface
@@ -15,17 +15,18 @@ Broccoli Comms is a standalone, private agent workspace runtime. It runs termina
 Typical local workflow:
 
 ```sh
-broccoli-comms start       # start private tracker/tmux and configured agents
+broccoli-comms start       # start private tracker plus default-tmux Broccoli session
 broccoli-comms ui          # open the terminal UI; alias: open
 broccoli-comms status      # inspect runtime state
-broccoli-comms stop        # stop the private runtime
+broccoli-comms stop        # stop Broccoli session and private tracker
 ```
 
-Default private paths:
+Default paths/mode:
 
 - runtime: `$XDG_RUNTIME_DIR/broccoli-comms`
 - tracker socket: `$XDG_RUNTIME_DIR/broccoli-comms/agent-tracker.sock`
-- tmux socket: `$XDG_RUNTIME_DIR/broccoli-comms/tmux.sock`
+- tmux mode: `default` (uses your normal tmux server and a `broccoli-comms` session)
+- private tmux compatibility: set `BROCCOLI_COMMS_TMUX_MODE=private` to use `$XDG_RUNTIME_DIR/broccoli-comms/tmux.sock`
 - config: `$XDG_CONFIG_HOME/broccoli-comms/config.json`
 - logs/cache: `$XDG_CACHE_HOME/broccoli-comms`
 
@@ -77,7 +78,7 @@ Required on the host:
 - `make` to run the build/install targets
 - `go` to build `agent-communicator`
 - `python3` to run `broccoli-comms`, `agent-tracker`, and `agent-registry`
-- `tmux` for the private agent/UI session runtime
+- `tmux` for the agent/UI session runtime
 - a POSIX shell; `bash` is needed for the smoke-test scripts
 - the agent commands you want to run on `PATH`, for example `pi`, `claude`, or `codex`
 
@@ -259,7 +260,7 @@ broccoli-comms start
 broccoli-comms attach
 ```
 
-`start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
+`start` reconciles configured agents into the `broccoli-comms` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker environment. By default this session is created in your normal tmux server. `broccoli-comms stop` kills only the `broccoli-comms` session and private tracker, not unrelated tmux sessions. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/ui/stop` to use the old Broccoli-owned private tmux socket behavior.
 
 ### Track an ad-hoc command in the current pane
 
@@ -326,7 +327,7 @@ find ~/.config/agent-tracker/agents -maxdepth 2 -name config.json -print
 python3 -m json.tool ~/.config/agent-tracker/agents/broccoli-comms/config.json
 ```
 
-`open` / `ui` launches `agent-communicator` as a wrapped frontend in the private tmux session and attaches to it, with `AGENT_TRACKER_SOCKET` and private tmux socket variables set to the app-owned runtime. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views work without depending on the user's tmux or tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
+`open` / `ui` launches `agent-communicator` as a wrapped frontend in the `broccoli-comms` tmux session and attaches or switches to it. From inside an existing default-tmux client, `ui` uses `tmux switch-client` instead of attempting a nested attach. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views use the private tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
 
 Agent Communicator key highlights:
 
@@ -338,11 +339,11 @@ Agent Communicator key highlights:
 
 Legacy slash commands (`/msg`, `/text`, `/text --no-submit`, `/key`) remain supported. The composer context line shows the selected target plus model badge and machine where known.
 
-`agent focus <name>` selects a running managed-agent window by private tmux metadata/window id, and `agent attach <name>` attaches directly to that managed window.
+`agent focus <name>` selects a running managed-agent window by tmux metadata/window id, and `agent attach <name>` attaches or switches directly to that managed window.
 
-`broccoli-comms agent-tracker spin <dir> <command> [args...]` also auto-wraps raw commands through `agent-wrapper` before creating the tmux window/session, so spun agents register, heartbeat, inherit the intended tracker/tmux socket environment, and appear in status/communicator views. Commands already starting with `agent-wrapper` are not wrapped again.
+`broccoli-comms agent-tracker spin <dir> <command> [args...]` also auto-wraps raw commands through `agent-wrapper` before creating the tmux window/session, so spun agents register, heartbeat, inherit the intended private tracker environment and tmux pane metadata, and appear in status/communicator views. Commands already starting with `agent-wrapper` are not wrapped again.
 
-`broccoli-comms agent-tracker <subcommand> [args...]` runs the in-repo `agent-tracker-ctl` against the Broccoli Comms private tracker/tmux sockets. This is the preferred wrapper for source-checkout usage because it does not require a globally installed `agent-tracker-ctl` on `PATH` and keeps commands pinned to the app-owned runtime.
+`broccoli-comms agent-tracker <subcommand> [args...]` runs the in-repo `agent-tracker-ctl` against the Broccoli Comms private tracker and active tmux mode. This is the preferred wrapper for source-checkout usage because it does not require a globally installed `agent-tracker-ctl` on `PATH` and keeps commands pinned to the app-owned tracker runtime.
 
 ```sh
 broccoli-comms agent-tracker --help
@@ -352,7 +353,7 @@ broccoli-comms agent-tracker registry-status
 broccoli-comms agent-tracker capture-pane agent-communicator --last 80
 ```
 
-For explicit pane control, `broccoli-comms agent-tracker send-text TARGET TEXT`, `broccoli-comms agent-tracker send-text --no-submit TARGET TEXT`, and `broccoli-comms agent-tracker send-key TARGET KEY [KEY...]` call the tracker `send_input` backend directly. These bypass inbox messages. Local bare names/UUIDs use the registered private tmux socket; remote `host/agent` targets are registry-routed only when explicitly enabled on sender, registry, and receiver (`BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED=1` or the narrower send/receive/registry env gates). Remote direct input is disabled by default and should be treated as dangerous pane control.
+For explicit pane control, `broccoli-comms agent-tracker send-text TARGET TEXT`, `broccoli-comms agent-tracker send-text --no-submit TARGET TEXT`, and `broccoli-comms agent-tracker send-key TARGET KEY [KEY...]` call the tracker `send_input` backend directly. These bypass inbox messages. Local bare names/UUIDs use the registered tmux pane/socket metadata; remote `host/agent` targets are registry-routed only when explicitly enabled on sender, registry, and receiver (`BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED=1` or the narrower send/receive/registry env gates). Remote direct input is disabled by default and should be treated as dangerous pane control.
 
 ```sh
 broccoli-comms agent-tracker send-text alice "hello"
@@ -363,7 +364,7 @@ broccoli-comms agent-tracker send-text host-a/alice "hello remotely"
 broccoli-comms agent-tracker send-key registry-a:host-a/alice Escape
 ```
 
-Remote-origin inbox delivery can optionally focus the destination pane when `BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES=1` is set. This is disabled by default; when enabled, the tracker uses only the registered/private tmux socket and treats focus as best-effort so message delivery still succeeds if focus fails.
+Remote-origin inbox delivery can optionally focus the destination pane when `BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES=1` is set. This is disabled by default; when enabled, the tracker uses only registered tmux pane/socket metadata and treats focus as best-effort so message delivery still succeeds if focus fails.
 
 ## Local registry management
 
@@ -582,7 +583,7 @@ make smoke-private-runtime
 make smoke-managed-agents
 ```
 
-The runtime test starts `broccoli-comms`, verifies the private tracker and tmux sockets/session, checks status JSON, stops the runtime, and verifies cleanup. The managed-agent test adds a harmless `sleep 60` configured agent, verifies reconciliation/no duplicates/restart/remove, and cleans up isolated temp state.
+The runtime test starts `broccoli-comms`, verifies the private tracker and active tmux mode/session, checks status JSON, stops the runtime, and verifies cleanup. The managed-agent test adds a harmless `sleep 60` configured agent, verifies reconciliation/no duplicates/restart/remove, and cleans up isolated temp state.
 
 ## Source copied from home-manager-core
 
