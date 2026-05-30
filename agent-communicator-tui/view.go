@@ -103,11 +103,8 @@ func (m model) conversationPanel(width, height int) string {
 	if m.mode == savedView {
 		composer = mutedStyle.Render("c-f unsave selected · c-n/p saved entry")
 	}
-	messageH := max(1, innerH-lineCount(title)-lineCount(composer)-2)
-	if width < 70 {
-		messageH = max(1, innerH-lineCount(title)-lineCount(composer))
-	}
-	body := title + "\n" + m.messageViewWithHeight(innerW, messageH) + "\n" + composer
+	messageH := max(1, innerH-lineCount(title)-lineCount(composer))
+	body := title + "\n" + composer + "\n" + m.messageViewWithHeight(innerW, messageH)
 
 	if width < 70 {
 		return lipgloss.NewStyle().

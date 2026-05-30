@@ -115,6 +115,20 @@ func TestViewWideAndNarrowIncludeCoreRegions(t *testing.T) {
 	}
 }
 
+func TestWideComposerSitsAtPanelTop(t *testing.T) {
+	m := model{width: 120, height: 30, rows: []agentRow{{Name: "alpha", Scope: "local"}}, messages: []tracker.Message{{Sender: "agent", Body: "hello"}}}
+	view := m.View()
+	composerIndex := strings.Index(view, "F1 /msg inbox")
+	messageIndex := strings.Index(view, "hello")
+	if composerIndex < 0 || messageIndex < 0 || composerIndex > messageIndex {
+		t.Fatalf("composer should render above messages:\n%s", view)
+	}
+	lines := strings.Split(view, "\n")
+	if len(lines) < 3 || !strings.Contains(lines[2], "┌") {
+		t.Fatalf("composer top border should be directly below the title line; line 3 = %q\n%s", lines[2], view)
+	}
+}
+
 func TestLayoutWidthsConsumeAvailableWidth(t *testing.T) {
 	m := model{width: 160}
 	left, mid, right := m.layoutWidths()

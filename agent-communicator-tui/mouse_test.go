@@ -51,25 +51,9 @@ func TestNarrowMouseClickInputModesUsesFullWidthComposer(t *testing.T) {
 }
 
 func mouseComposerTopForTest(m model) int {
-	_, midW, _ := m.layoutWidths()
-	panelW := midW
-	if m.width < 70 {
-		panelW = m.width
-	}
-	innerW := panelInnerWidth(panelW)
-	if m.width < 70 {
-		innerW = max(1, panelW-2)
-	}
-	footerH := lineCount(m.footer(max(1, m.width)))
-	bodyH := max(3, m.height-footerH)
-	innerH := panelInnerHeight(bodyH)
-	if m.width < 70 {
-		innerH = max(1, bodyH)
-	}
 	titleH := lineCount(titleStyle.Render(m.conversationTitle()))
-	composerH := lineCount(m.composerBox(innerW))
 	if m.width < 70 {
-		return titleH + max(1, innerH-titleH-composerH)
+		return titleH
 	}
-	return 1 + titleH + max(1, innerH-titleH-composerH-2) + 1
+	return 1 + titleH
 }

@@ -22,6 +22,19 @@ func TestAgentListScrollsSelectedAgentIntoView(t *testing.T) {
 	}
 }
 
+func TestAgentListScrollAccountsForGroupHeaders(t *testing.T) {
+	m := model{width: 120, height: 24}
+	for i := 0; i < 8; i++ {
+		m.rows = append(m.rows, agentRow{Name: fmt.Sprintf("agent-%02d", i), Scope: "local", Hostname: fmt.Sprintf("host-%02d", i)})
+	}
+	m.selected = 3
+	m.scrollSelectedAgentIntoView()
+	view := m.agentList(32, m.agentListVisibleLines())
+	if !strings.Contains(view, "╚") || !strings.Contains(view, "agent-03") {
+		t.Fatalf("selected grouped agent should be fully visible, offset=%d:\n%s", m.agentOffset, view)
+	}
+}
+
 func TestAgentListIsClippedToWindowHeight(t *testing.T) {
 	m := model{}
 	for i := 0; i < 8; i++ {

@@ -90,17 +90,10 @@ func (m model) mouseInputMode(x, y int) (inputMode, bool) {
 	if innerX < 0 || innerX >= innerW {
 		return inputModeMessage, false
 	}
-	footerH := lineCount(m.footer(max(1, m.width)))
-	bodyH := max(3, m.height-footerH)
-	innerH := panelInnerHeight(bodyH)
-	if m.width < 70 {
-		innerH = max(1, bodyH)
-	}
 	titleH := lineCount(titleStyle.Render(m.conversationTitle()))
-	composerH := lineCount(m.composerBox(innerW))
-	composerTop := 1 + titleH + max(1, innerH-titleH-composerH-2) + 1
+	composerTop := 1 + titleH
 	if m.width < 70 {
-		composerTop = titleH + max(1, innerH-titleH-composerH)
+		composerTop = titleH
 	}
 	if y != composerTop {
 		return inputModeMessage, false
