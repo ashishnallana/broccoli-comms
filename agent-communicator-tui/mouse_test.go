@@ -16,16 +16,20 @@ func TestMouseSelectAgentAtListLine(t *testing.T) {
 	}
 }
 
+func TestNarrowMouseClickDoesNotSelectInvisibleSidebarAgent(t *testing.T) {
+	m := model{width: 60, height: 24, selected: 0, rows: []agentRow{{Name: "alpha", Scope: "local"}, {Name: "beta", Scope: "local"}}}
+	updated, cmd := m.handleMouse(tea.MouseMsg{X: 5, Y: 8, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if cmd != nil {
+		t.Fatalf("narrow sidebar click produced command: %v", cmd)
+	}
+	if updated.(model).selected != 0 {
+		t.Fatalf("narrow click selected invisible sidebar row %d", updated.(model).selected)
+	}
+}
+
 func TestMouseClickInputModes(t *testing.T) {
 	m := model{width: 120, height: 30, rows: []agentRow{{Name: "alpha", Scope: "local"}}}
-	m.View()
-	_, midW, _ := m.layoutWidths()
-	footerH := lineCount(m.footer(max(1, m.width)))
-	bodyH := max(3, m.height-footerH)
-	innerH := panelInnerHeight(bodyH)
-	titleH := lineCount(titleStyle.Render(m.conversationTitle()))
-	composerH := lineCount(m.composerBox(panelInnerWidth(midW)))
-	y := 1 + titleH + max(1, innerH-titleH-composerH-2) + 1
+	y := mouseComposerTopForTest(m)
 	leftW, _, _ := m.layoutWidths()
 	updated, _ := m.handleMouse(tea.MouseMsg{X: leftW + 2 + 18, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	if updated.(model).inputMode != inputModeText {
@@ -35,4 +39,37 @@ func TestMouseClickInputModes(t *testing.T) {
 	if updated.(model).inputMode != inputModeBroadcast {
 		t.Fatalf("inputMode=%v want broadcast", updated.(model).inputMode)
 	}
+}
+
+func TestNarrowMouseClickInputModesUsesFullWidthComposer(t *testing.T) {
+	m := model{width: 60, height: 24, rows: []agentRow{{Name: "alpha", Scope: "local"}}}
+	y := mouseComposerTopForTest(m)
+	updated, _ := m.handleMouse(tea.MouseMsg{X: 2 + 18, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if updated.(model).inputMode != inputModeText {
+		t.Fatalf("narrow inputMode=%v want text", updated.(model).inputMode)
+	}
+}
+
+func mouseComposerTopForTest(m model) int {
+	_, midW, _ := m.layoutWidths()
+	panelW := midW
+	if m.width < 70 {
+		panelW = m.width
+	}
+	innerW := panelInnerWidth(panelW)
+	if m.width < 70 {
+		innerW = max(1, panelW-2)
+	}
+	footerH := lineCount(m.footer(max(1, m.width)))
+	bodyH := max(3, m.height-footerH)
+	innerH := panelInnerHeight(bodyH)
+	if m.width < 70 {
+		innerH = max(1, bodyH)
+	}
+	titleH := lineCount(titleStyle.Render(m.conversationTitle()))
+	composerH := lineCount(m.composerBox(innerW))
+	if m.width < 70 {
+		return titleH + max(1, innerH-titleH-composerH)
+	}
+	return 1 + titleH + max(1, innerH-titleH-composerH-2) + 1
 }

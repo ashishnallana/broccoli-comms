@@ -20,6 +20,9 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) mouseSelectAgent(x, y int) bool {
+	if m.width < 70 {
+		return false
+	}
 	leftW, _, _ := m.layoutWidths()
 	bodyH := max(3, m.height-lineCount(m.footer(max(1, m.width))))
 	if x < 0 || x >= leftW || y < 1 || y >= bodyH-1 || len(m.rows) == 0 {
@@ -73,18 +76,28 @@ func (m model) mouseInputMode(x, y int) (inputMode, bool) {
 	}
 	leftW, midW, _ := m.layoutWidths()
 	panelX := 0
+	panelW := midW
 	if m.width >= 70 {
 		panelX = leftW
+	} else {
+		panelW = m.width
 	}
 	innerX := x - panelX - 2
-	if innerX < 0 || innerX >= panelInnerWidth(midW) {
+	innerW := panelInnerWidth(panelW)
+	if m.width < 70 {
+		innerW = max(1, panelW-2)
+	}
+	if innerX < 0 || innerX >= innerW {
 		return inputModeMessage, false
 	}
 	footerH := lineCount(m.footer(max(1, m.width)))
 	bodyH := max(3, m.height-footerH)
 	innerH := panelInnerHeight(bodyH)
+	if m.width < 70 {
+		innerH = max(1, bodyH)
+	}
 	titleH := lineCount(titleStyle.Render(m.conversationTitle()))
-	composerH := lineCount(m.composerBox(panelInnerWidth(midW)))
+	composerH := lineCount(m.composerBox(innerW))
 	composerTop := 1 + titleH + max(1, innerH-titleH-composerH-2) + 1
 	if m.width < 70 {
 		composerTop = titleH + max(1, innerH-titleH-composerH)
