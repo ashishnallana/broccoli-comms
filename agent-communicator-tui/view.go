@@ -11,17 +11,6 @@ import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
-var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(palette.Sky)
-var selectedStyle = lipgloss.NewStyle().Foreground(palette.Green).Bold(true)
-var mutedStyle = lipgloss.NewStyle().Foreground(palette.Overlay0)
-var readStatusStyle = lipgloss.NewStyle().Foreground(palette.Blue)
-var shellTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(palette.Mauve)
-var sectionHeaderStyle = lipgloss.NewStyle().Foreground(palette.Subtext0).Bold(true)
-var badgeStyle = lipgloss.NewStyle().Foreground(palette.Base).Background(palette.Blue).Bold(true).Padding(0, 1)
-var modeTabStyle = lipgloss.NewStyle().Foreground(palette.Subtext0)
-var activeModeTabStyle = lipgloss.NewStyle().Foreground(palette.Base).Background(palette.Green).Bold(true).Padding(0, 1)
-var statusBarStyle = lipgloss.NewStyle().Foreground(palette.Teal)
-var errorBarStyle = lipgloss.NewStyle().Foreground(palette.Red).Bold(true)
 var composerBoxStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(palette.Surface0).Padding(0, 1)
 var panelBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(palette.Surface0).Padding(0, 1)
 var mobileComposerBoxStyle = lipgloss.NewStyle().Border(lipgloss.Border{Top: "─"}).BorderTop(true).BorderForeground(palette.Surface0).Padding(0, 0)
@@ -73,7 +62,7 @@ func (m model) sidebarView(width, height int) string {
 		return truncateLines(body, height)
 	}
 	title := shellTitleStyle.Render("Agent Communicator")
-	total, hidden := len(m.rows), len(m.rows)-m.hiddenStartIndex()
+	total, hidden := len(m.rows), m.hiddenCount()
 	header := fmt.Sprintf("Agents %d", total)
 	if hidden > 0 {
 		header = fmt.Sprintf("Agents %d · Hidden %d", total, hidden)
@@ -143,8 +132,9 @@ func (m model) conversationTitle() string {
 	if row.Name == "" {
 		return label + " · no agent selected"
 	}
-	parts := []string{label, statusDot(row.Status), modelBadge(row), row.Name}
-	if machine := rowMachineLabel(row); machine != "" {
+	view := m.agentView(row)
+	parts := []string{label, statusDot(view.Status), view.ModelBadge, view.Name}
+	if machine := view.MachineLabel; machine != "" {
 		parts = append(parts, "@ "+machine)
 	}
 	return strings.Join(parts, " ")
@@ -230,20 +220,21 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	cardWidth := max(8, width)
 	hidden := m.isHiddenAgent(row)
 	inner := max(4, cardWidth-4)
+	view := m.agentView(row)
 	unread := ""
-	if m.hasUnread(row) {
-		unread = " " + lipgloss.NewStyle().Foreground(palette.Yellow).Render("●")
+	if view.Unread {
+		unread = " " + unreadDotStyle.Render("●")
 	}
-	prefix := statusDot(row.Status) + " " + badgeStyle.Render(modelBadge(row)) + " "
+	prefix := statusDot(view.Status) + " " + badgeStyle.Render(view.ModelBadge) + " "
 	nameBudget := max(1, inner-lipgloss.Width(prefix)-lipgloss.Width(unread))
 	nameText := agentStyle(row.Name, true).Render(truncateCells(row.Name, nameBudget))
 	nameLine := prefix + nameText + unread
 	if lipgloss.Width(nameLine) > inner {
-		nameLine = truncateCells(statusDot(row.Status)+" "+modelBadge(row)+" "+row.Name, inner)
+		nameLine = truncateCells(statusDot(view.Status)+" "+view.ModelBadge+" "+view.Name, inner)
 	}
-	detailParts := []string{statusLabel(row.Status), rowMachineLabel(row)}
-	if cwd := compactCWD(row.CWD); cwd != "" {
-		detailParts = append(detailParts, cwd)
+	detailParts := []string{view.StatusLabel, view.MachineLabel}
+	if view.CWD != "" {
+		detailParts = append(detailParts, view.CWD)
 	}
 	detail := strings.Join(nonEmpty(detailParts), " · ")
 	lines := nameLine + "\n" + mutedStyle.Render(truncateCells(detail, inner))
@@ -267,74 +258,6 @@ func (m model) hiddenSeparator(width int) string {
 	text := fmt.Sprintf(" hidden / Filtered %d ", hidden)
 	lineWidth := max(0, width-lipgloss.Width(text)-2)
 	return mutedStyle.Render(strings.Repeat("─", lineWidth/2) + text + strings.Repeat("─", lineWidth-lineWidth/2))
-}
-
-func splitHost(target string) string {
-	host, _ := splitRemoteTarget(target)
-	return host
-}
-
-func (m model) agentGroupHeader(row agentRow) string {
-	scope := strings.Title(fallback(row.Scope, "local"))
-	machine := rowMachineLabel(row)
-	if machine == "" {
-		return scope
-	}
-	return scope + " · " + machine
-}
-
-func rowMachineLabel(row agentRow) string {
-	if row.Hostname != "" {
-		return shortHost(row.Hostname)
-	}
-	if host := splitHost(row.TargetAddress); host != "" {
-		return shortHost(host)
-	}
-	if row.Scope == "remote" {
-		return "remote"
-	}
-	return shortHost(localHostname())
-}
-
-func modelBadge(row agentRow) string {
-	cmd := strings.ToLower(strings.TrimSpace(row.AgentCmd))
-	switch {
-	case strings.Contains(cmd, "claude"):
-		return "Cl"
-	case strings.Contains(cmd, "codex"):
-		return "Cx"
-	case strings.Contains(cmd, "pi"):
-		return "Pi"
-	default:
-		return "??"
-	}
-}
-
-func statusDot(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "running", "active", "online", "idle", "ready":
-		return lipgloss.NewStyle().Foreground(palette.Green).Render("●")
-	case "waiting", "pending", "paused":
-		return lipgloss.NewStyle().Foreground(palette.Yellow).Render("●")
-	case "error", "failed", "stopped", "offline", "dead":
-		return lipgloss.NewStyle().Foreground(palette.Red).Render("●")
-	default:
-		return lipgloss.NewStyle().Foreground(palette.Overlay0).Render("●")
-	}
-}
-
-func statusLabel(status string) string {
-	return fallback(strings.TrimSpace(status), "unknown")
-}
-
-func nonEmpty(values []string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			out = append(out, value)
-		}
-	}
-	return out
 }
 
 func compactCWD(cwd string) string {
@@ -383,7 +306,7 @@ func (m model) agentList(width, height int) string {
 			b.WriteString(m.hiddenSeparator(width) + "\n")
 			lastGroup = ""
 		}
-		group := m.agentGroupHeader(m.rows[i])
+		group := m.agentView(m.rows[i]).GroupHeader
 		if group != "" && group != lastGroup {
 			if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
 				b.WriteString("\n")

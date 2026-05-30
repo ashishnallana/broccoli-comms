@@ -6,6 +6,36 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+var titleStyle = lipgloss.NewStyle().Bold(true).Foreground(palette.Sky)
+var selectedStyle = lipgloss.NewStyle().Foreground(palette.Green).Bold(true)
+var mutedStyle = lipgloss.NewStyle().Foreground(palette.Overlay0)
+var readStatusStyle = lipgloss.NewStyle().Foreground(palette.Blue)
+var shellTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(palette.Mauve)
+var sectionHeaderStyle = lipgloss.NewStyle().Foreground(palette.Subtext0).Bold(true)
+var badgeStyle = lipgloss.NewStyle().Foreground(palette.Base).Background(palette.Blue).Bold(true).Padding(0, 1)
+var modeTabStyle = lipgloss.NewStyle().Foreground(palette.Subtext0)
+var activeModeTabStyle = lipgloss.NewStyle().Foreground(palette.Base).Background(palette.Green).Bold(true).Padding(0, 1)
+var statusBarStyle = lipgloss.NewStyle().Foreground(palette.Teal)
+var errorBarStyle = lipgloss.NewStyle().Foreground(palette.Red).Bold(true)
+var unreadDotStyle = lipgloss.NewStyle().Foreground(palette.Yellow)
+
+func statusDot(status string) string {
+	return statusDotStyle(status).Render("●")
+}
+
+func statusDotStyle(status string) lipgloss.Style {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "active", "online", "idle", "ready":
+		return lipgloss.NewStyle().Foreground(palette.Green)
+	case "waiting", "pending", "paused":
+		return lipgloss.NewStyle().Foreground(palette.Yellow)
+	case "error", "failed", "stopped", "offline", "dead":
+		return lipgloss.NewStyle().Foreground(palette.Red)
+	default:
+		return lipgloss.NewStyle().Foreground(palette.Overlay0)
+	}
+}
+
 func senderColorKey(sender string) string {
 	if strings.Contains(sender, "→") {
 		return strings.TrimSpace(strings.SplitN(sender, "→", 2)[0])
