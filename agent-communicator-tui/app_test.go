@@ -28,8 +28,14 @@ type fakeLocal struct {
 	directTarget string
 	directErr    error
 	events       tracker.WaitEventsResult
+	ensureName   string
+	ensureErr    error
 }
 
+func (f *fakeLocal) EnsureMailbox(_ context.Context, agentName string) (tracker.EnsureMailboxResult, error) {
+	f.ensureName = agentName
+	return tracker.EnsureMailboxResult{Name: agentName, AgentID: "mailbox-id", UUID: "mailbox-id"}, f.ensureErr
+}
 func (f *fakeLocal) List(context.Context) (map[string]tracker.Agent, error) { return f.agents, nil }
 func (f *fakeLocal) ReadInbox(_ context.Context, _ string, limit int, _ bool) (tracker.ReadInboxResult, error) {
 	f.lastLimit = limit
@@ -654,5 +660,56 @@ func TestCtrlXPaneCaptureTriggersAsyncCaptureAndClears(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatal("clearPaneCaptureStatusTick should return nil command")
+	}
+}
+
+func TestInitEnsuresMailboxBeforeInitialLoads(t *testing.T) {
+	local := &fakeLocal{}
+	m := newModel(local, "agent-communicator")
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init returned nil command")
+	}
+	msg := cmd()
+	ensured, ok := msg.(mailboxEnsured)
+	if !ok || ensured.Err != nil {
+		t.Fatalf("Init msg = %#v", msg)
+	}
+	if local.ensureName != "agent-communicator" {
+		t.Fatalf("ensureName = %q", local.ensureName)
+	}
+}
+
+func TestMailboxEnsuredStartsInitialLoads(t *testing.T) {
+	m := model{ownName: "agent-communicator", local: &fakeLocal{}}
+	updated, cmd := m.Update(mailboxEnsured{})
+	m = updated.(model)
+	if m.err != nil || m.retryOperation != "" || cmd == nil {
+		t.Fatalf("model err=%v retry=%q cmd=%v", m.err, m.retryOperation, cmd)
+	}
+}
+
+func TestRetryKeyRetriesMailboxFailure(t *testing.T) {
+	local := &fakeLocal{}
+	m := model{ownName: "agent-communicator", local: local, err: errors.New("boom"), retryOperation: "mailbox"}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	m = updated.(model)
+	if cmd == nil {
+		t.Fatal("retry key returned nil command")
+	}
+	msg := cmd()
+	if _, ok := msg.(mailboxEnsured); !ok {
+		t.Fatalf("retry msg = %#v", msg)
+	}
+	if string(m.composer) != "" || local.ensureName != "agent-communicator" {
+		t.Fatalf("composer=%q ensureName=%q", string(m.composer), local.ensureName)
+	}
+}
+
+func TestFooterShowsRetryHintForError(t *testing.T) {
+	m := model{err: errors.New("boom"), retryOperation: "agents"}
+	footer := m.footer(120)
+	if !strings.Contains(footer, "error · boom · r retry") {
+		t.Fatalf("footer missing retry hint: %q", footer)
 	}
 }

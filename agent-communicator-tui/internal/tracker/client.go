@@ -32,8 +32,28 @@ type rpcResponse struct {
 }
 
 type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+type RPCErrorData struct {
+	ErrorCode string `json:"error_code,omitempty"`
+	Agent     string `json:"agent,omitempty"`
+	Hostname  string `json:"hostname,omitempty"`
+	Operation string `json:"operation,omitempty"`
+	Retryable bool   `json:"retryable,omitempty"`
+}
+
+type RPCError struct {
+	Method  string
+	Code    int
+	Message string
+	Data    *RPCErrorData
+}
+
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("tracker rpc %s failed: %s", e.Method, e.Message)
 }
 
 func DefaultSocketPath() string {
@@ -112,12 +132,25 @@ func (c *Client) call(ctx context.Context, method string, params any, timeout ti
 		return err
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("tracker rpc %s failed: %s", method, resp.Error.Message)
+		rpcErr := &RPCError{Method: method, Code: resp.Error.Code, Message: resp.Error.Message}
+		if len(resp.Error.Data) > 0 {
+			var data RPCErrorData
+			if err := json.Unmarshal(resp.Error.Data, &data); err == nil {
+				rpcErr.Data = &data
+			}
+		}
+		return rpcErr
 	}
 	if out == nil {
 		return nil
 	}
 	return json.Unmarshal(resp.Result, out)
+}
+
+func (c *Client) EnsureMailbox(ctx context.Context, agentName string) (EnsureMailboxResult, error) {
+	var result EnsureMailboxResult
+	err := c.call(ctx, "ensure_mailbox", map[string]any{"agent_name": agentName, "preserve_pane": true}, 5*time.Second, &result)
+	return result, err
 }
 
 func (c *Client) List(ctx context.Context) (map[string]Agent, error) {

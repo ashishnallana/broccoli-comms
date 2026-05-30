@@ -172,7 +172,7 @@ func (m model) footer(width int) string {
 		lines = append([]string{statusLine}, lines...)
 	}
 	if m.err != nil {
-		lines = append(lines, errorBarStyle.Render("error · "+m.err.Error()))
+		lines = append(lines, errorBarStyle.Render(m.errorStatusLine()))
 	}
 	for i, text := range lines {
 		if lipgloss.Width(text) > width {
@@ -180,6 +180,25 @@ func (m model) footer(width int) string {
 		}
 	}
 	return mutedStyle.Render(strings.Join(lines, "\n"))
+}
+
+func (m model) errorStatusLine() string {
+	text := "error · " + m.err.Error()
+	if rpcErr, ok := m.err.(*tracker.RPCError); ok && rpcErr.Data != nil {
+		parts := []string{"error"}
+		if rpcErr.Data.Operation != "" {
+			parts = append(parts, rpcErr.Data.Operation)
+		}
+		if rpcErr.Data.Agent != "" {
+			parts = append(parts, rpcErr.Data.Agent)
+		}
+		parts = append(parts, rpcErr.Message)
+		text = strings.Join(parts, " · ")
+	}
+	if m.retryOperation != "" {
+		text += " · r retry"
+	}
+	return text
 }
 
 func (m model) runtimeStatusLine() string {

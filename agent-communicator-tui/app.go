@@ -75,6 +75,7 @@ type model struct {
 	paneCaptureStatus    string
 	directInputStatus    string
 	directInputStatusErr bool
+	retryOperation       string
 }
 
 func runtimeInfoFromEnv() runtimeInfo {
@@ -121,6 +122,10 @@ func newModel(local localClient, ownName string) model {
 	}
 }
 func (m model) Init() tea.Cmd {
+	return ensureMailboxCmd(m.local, m.ownName)
+}
+
+func initialLoadCmds(m model) tea.Cmd {
 	return tea.Batch(
 		loadAgents(m.local),
 		loadOutboxCmd(),
@@ -331,6 +336,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, openMessageInEditor(messages[m.messageSelected])
 			}
 		case tea.KeyRunes:
+			if len(msg.Runes) == 1 && msg.Runes[0] == 'r' && len(m.composer) == 0 && m.err != nil && m.retryOperation != "" {
+				return m, m.retryCurrentOperation()
+			}
 			m.messageFocused = false
 			m.composer = append(m.composer, msg.Runes...)
 			m.messageOffset = 0
@@ -379,13 +387,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case retryEvents:
 		return m, waitEvents(m.local, m.eventSeq)
+	case mailboxEnsured:
+		m.err = msg.Err
+		if msg.Err != nil {
+			m.retryOperation = "mailbox"
+			break
+		}
+		m.retryOperation = ""
+		return m, initialLoadCmds(m)
 	case agentsLoaded:
 		m.agentListLoading = false
 		m.err = msg.Err
 		if msg.Err != nil {
+			m.retryOperation = "agents"
 			m.agentListStale = true
 			break
 		}
+		m.retryOperation = ""
 		m.agentListStale = false
 		preserveKey := conversationKey(m.currentRow())
 		m.rows = filterOwnAgent(msg.Rows, m.ownName)
@@ -403,16 +421,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case inboxLoaded:
 		if msg.Err != nil {
 			m.err = msg.Err
+			m.retryOperation = "inbox"
 		} else {
 			m.err = nil
+			m.retryOperation = ""
 			m.messages = m.mergeSentMessages(m.currentRow(), msg.Messages)
 			m.selectLatestMessage()
 		}
 	case allInboxLoaded:
 		if msg.Err != nil {
 			m.err = msg.Err
+			m.retryOperation = "all_inbox"
 		} else {
 			m.err = nil
+			m.retryOperation = ""
 			m.allMessages = m.mergeAllMessages(msg.Messages)
 			m.selectLatestMessage()
 		}
@@ -522,6 +544,21 @@ func (m model) currentRow() agentRow {
 
 func (m model) canSendCurrent() bool {
 	return len(m.rows) > 0 && !m.agentListStale
+}
+
+func (m model) retryCurrentOperation() tea.Cmd {
+	switch m.retryOperation {
+	case "mailbox":
+		return ensureMailboxCmd(m.local, m.ownName)
+	case "agents":
+		return loadAgents(m.local)
+	case "inbox":
+		return m.reloadMessages()
+	case "all_inbox":
+		return loadAllInbox(m.local, m.ownName)
+	default:
+		return nil
+	}
 }
 
 func (m *model) selectLatestMessage() {

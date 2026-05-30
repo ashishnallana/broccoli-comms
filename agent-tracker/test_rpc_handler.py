@@ -86,6 +86,14 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual(result["agent1"]["target_address"], "agent1")
         self.assertEqual(result["agent1"]["model_type"], "codex")
 
+    def test_get_inbox_missing_agent_has_structured_error_data(self):
+        with self.assertRaises(rpc_handler.RPCStructuredError) as ctx:
+            rpc_handler.handle_get_inbox({"agent_name": "missing"})
+        self.assertEqual(ctx.exception.code, -32004)
+        self.assertEqual(ctx.exception.data["error_code"], "agent_not_found")
+        self.assertEqual(ctx.exception.data["operation"], "get_inbox")
+        self.assertTrue(ctx.exception.data["retryable"])
+
     @mock.patch("tmux_util.set_pane_title")
     @mock.patch("tmux_util.set_agent_no_registry")
     @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")
@@ -717,6 +725,27 @@ class TestRpcHandler(unittest.TestCase):
         self.assertIsNone(info.get("pid"))
         with self.assertRaisesRegex(RuntimeError, "no registered tmux pane"):
             rpc_handler.handle_send_input({"agent_name": "agent-communicator", "input_type": "text", "text": "unsafe"})
+
+    def test_ensure_mailbox_can_preserve_existing_pane_metadata(self):
+        state.set_agent("agent-communicator", {
+            "agent_id": "ui-id",
+            "uuid": "ui-id",
+            "session": "old-session",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "wrapper_pid": 123,
+            "pid": 456,
+            "no_registry": False,
+        })
+        rpc_handler.handle_ensure_mailbox({"agent_name": "agent-communicator", "preserve_pane": True})
+        info = state.get_agent("agent-communicator")
+        self.assertEqual(info.get("session"), "old-session")
+        self.assertEqual(info.get("tmux_pane"), "%1")
+        self.assertEqual(info.get("tmux_socket"), "sock")
+        self.assertEqual(info.get("wrapper_pid"), 123)
+        self.assertEqual(info.get("pid"), 456)
+        self.assertFalse(info.get("no_registry"))
+        self.assertTrue(info.get("is_mailbox"))
 
     def test_ensure_mailbox_rejects_remote_names(self):
         with self.assertRaises(ValueError):

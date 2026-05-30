@@ -64,6 +64,13 @@ class CursorExpiredError(ValueError):
     pass
 
 
+class RPCStructuredError(ValueError):
+    def __init__(self, message: str, data: dict, code: int = -32602):
+        super().__init__(message)
+        self.code = code
+        self.data = data
+
+
 def _utc_now_isoformat() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -300,13 +307,17 @@ def handle_ensure_mailbox(params: dict) -> dict:
         agent_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{registry_client.TRACKER_ID}:mailbox:{name}"))
 
     existing = state.get_agent(name) or {}
+    preserve_pane = bool(params.get("preserve_pane", False)) and bool(existing.get("tmux_pane"))
+    pane_fields = {
+        "session": existing.get("session") if preserve_pane else None,
+        "tmux_pane": existing.get("tmux_pane") if preserve_pane else None,
+        "wrapper_pid": existing.get("wrapper_pid") if preserve_pane else None,
+        "tmux_socket": existing.get("tmux_socket") if preserve_pane else None,
+        "pid": existing.get("pid") if preserve_pane else None,
+    }
     state.set_agent(name, {
         **existing,
-        "session": None,
-        "tmux_pane": None,
-        "wrapper_pid": None,
-        "tmux_socket": None,
-        "pid": None,
+        **pane_fields,
         "status": existing.get("status", "idle"),
         "waiting_approval": existing.get("waiting_approval", False),
         "agent_id": existing.get("agent_id") or agent_id,
@@ -315,7 +326,7 @@ def handle_ensure_mailbox(params: dict) -> dict:
         "agent_cmd": existing.get("agent_cmd", "agent-communicator-electron"),
         "model_type": state.normalize_model_type(existing.get("model_type"), existing.get("agent_type", "agent-communicator-ui"), existing.get("agent_cmd", "agent-communicator-electron")),
         "no_notify_with_send_keys": True,
-        "no_registry": params.get("no_registry", True),
+        "no_registry": existing.get("no_registry", params.get("no_registry", True)) if preserve_pane else params.get("no_registry", True),
         "cwd": params.get("cwd") or existing.get("cwd"),
         "last_heartbeat": time.time(),
         "recovered_at": None,
@@ -984,11 +995,21 @@ def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
             
     agent_name = _identify_agent(params, caller_pid)
     if not agent_name:
-        raise ValueError("Agent not identified. Provide agent_name or run from an agent pane.")
+        raise RPCStructuredError("Agent not identified. Provide agent_name or run from an agent pane.", {
+            "error_code": "agent_not_identified",
+            "operation": "get_inbox",
+            "retryable": True,
+        })
         
     info = state.get_agent(agent_name)
     if not info:
-        raise ValueError(f"Agent '{agent_name}' not found")
+        raise RPCStructuredError(f"Agent '{agent_name}' not found", {
+            "error_code": "agent_not_found",
+            "agent": agent_name,
+            "hostname": registry_client.HOSTNAME,
+            "operation": "get_inbox",
+            "retryable": True,
+        }, code=-32004)
         
     uuid_str = info.get("uuid") or agent_name
     inbox_file = os.path.join(state.INBOX_DIR, f"{uuid_str}.inbox")
@@ -1387,6 +1408,8 @@ def handle_client(conn: socket.socket) -> None:
                     result = handler(params)
             except CursorExpiredError as e:
                 error = {"code": -32001, "message": "cursor_expired"}
+            except RPCStructuredError as e:
+                error = {"code": e.code, "message": str(e), "data": e.data}
             except ValueError as e:
                 error = {"code": -32602, "message": str(e)}
             except RuntimeError as e:

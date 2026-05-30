@@ -16,6 +16,7 @@ import (
 )
 
 type localClient interface {
+	EnsureMailbox(context.Context, string) (tracker.EnsureMailboxResult, error)
 	List(context.Context) (map[string]tracker.Agent, error)
 	ReadInbox(context.Context, string, int, bool) (tracker.ReadInboxResult, error)
 	SendMessage(context.Context, string, string, []tracker.Attachment) error
@@ -32,6 +33,8 @@ type messageIDSender interface {
 }
 
 type agentRow struct{ Name, Scope, Status, CWD, TargetAddress, Hostname, AgentName, TmuxPane, AgentCmd, AgentID, TrackerID, RegistryName, ModelType string }
+type mailboxEnsured struct{ Err error }
+
 type agentsLoaded struct {
 	Rows []agentRow
 	Err  error
@@ -117,6 +120,18 @@ func loadPromptTemplates(dir string) ([]promptTemplate, error) {
 	}
 	sort.Slice(prompts, func(i, j int) bool { return prompts[i].Name < prompts[j].Name })
 	return prompts, nil
+}
+
+func ensureMailboxCmd(local localClient, ownName string) tea.Cmd {
+	return func() tea.Msg {
+		if local == nil || strings.TrimSpace(ownName) == "" {
+			return mailboxEnsured{}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := local.EnsureMailbox(ctx, ownName)
+		return mailboxEnsured{Err: err}
+	}
 }
 
 func loadInbox(local localClient, inboxOwner string, row agentRow) tea.Cmd {

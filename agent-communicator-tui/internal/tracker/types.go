@@ -73,6 +73,12 @@ type SendResult struct {
 	Warning string `json:"warning,omitempty"`
 }
 
+type EnsureMailboxResult struct {
+	Name    string `json:"name"`
+	AgentID string `json:"agent_id"`
+	UUID    string `json:"uuid"`
+}
+
 type WaitOptions struct {
 	Since           int64
 	Timeout         time.Duration

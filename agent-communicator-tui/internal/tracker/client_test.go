@@ -201,3 +201,70 @@ func TestCallHonorsContextCancellationAfterDial(t *testing.T) {
 		t.Fatal("SendMessage succeeded, want context cancellation error")
 	}
 }
+
+func fakeErrorClient(t *testing.T, method string, rpcErr map[string]any) *Client {
+	t.Helper()
+	return &Client{
+		SocketPath: "fake.sock",
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			client, server := net.Pipe()
+			go func() {
+				defer server.Close()
+				var req rpcRequest
+				if err := json.NewDecoder(server).Decode(&req); err != nil {
+					return
+				}
+				if req.Method != method {
+					t.Errorf("method = %s, want %s", req.Method, method)
+				}
+				_ = json.NewEncoder(server).Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req.ID,
+					"error":   rpcErr,
+				})
+			}()
+			return client, nil
+		},
+	}
+}
+
+func TestEnsureMailboxCallsRPC(t *testing.T) {
+	client := fakeClient(t, func(req rpcRequest) any {
+		if req.Method != "ensure_mailbox" {
+			t.Fatalf("method = %s, want ensure_mailbox", req.Method)
+		}
+		params := req.Params.(map[string]any)
+		if params["agent_name"] != "agent-communicator" || params["preserve_pane"] != true {
+			t.Fatalf("params = %+v", params)
+		}
+		return EnsureMailboxResult{Name: "agent-communicator", AgentID: "id-1", UUID: "id-1"}
+	})
+	result, err := client.EnsureMailbox(context.Background(), "agent-communicator")
+	if err != nil || result.AgentID != "id-1" {
+		t.Fatalf("EnsureMailbox = %+v, %v", result, err)
+	}
+}
+
+func TestRPCErrorPreservesRawStringAndStructuredData(t *testing.T) {
+	client := fakeErrorClient(t, "get_inbox", map[string]any{
+		"code":    -32004,
+		"message": "Agent 'agent-communicator' not found",
+		"data": map[string]any{
+			"error_code": "agent_not_found",
+			"agent":      "agent-communicator",
+			"operation":  "get_inbox",
+			"retryable":  true,
+		},
+	})
+	_, err := client.ReadInbox(context.Background(), "agent-communicator", 5, false)
+	if err == nil {
+		t.Fatal("ReadInbox succeeded, want error")
+	}
+	if err.Error() != "tracker rpc get_inbox failed: Agent 'agent-communicator' not found" {
+		t.Fatalf("error string = %q", err.Error())
+	}
+	rpcErr, ok := err.(*RPCError)
+	if !ok || rpcErr.Data == nil || rpcErr.Data.ErrorCode != "agent_not_found" || !rpcErr.Data.Retryable {
+		t.Fatalf("rpc error = %#v", err)
+	}
+}
