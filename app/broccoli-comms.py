@@ -168,6 +168,10 @@ def tracker_script() -> str:
     return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER") or str(repo_root() / "agent-tracker" / "agent-tracker.py")
 
 
+def tracker_ctl_script() -> str:
+    return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER_CTL") or str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py")
+
+
 def wrapper_path() -> str:
     return os.environ.get("BROCCOLI_COMMS_AGENT_WRAPPER") or str(repo_root() / "wrapper" / "agent-wrapper.sh")
 
@@ -1498,9 +1502,9 @@ def agent_tracker(args: argparse.Namespace) -> None:
     """Run the in-repo agent-tracker-ctl against Broccoli Comms private sockets."""
     ensure_tracker()
     ensure_tmux()
-    ctl = repo_root() / "agent-tracker" / "agent-tracker-ctl.py"
+    ctl = tracker_ctl_script()
     tracker_args = list(getattr(args, "tracker_args", None) or ["--help"])
-    os.execvpe(sys.executable, [sys.executable, str(ctl), *tracker_args], base_env())
+    os.execvpe(sys.executable, [sys.executable, ctl, *tracker_args], base_env())
 
 
 def doctor(args: argparse.Namespace) -> None:
