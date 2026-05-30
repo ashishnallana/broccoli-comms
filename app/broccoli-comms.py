@@ -661,6 +661,9 @@ def track(args: argparse.Namespace) -> None:
 
     ensure_tracker()
     env = base_env()
+    if os.environ.get("TMUX"):
+        env.pop("AGENT_TRACKER_TMUX_SOCKET", None)
+        env.pop("BROCCOLI_COMMS_TMUX_SOCKET", None)
     for key in ("TMUX", "TMUX_PANE"):
         if key in os.environ:
             env[key] = os.environ[key]
