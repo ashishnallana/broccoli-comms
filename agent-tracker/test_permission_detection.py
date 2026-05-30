@@ -32,7 +32,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
         cfg = permission_detection.load_detection_config()
         self.assertFalse(cfg.enabled)
 
-    def test_config_clamps_capture_lines_to_five(self):
+    def test_config_clamps_capture_lines_to_ten(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "detection.json"
             path.write_text(json.dumps({
@@ -47,12 +47,12 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             os.environ[permission_detection.CONFIG_ENV] = str(path)
             cfg = permission_detection.load_detection_config()
             self.assertTrue(cfg.agents["claude-1"].enabled)
-            self.assertEqual(cfg.agents["claude-1"].capture_lines, 5)
+            self.assertEqual(cfg.agents["claude-1"].capture_lines, 10)
 
     def test_detect_requires_configured_keyword_count(self):
         cfg = permission_detection.AgentDetectionConfig(
             enabled=True,
-            capture_lines=5,
+            capture_lines=10,
             scan_interval_seconds=1,
             notify_cooldown_seconds=300,
             keyword_matches_required=2,
@@ -69,7 +69,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             cfg,
         )
         self.assertIsNotNone(hit)
-        self.assertEqual(hit.capture_lines, 5)
+        self.assertEqual(hit.capture_lines, 10)
         self.assertEqual(hit.matched_keywords, ("wants to use bash", "do you want to allow"))
 
     def test_notification_does_not_recreate_existing_communicator(self):
@@ -89,7 +89,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             agent_name="claude-1",
             agent_id="a1",
             pane_id="%1",
-            capture_lines=5,
+            capture_lines=10,
             matched_keywords=("allow",),
             excerpt="allow?",
             fingerprint="fp",
@@ -118,7 +118,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             agent_name="claude-1",
             agent_id="a1",
             pane_id="%1",
-            capture_lines=5,
+            capture_lines=10,
             matched_keywords=("allow",),
             excerpt="allow?",
             fingerprint="fp",
@@ -129,6 +129,33 @@ class PermissionDetectionConfigTests(unittest.TestCase):
         self.assertEqual(calls[0], ("ensure", {"agent_name": "agent-communicator"}))
         self.assertEqual(calls[1][0], "send")
 
+    def test_real_claude_approval_prompt_is_detected(self):
+        cfg = permission_detection.AgentDetectionConfig(
+            enabled=True,
+            capture_lines=10,
+            scan_interval_seconds=1,
+            notify_cooldown_seconds=300,
+            keyword_matches_required=2,
+            max_excerpt_chars=2000,
+            keywords=("bash command", "requires approval", "do you want to proceed"),
+        )
+        prompt = """─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   agent-tracker-ctl send-message agent-communicator "Acknowledged. Hi! I'm Claude Code, working in the
+   nix-config repository. How can I help you?"
+   Acknowledge and reply to agent-communicator
+
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: agent-tracker-ctl send-message *
+   3. No"""
+        hit = permission_detection.detect_blocking_prompt("claude-1", {"agent_id": "a1", "tmux_pane": "%1"}, prompt, cfg)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.matched_keywords, ("bash command", "requires approval", "do you want to proceed"))
+
     def test_monitor_sends_notification_once_with_cooldown(self):
         cfg = permission_detection.DetectionConfig(
             enabled=True,
@@ -138,7 +165,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             agents={
                 "claude-1": permission_detection.AgentDetectionConfig(
                     enabled=True,
-                    capture_lines=5,
+                    capture_lines=10,
                     scan_interval_seconds=1,
                     notify_cooldown_seconds=300,
                     keyword_matches_required=2,

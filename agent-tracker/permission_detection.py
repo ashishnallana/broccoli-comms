@@ -18,8 +18,8 @@ from typing import Any
 import state
 import tmux_util
 
-DEFAULT_CAPTURE_LINES = 5
-MAX_CAPTURE_LINES = 5
+DEFAULT_CAPTURE_LINES = 10
+MAX_CAPTURE_LINES = 10
 DEFAULT_SCAN_INTERVAL_SECONDS = 5.0
 DEFAULT_NOTIFY_COOLDOWN_SECONDS = 300.0
 DEFAULT_NOTIFY_TARGET = "agent-communicator"
@@ -333,7 +333,7 @@ _SAMPLE_CONFIG = {
     "notify_target": "agent-communicator",
     "default": {
         "enabled": False,
-        "capture_lines": 5,
+        "capture_lines": 10,
         "scan_interval_seconds": 5,
         "notify_cooldown_seconds": 300,
         "keyword_matches_required": 2,
@@ -342,15 +342,15 @@ _SAMPLE_CONFIG = {
     "agents": {
         "claude-1": {
             "enabled": True,
-            "capture_lines": 5,
+            "capture_lines": 10,
             "scan_interval_seconds": 3,
             "notify_cooldown_seconds": 300,
             "keyword_matches_required": 2,
-            "keywords": ["wants to use bash", "do you want to allow", "allow this command", "yes", "no"],
+            "keywords": ["bash command", "requires approval", "do you want to proceed", "wants to use bash", "do you want to allow", "allow this command"],
         },
         "codex-1": {
             "enabled": True,
-            "capture_lines": 5,
+            "capture_lines": 10,
             "scan_interval_seconds": 3,
             "notify_cooldown_seconds": 300,
             "keyword_matches_required": 2,
