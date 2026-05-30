@@ -261,6 +261,59 @@ broccoli-comms attach
 
 `start` reconciles configured agents into private tmux windows, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker/tmux socket environment.
 
+### Agent-tracker saved agent templates
+
+Broccoli Comms managed agents live in `$XDG_CONFIG_HOME/broccoli-comms/config.json` and are controlled with `broccoli-comms agent ...`. The lower-level agent tracker also supports saved agent templates under:
+
+```text
+~/.config/agent-tracker/agents/<template-name>/config.json
+```
+
+These templates are useful for tracker/registry workflows that need a named saved agent configuration. Each template contains the working directory, agent command, optional command arguments, and a human-readable description.
+
+Example: create a `broccoli-comms` Pi-agent template for this repository:
+
+```sh
+mkdir -p ~/.config/agent-tracker/agents/broccoli-comms
+cat > ~/.config/agent-tracker/agents/broccoli-comms/config.json <<'JSON'
+{
+  "directory": "/home/tanmay/projects/nix/broccoli-comms",
+  "agent-command": "pi",
+  "agent-args": [],
+  "description": "Pi agent for the broccoli-comms repository"
+}
+JSON
+```
+
+Generic template shape:
+
+```json
+{
+  "directory": "/absolute/path/to/project",
+  "agent-command": "pi",
+  "agent-args": [],
+  "description": "Friendly description shown to humans"
+}
+```
+
+For command arguments, split them into `agent-args` instead of appending them to `agent-command`:
+
+```json
+{
+  "directory": "/home/user/project",
+  "agent-command": "pi",
+  "agent-args": ["--model", "gemini-2.5-pro"],
+  "description": "Pi agent for /home/user/project"
+}
+```
+
+To verify saved templates:
+
+```sh
+find ~/.config/agent-tracker/agents -maxdepth 2 -name config.json -print
+python3 -m json.tool ~/.config/agent-tracker/agents/broccoli-comms/config.json
+```
+
 `open` / `ui` launches `agent-communicator` as a wrapped frontend in the private tmux session and attaches to it, with `AGENT_TRACKER_SOCKET` and private tmux socket variables set to the app-owned runtime. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views work without depending on the user's tmux or tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
 
 Agent Communicator key highlights:
