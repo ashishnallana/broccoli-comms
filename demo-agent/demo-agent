@@ -1,0 +1,559 @@
+#!/usr/bin/env python3
+"""Deterministic no-AI Broccoli Comms demo agent.
+
+The agent polls its local Broccoli Comms tracker inbox over the Unix socket in
+AGENT_TRACKER_SOCKET and replies via:
+
+    broccoli-comms agent-tracker send-message <target> <message>
+
+Inbox text is always treated as untrusted data. It is matched only against a
+small scripted command table; it is never executed, parsed as a shell command,
+or used as a file path/URL/plugin/template.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import socket  # Unix-domain socket only, for local tracker JSON-RPC.
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Any
+
+SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+TASK_ID_RE = re.compile(r"^task-[0-9]{3,6}$")
+REVIEW_RESULT_RE = re.compile(r"^review-result\s+(approved|blocked)\s+([A-Za-z0-9_.-]+)\b", re.I)
+REVIEW_REQUEST_RE = re.compile(r"^please review scripted feature from demo-coder\b.*\btask_id=([A-Za-z0-9_.-]+)\b", re.I)
+IMPLEMENT_REQUEST_RE = re.compile(r"^please implement scripted feature\b", re.I)
+MAX_INBOUND_LEN = 4000
+MAX_OUTBOUND_LEN = 2000
+MAX_OUTBOUND_PER_INBOX_MESSAGE = 5
+MAX_PROCESSED_KEYS = 500
+MAX_TASKS = 100
+running = True
+
+
+def log(message: str) -> None:
+    print(f"[demo-agent] {message}", flush=True)
+
+
+def preview(value: str, limit: int = 100) -> str:
+    one_line = " ".join((value or "").split())
+    return one_line if len(one_line) <= limit else one_line[: limit - 1] + "…"
+
+
+def is_safe_local_name(value: str | None) -> bool:
+    if not value or value in {".", ".."}:
+        return False
+    return bool(SAFE_NAME_RE.fullmatch(value))
+
+
+def validate_local_name(value: str, label: str) -> str:
+    if not is_safe_local_name(value):
+        raise SystemExit(f"Invalid {label} {value!r}: expected local name matching {SAFE_NAME_RE.pattern}")
+    return value
+
+
+def infer_role(name: str | None) -> str:
+    lowered = (name or "").lower()
+    if any(token in lowered for token in ("coder", "implementer", "dev")):
+        return "coder"
+    if "reviewer" in lowered or "review" in lowered:
+        return "reviewer"
+    if "planner" in lowered or "lead" in lowered:
+        return "planner"
+    return "generic"
+
+
+def normalize_message(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def path_is_under(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def broccoli_roots() -> list[Path]:
+    roots: list[Path] = []
+    for env_name in ("BROCCOLI_COMMS_CACHE_DIR", "BROCCOLI_COMMS_RUNTIME_DIR"):
+        value = os.environ.get(env_name)
+        if value:
+            roots.append(Path(value).expanduser().resolve())
+    if not roots:
+        xdg_cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+        roots.append((xdg_cache / "broccoli-comms").expanduser().resolve())
+    return roots
+
+
+def choose_state_dir(raw_state_dir: str | None, agent_key: str) -> Path:
+    roots = broccoli_roots()
+    if raw_state_dir:
+        state_dir = Path(raw_state_dir).expanduser().resolve()
+        if not any(path_is_under(state_dir, root) for root in roots):
+            allowed = ", ".join(str(root) for root in roots)
+            raise SystemExit(f"--state-dir must resolve under Broccoli runtime/cache dir: {allowed}")
+    else:
+        state_dir = (roots[0] / "demo-agent" / agent_key).resolve()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir
+
+
+class DemoState:
+    def __init__(self, state_dir: Path) -> None:
+        self.state_dir = state_dir
+        self.path = state_dir / "state.json"
+        self.data: dict[str, Any] = {
+            "processed_message_keys": [],
+            "tasks": {},
+            "task_counter": 0,
+            "role_state": "idle",
+        }
+        self.load()
+
+    def load(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            loaded = json.loads(self.path.read_text())
+        except (OSError, json.JSONDecodeError):
+            log("state file unreadable; starting with empty demo state")
+            return
+        if isinstance(loaded, dict):
+            self.data.update({
+                "processed_message_keys": list(loaded.get("processed_message_keys") or [])[-MAX_PROCESSED_KEYS:],
+                "tasks": dict(loaded.get("tasks") or {}),
+                "task_counter": int(loaded.get("task_counter") or 0),
+                "role_state": str(loaded.get("role_state") or "idle"),
+            })
+            self._bound_tasks()
+
+    def save(self) -> None:
+        self._bound_tasks()
+        self.data["processed_message_keys"] = list(self.data.get("processed_message_keys") or [])[-MAX_PROCESSED_KEYS:]
+        fd, tmp_name = tempfile.mkstemp(prefix="state.", suffix=".tmp", dir=str(self.state_dir))
+        try:
+            with os.fdopen(fd, "w") as handle:
+                json.dump(self.data, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, self.path)
+        finally:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+
+    def _bound_tasks(self) -> None:
+        tasks = self.data.setdefault("tasks", {})
+        if len(tasks) <= MAX_TASKS:
+            return
+        for key in list(tasks.keys())[: len(tasks) - MAX_TASKS]:
+            tasks.pop(key, None)
+
+    def processed(self, key: str) -> bool:
+        return key in set(self.data.get("processed_message_keys") or [])
+
+    def mark_processed(self, key: str) -> None:
+        keys = list(self.data.setdefault("processed_message_keys", []))
+        keys.append(key)
+        self.data["processed_message_keys"] = keys[-MAX_PROCESSED_KEYS:]
+
+    def reset(self) -> None:
+        self.data = {
+            "processed_message_keys": [],
+            "tasks": {},
+            "task_counter": 0,
+            "role_state": "idle",
+        }
+
+    def next_task_id(self, origin_sender: str, status: str = "awaiting_review") -> str:
+        counter = int(self.data.get("task_counter") or 0) + 1
+        self.data["task_counter"] = counter
+        task_id = f"task-{counter:03d}"
+        self.data.setdefault("tasks", {})[task_id] = {
+            "origin_sender": origin_sender,
+            "status": status,
+            "created_at": time.time(),
+        }
+        self.data["role_state"] = status
+        self._bound_tasks()
+        return task_id
+
+    def task(self, task_id: str) -> dict[str, Any] | None:
+        task = self.data.setdefault("tasks", {}).get(task_id)
+        return task if isinstance(task, dict) else None
+
+    def set_task_status(self, task_id: str, status: str) -> None:
+        task = self.task(task_id)
+        if task is not None:
+            task["status"] = status
+        self.data["role_state"] = status
+
+
+class DemoAgent:
+    def __init__(self, args: argparse.Namespace) -> None:
+        base_name = args.name or os.environ.get("AGENT_NAME") or os.environ.get("SUGGESTED_AGENT_NAME")
+        self.role = args.role or infer_role(base_name)
+        default_name = "demo-pi" if self.role == "generic" else f"demo-{self.role}"
+        self.name = validate_local_name(base_name or default_name, "agent name")
+        self.peer_coder = validate_local_name(args.peer_coder, "peer coder")
+        self.peer_reviewer = validate_local_name(args.peer_reviewer, "peer reviewer")
+        self.poll_interval = max(float(args.poll_interval), 0.2)
+        agent_key = os.environ.get("AGENT_ID") or self.name
+        safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", agent_key)
+        self.state = DemoState(choose_state_dir(args.state_dir, safe_key))
+        self.tracker_socket = os.environ.get("AGENT_TRACKER_SOCKET", "")
+        self.outbound_count = 0
+        self.broccoli_bin = os.environ.get("BROCCOLI_COMMS_BIN") or "broccoli-comms"
+
+    def rpc(self, method: str, params: dict[str, Any]) -> Any:
+        if not self.tracker_socket:
+            raise RuntimeError("AGENT_TRACKER_SOCKET is not set")
+        req = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(5.0)
+            sock.connect(self.tracker_socket)
+            sock.sendall(json.dumps(req).encode())
+            sock.shutdown(socket.SHUT_WR)
+            chunks: list[bytes] = []
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        response = json.loads(b"".join(chunks).decode())
+        if "error" in response:
+            raise RuntimeError(response["error"].get("message", "tracker RPC failed"))
+        return response.get("result")
+
+    def get_inbox(self) -> dict[str, Any]:
+        params: dict[str, Any] = {"mark_read": True}
+        if os.environ.get("AGENT_ID"):
+            params["agent_id"] = os.environ["AGENT_ID"]
+        else:
+            params["agent_name"] = self.name
+        result = self.rpc("get_inbox", params)
+        return result if isinstance(result, dict) else {"messages": []}
+
+    def send(self, target: str, message: str) -> bool:
+        if self.outbound_count >= MAX_OUTBOUND_PER_INBOX_MESSAGE:
+            log("outbound cap reached for current inbox message; dropping scripted response")
+            return False
+        if not is_safe_local_name(target):
+            log(f"refusing unsafe or remote-looking send target: {target!r}")
+            return False
+        body = (message or "")[:MAX_OUTBOUND_LEN]
+        env = os.environ.copy()
+        env["AGENT_NAME"] = self.name
+        cmd = [self.broccoli_bin, "agent-tracker", "send-message", target, body]
+        try:
+            subprocess.run(cmd, check=True, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        except FileNotFoundError:
+            log(f"send failed: {self.broccoli_bin!r} not found")
+            return False
+        except subprocess.SubprocessError as exc:
+            log(f"send failed to {target}: {exc}")
+            return False
+        self.outbound_count += 1
+        log(f"send-message -> {target}: {preview(body)}")
+        return True
+
+    def send_sequence(self, target: str, messages: list[str], delay: float = 0.7) -> None:
+        for index, message in enumerate(messages):
+            self.send(target, message)
+            if index != len(messages) - 1:
+                time.sleep(delay)
+
+    def handle(self, msg: dict[str, Any]) -> None:
+        sender = str(msg.get("sender") or "")
+        text = str(msg.get("message") or "")
+        log(f"received from {sender or 'unknown'}: {preview(text)}")
+        if sender == self.name or msg.get("sender_agent_id") == os.environ.get("AGENT_ID"):
+            log("ignoring self-message")
+            return
+        if not is_safe_local_name(sender):
+            log(f"refusing reply to unsafe or remote-looking sender: {sender!r}")
+            return
+        if len(text) > MAX_INBOUND_LEN:
+            self.send(sender, "I received a very long message and treated it as unsupported for safety. Send `help` for demo commands.")
+            return
+
+        command = normalize_message(text)
+        self.dispatch(sender, command)
+
+    def dispatch(self, sender: str, command: str) -> None:
+        if command == "help":
+            self.send(sender, self.help_text())
+        elif command == "hello":
+            self.send(sender, self.hello_text())
+        elif command in {"who are you?", "who are you"}:
+            self.send(sender, self.who_text())
+        elif command == "status":
+            self.send(sender, self.status_text())
+        elif command == "ping":
+            suffix = f" from {self.name}" if self.role in {"coder", "reviewer"} else ""
+            self.send(sender, f"pong{suffix}")
+        elif command == "ack demo":
+            self.send(sender, self.ack_text())
+        elif command == "start task":
+            self.start_task(sender)
+        elif command == "progress":
+            self.send(sender, self.progress_text())
+        elif command == "implement feature" or IMPLEMENT_REQUEST_RE.match(command):
+            self.implement_feature(sender)
+        elif command == "review good":
+            self.review_good(sender)
+        elif command == "review bad":
+            self.review_bad(sender)
+        elif command == "ask reviewer":
+            self.ask_reviewer(sender)
+        elif command == "ask coder":
+            self.ask_coder(sender)
+        elif REVIEW_REQUEST_RE.match(command):
+            self.handle_review_request(sender, command)
+        elif REVIEW_RESULT_RE.match(command):
+            self.handle_review_result(sender, command)
+        elif command == "summarize":
+            self.send(sender, self.summary_text())
+        elif command == "reset":
+            self.state.reset()
+            self.send(sender, f"Reset complete for {self.name}. Only local demo-agent state was cleared.")
+        else:
+            self.send(sender, self.fallback_text())
+
+    def help_text(self) -> str:
+        prefix = {
+            "generic": "Demo commands",
+            "coder": "Demo coder commands",
+            "reviewer": "Demo reviewer commands",
+            "planner": "Demo planner commands",
+        }.get(self.role, "Demo commands")
+        return (
+            f"{prefix}: hello, status, ping, ack demo, start task, progress, implement feature, "
+            "ask reviewer, ask coder, review good, review bad, summarize, reset. "
+            "Every response is sent through broccoli-comms agent-tracker send-message so it appears in the TUI."
+        )
+
+    def hello_text(self) -> str:
+        role_note = "" if self.role == "generic" else f" I am running the scripted {self.role} role."
+        return f"Hello! I am {self.name}, a scripted no-AI Broccoli Comms demo agent.{role_note} I receive inbox messages and reply through send-message."
+
+    def who_text(self) -> str:
+        if self.role == "coder":
+            return "I am a deterministic scripted coding demo agent: no AI, no network, no shell execution from inbox messages."
+        if self.role == "reviewer":
+            return "I am a deterministic scripted review demo agent: I approve or block known demo requests with static responses."
+        return "I am a deterministic no-AI demo agent for Broccoli Comms local inbox messaging."
+
+    def status_text(self) -> str:
+        if self.role == "coder":
+            return f"Status: online as coder. Peer reviewer: {self.peer_reviewer}. State: {self.state.data.get('role_state', 'idle')}."
+        if self.role == "reviewer":
+            return f"Status: online as reviewer. Peer coder: {self.peer_coder}. State: {self.state.data.get('role_state', 'idle')}."
+        return "Status: online. I am using the local private Broccoli tracker inbox. Registry and remote direct pane input are not required for this demo."
+
+    def ack_text(self) -> str:
+        return "Message received through my Broccoli Comms inbox. This reply was sent with broccoli-comms agent-tracker send-message, so it appears in the TUI conversation."
+
+    def progress_text(self) -> str:
+        tasks = self.state.data.get("tasks") or {}
+        open_tasks = [f"{task_id}:{task.get('status')}" for task_id, task in tasks.items() if isinstance(task, dict)]
+        task_summary = ", ".join(open_tasks[-3:]) if open_tasks else "no tasks yet"
+        return f"Progress: {self.state.data.get('role_state', 'idle')}. Recent scripted tasks: {task_summary}."
+
+    def summary_text(self) -> str:
+        tasks = self.state.data.get("tasks") or {}
+        return f"Summary for {self.name}: role={self.role}, state={self.state.data.get('role_state', 'idle')}, tracked_tasks={len(tasks)}."
+
+    def fallback_text(self) -> str:
+        if self.role == "coder":
+            return "Coder fallback: I did not recognize that scripted command. Send `help` for supported demo commands."
+        if self.role == "reviewer":
+            return "Reviewer fallback: I did not recognize that scripted command. Send `help` for supported demo commands."
+        return "I did not recognize that scripted demo command. Send `help` for supported commands."
+
+    def start_task(self, sender: str) -> None:
+        if self.role == "reviewer":
+            self.state.data["role_state"] = "review_complete"
+            self.send_sequence(sender, [
+                "Acknowledged. Starting scripted review task.",
+                "Progress: 1/3 reading pretend diff.",
+                "Progress: 2/3 checking scripted requirements.",
+                "Progress: 3/3 review complete. APPROVED for demo purposes.",
+            ])
+            return
+        self.state.data["role_state"] = "task_complete"
+        label = "implementation" if self.role == "coder" else "task"
+        self.send_sequence(sender, [
+            f"Acknowledged. Starting scripted {label}.",
+            "Progress: 1/3 reading requirements.",
+            "Progress: 2/3 preparing pretend changes.",
+            "Progress: 3/3 task complete. Ready for review.",
+        ])
+
+    def implement_feature(self, sender: str) -> None:
+        if self.role == "reviewer":
+            self.send(sender, "Implementation is not my reviewer role. Send me `review good` or ask a coder to implement first.")
+            return
+        if self.role != "coder":
+            self.send(sender, "The scripted `implement feature` workflow is best shown with a coder role. I can still answer `help`, `status`, and `start task`.")
+            return
+        task_id = self.state.next_task_id(sender)
+        self.send_sequence(sender, [
+            "Acknowledged. I am implementing the scripted feature.",
+            "Progress: 1/3 inspecting requirements.",
+            "Progress: 2/3 editing pretend files.",
+            f"Progress: 3/3 implementation complete. Sending review request to {self.peer_reviewer}.",
+        ])
+        self.send(self.peer_reviewer, f"Please review scripted feature from demo-coder. task_id={task_id}")
+
+    def review_good(self, sender: str) -> None:
+        if self.role == "reviewer":
+            self.state.data["role_state"] = "approved"
+            self.send(sender, "APPROVED. Scripted review passed: requirements satisfied, tests simulated, no blockers.")
+        elif self.role == "coder":
+            task_id = self.state.next_task_id(sender)
+            self.send(self.peer_reviewer, f"Please review scripted feature from demo-coder. task_id={task_id}")
+            self.send(sender, f"Requested a scripted approving review from {self.peer_reviewer} for {task_id}.")
+        else:
+            self.send(sender, "The scripted `review good` workflow is best shown with a reviewer role.")
+
+    def review_bad(self, sender: str) -> None:
+        if self.role == "reviewer":
+            self.state.data["role_state"] = "blocked"
+            self.send(sender, "BLOCKED. Required change: add missing validation before approval. This is a scripted reviewer response.")
+        elif self.role == "coder":
+            task_id = self.state.next_task_id(sender)
+            self.send(self.peer_reviewer, f"Please review scripted feature from demo-coder. task_id={task_id} blocked")
+            self.send(sender, f"Requested a scripted blocking review from {self.peer_reviewer} for {task_id}.")
+        else:
+            self.send(sender, "The scripted `review bad` workflow is best shown with a reviewer role.")
+
+    def ask_reviewer(self, sender: str) -> None:
+        if self.role == "reviewer":
+            self.send(sender, "I am already the scripted reviewer. Send `review good` or `review bad`.")
+            return
+        if self.role == "coder":
+            task_id = self.state.next_task_id(sender)
+            self.send(self.peer_reviewer, f"Please review scripted feature from demo-coder. task_id={task_id}")
+            self.send(sender, f"Sent a scripted review request to {self.peer_reviewer} for {task_id}.")
+        else:
+            self.send(self.peer_reviewer, f"Hello from {self.name}: this is a local demo inter-agent message.")
+            self.send(sender, f"Sent a local scripted message to reviewer peer {self.peer_reviewer}.")
+
+    def ask_coder(self, sender: str) -> None:
+        if self.role == "coder":
+            self.send(sender, "I am already the scripted coder. Send `implement feature`.")
+            return
+        self.send(self.peer_coder, f"Please implement scripted feature from {self.name}.")
+        self.send(sender, f"Sent a local scripted implementation request to coder peer {self.peer_coder}.")
+
+    def handle_review_request(self, sender: str, command: str) -> None:
+        match = REVIEW_REQUEST_RE.match(command)
+        task_id = match.group(1) if match else ""
+        if not TASK_ID_RE.fullmatch(task_id):
+            self.send(sender, "Ignoring review request with an invalid demo task_id.")
+            return
+        if self.role == "reviewer":
+            self.state.data["role_state"] = "reviewed"
+            if "blocked" in command:
+                self.send(self.peer_coder, f"review-result blocked {task_id}: BLOCKED. Required change: add missing validation before approval. This is a scripted reviewer response.")
+            else:
+                self.send(self.peer_coder, f"review-result approved {task_id}: APPROVED. Scripted review passed: requirements satisfied, tests simulated, no blockers.")
+        elif self.role == "coder":
+            self.send(self.peer_reviewer, f"Please review scripted feature from demo-coder. task_id={task_id}")
+            self.send(sender, f"Redirected scripted review request {task_id} to {self.peer_reviewer}.")
+        else:
+            self.send(sender, f"Acknowledged scripted review request {task_id}. A reviewer role provides approval/blocking responses.")
+
+    def handle_review_result(self, sender: str, command: str) -> None:
+        match = REVIEW_RESULT_RE.match(command)
+        if not match:
+            self.send(sender, self.fallback_text())
+            return
+        outcome, task_id = match.group(1).lower(), match.group(2)
+        if self.role != "coder":
+            self.send(sender, f"Recorded scripted review result for {task_id}; no forwarding is needed for role={self.role}.")
+            return
+        task = self.state.task(task_id)
+        if task is None:
+            log(f"ignoring unknown review result task_id={task_id}")
+            self.send(sender, f"Ignoring unknown scripted review task {task_id}.")
+            return
+        if sender != self.peer_reviewer:
+            log(f"ignoring review result for {task_id} from unexpected sender {sender}")
+            self.send(sender, f"Ignoring review result for {task_id} from unexpected sender.")
+            return
+        origin = str(task.get("origin_sender") or "")
+        if not is_safe_local_name(origin):
+            log(f"stored origin for {task_id} is unsafe; not forwarding")
+            return
+        self.state.set_task_status(task_id, outcome)
+        if outcome == "approved":
+            self.send(origin, f"{self.peer_reviewer} approved task {task_id}. Scripted workflow complete.")
+        else:
+            self.send(origin, f"{self.peer_reviewer} blocked task {task_id}. Scripted workflow complete with blocker: add missing validation before approval.")
+
+    def loop(self) -> None:
+        log(f"role={self.role} name={self.name} tracker={self.tracker_socket or '<unset>'}")
+        while running:
+            try:
+                inbox = self.get_inbox()
+                if inbox.get("mode") == "history":
+                    time.sleep(self.poll_interval)
+                    continue
+                for message in inbox.get("messages") or []:
+                    key = message_key(message)
+                    if self.state.processed(key):
+                        continue
+                    self.outbound_count = 0
+                    self.handle(message)
+                    self.state.mark_processed(key)
+                    self.state.save()
+            except Exception as exc:  # keep demo process alive for observers
+                log(f"poll error: {exc}")
+            time.sleep(self.poll_interval)
+
+
+def message_key(msg: dict[str, Any]) -> str:
+    message_id = msg.get("message_id")
+    if message_id:
+        return str(message_id)
+    material = "\0".join(str(msg.get(k, "")) for k in ("timestamp", "sender", "message"))
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Deterministic no-AI Broccoli Comms demo agent")
+    parser.add_argument("--role", choices=("generic", "coder", "reviewer", "planner"), help="scripted role; inferred from name if omitted")
+    parser.add_argument("--name", help="display/logging name; defaults to AGENT_NAME/SUGGESTED_AGENT_NAME/inferred role name")
+    parser.add_argument("--peer-coder", default="demo-coder", help="validated local coder peer name")
+    parser.add_argument("--peer-reviewer", default="demo-reviewer", help="validated local reviewer peer name")
+    parser.add_argument("--poll-interval", type=float, default=1.0, help="inbox polling interval seconds; clamped to >=0.2")
+    parser.add_argument("--state-dir", help="test/debug state dir; must be under Broccoli runtime/cache dir")
+    return parser.parse_args(argv)
+
+
+def stop(_signum: int, _frame: Any) -> None:
+    global running
+    running = False
+
+
+def main(argv: list[str]) -> int:
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    agent = DemoAgent(parse_args(argv))
+    agent.loop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
