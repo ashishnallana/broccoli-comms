@@ -290,23 +290,16 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	if view.UnreadCount > 0 {
 		unread = " " + unreadCountBadge(view.UnreadCount)
 	}
-	detectionBadge := ""
-	if view.DetectionBadge != "" {
-		detectionBadge = " " + mutedStyle.Render(view.DetectionBadge)
-	}
-	prefix := statusDot(view.Status) + " "
-	nameBudget := max(1, inner-lipgloss.Width(prefix)-lipgloss.Width(detectionBadge)-lipgloss.Width(unread))
+	prefix := agentStatusDot(row) + " "
+	nameBudget := max(1, inner-lipgloss.Width(prefix)-lipgloss.Width(unread))
 	nameText := agentStyle(row.Name, true).Render(truncateCells(row.Name, nameBudget))
-	nameLine := prefix + nameText + detectionBadge + unread
+	nameLine := prefix + nameText + unread
 	if lipgloss.Width(nameLine) > inner {
-		nameLine = truncateCells(statusDot(view.Status)+" "+view.Name, inner)
+		nameLine = truncateCells(agentStatusDot(row)+" "+view.Name, inner)
 	}
 	detailParts := nonEmpty([]string{view.ModelBadge, view.RegistryLabel})
 	if view.HostnameLabel != "" {
 		detailParts = append(detailParts, view.HostnameLabel)
-	}
-	if view.DetectionLabel != "" {
-		detailParts = append(detailParts, view.DetectionLabel)
 	}
 	detailLine := strings.Join(detailParts, " · ")
 	lines := nameLine + "\n" + mutedStyle.Render(truncateCells(detailLine, inner))

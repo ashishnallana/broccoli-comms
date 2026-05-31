@@ -1,31 +1,26 @@
 package main
 
 import (
-	"fmt"
-	"math"
 	"strings"
-	"time"
 
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
 type AgentView struct {
-	Row            agentRow
-	Name           string
-	Scope          string
-	Status         string
-	StatusLabel    string
-	ModelBadge     string
-	MachineLabel   string
-	HostnameLabel  string
-	RegistryLabel  string
-	GroupHeader    string
-	CWD            string
-	DetectionBadge string
-	DetectionLabel string
-	Hidden         bool
-	Unread         bool
-	UnreadCount    int
+	Row           agentRow
+	Name          string
+	Scope         string
+	Status        string
+	StatusLabel   string
+	ModelBadge    string
+	MachineLabel  string
+	HostnameLabel string
+	RegistryLabel string
+	GroupHeader   string
+	CWD           string
+	Hidden        bool
+	Unread        bool
+	UnreadCount   int
 }
 
 type MachineGroup struct {
@@ -52,22 +47,20 @@ func newAgentView(row agentRow, hidden bool, unreadCount int) AgentView {
 	hostname := rowHostnameLabel(row)
 	scope := strings.Title(fallback(row.Scope, "local"))
 	return AgentView{
-		Row:            row,
-		Name:           row.Name,
-		Scope:          fallback(row.Scope, "local"),
-		Status:         row.Status,
-		StatusLabel:    statusLabel(row.Status),
-		ModelBadge:     modelBadge(row),
-		MachineLabel:   machine,
-		HostnameLabel:  hostname,
-		RegistryLabel:  rowRegistryLabel(row),
-		GroupHeader:    scope,
-		CWD:            compactCWD(row.CWD),
-		DetectionBadge: detectionBadge(row.Detection),
-		DetectionLabel: detectionLabel(row.Detection),
-		Hidden:         hidden,
-		Unread:         unreadCount > 0,
-		UnreadCount:    unreadCount,
+		Row:           row,
+		Name:          row.Name,
+		Scope:         fallback(row.Scope, "local"),
+		Status:        row.Status,
+		StatusLabel:   statusLabel(row.Status),
+		ModelBadge:    modelBadge(row),
+		MachineLabel:  machine,
+		HostnameLabel: hostname,
+		RegistryLabel: rowRegistryLabel(row),
+		GroupHeader:   scope,
+		CWD:           compactCWD(row.CWD),
+		Hidden:        hidden,
+		Unread:        unreadCount > 0,
+		UnreadCount:   unreadCount,
 	}
 }
 
@@ -194,49 +187,13 @@ func statusLabel(status string) string {
 	return fallback(strings.TrimSpace(status), "unknown")
 }
 
-func detectionBadge(status tracker.DetectionStatus) string {
-	if !status.Configured {
-		return ""
+func detectionBlocked(status tracker.DetectionStatus) bool {
+	switch strings.TrimSpace(status.LastResult) {
+	case "detected_notified", "detected_cooldown":
+		return true
+	default:
+		return false
 	}
-	if !status.Enabled {
-		return "detect off"
-	}
-	seconds := status.SecondsUntilNextScan
-	if status.NextScanAt > 0 {
-		seconds = max(0, int(math.Ceil(status.NextScanAt-float64(time.Now().UnixNano())/1e9)))
-	}
-	if seconds > 0 {
-		return fmt.Sprintf("⟳%ds", seconds)
-	}
-	if status.ScanIntervalSeconds > 0 {
-		return "⟳now"
-	}
-	return "⟳"
-}
-
-func detectionLabel(status tracker.DetectionStatus) string {
-	if !status.Configured {
-		return ""
-	}
-	result := strings.TrimSpace(status.LastResult)
-	if result == "" {
-		result = "pending"
-	}
-	switch result {
-	case "detected_notified":
-		result = "blocked"
-	case "detected_cooldown":
-		result = "blocked cooldown"
-	case "no_match":
-		result = "clear"
-	case "capture_error":
-		result = "capture error"
-	case "notify_error":
-		result = "notify error"
-	case "disabled":
-		result = "off"
-	}
-	return "detect " + result
 }
 
 func nonEmpty(values []string) []string {

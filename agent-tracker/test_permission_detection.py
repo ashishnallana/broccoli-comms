@@ -121,6 +121,8 @@ class PermissionDetectionConfigTests(unittest.TestCase):
              mock.patch.object(permission_detection.state, "get_agent", return_value={"tmux_pane": "%9"}):
             permission_detection._send_detection_notification(cfg, detection)
         self.assertEqual(calls[0][0], "send")
+        self.assertEqual(calls[0][1]["sender_name"], "claude-1")
+        self.assertEqual(calls[0][1]["sender_id"], "a1")
         self.assertIn("/text", calls[0][1]["message"])
         self.assertIn("/keys", calls[0][1]["message"])
 
@@ -152,6 +154,7 @@ class PermissionDetectionConfigTests(unittest.TestCase):
             permission_detection._send_detection_notification(cfg, detection)
         self.assertEqual(calls[0], ("ensure", {"agent_name": "agent-communicator"}))
         self.assertEqual(calls[1][0], "send")
+        self.assertEqual(calls[1][1]["sender_name"], "claude-1")
 
     def test_real_claude_approval_prompt_is_detected(self):
         cfg = permission_detection.AgentDetectionConfig(

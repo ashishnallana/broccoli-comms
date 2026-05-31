@@ -292,9 +292,12 @@ def _send_detection_notification(config: DetectionConfig, detection: BlockingDet
 
     if not state.get_agent(config.notify_target):
         rpc_handler.handle_ensure_mailbox({"agent_name": config.notify_target})
+    # Send as the blocked agent so agent-communicator renders the alert in
+    # that agent's conversation row instead of an unselectable monitor thread.
     rpc_handler.handle_send_message({
         "agent_name": config.notify_target,
-        "sender_name": config.sender_name,
+        "sender_name": detection.agent_name or config.sender_name,
+        "sender_id": detection.agent_id,
         "message": _format_detection_message(detection),
     })
 

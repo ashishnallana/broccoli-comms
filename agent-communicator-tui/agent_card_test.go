@@ -73,19 +73,22 @@ func TestCompactCWD(t *testing.T) {
 	}
 }
 
-func TestAgentCardShowsDetectionCountdownAndResult(t *testing.T) {
+func TestAgentCardHidesDetectionTextAndUsesRedDotWhenBlocked(t *testing.T) {
 	m := model{}
 	row := agentRow{
 		Name:      "claude-agent",
 		Scope:     "local",
+		Status:    "idle",
 		ModelType: "claude",
-		Detection: tracker.DetectionStatus{Configured: true, Enabled: true, SecondsUntilNextScan: 3, LastResult: "no_match"},
+		Detection: tracker.DetectionStatus{Configured: true, Enabled: true, SecondsUntilNextScan: 3, LastResult: "detected_cooldown"},
 	}
 	card := m.agentCard(row, false, 80)
-	for _, want := range []string{"⟳3s", "detect clear"} {
-		if !strings.Contains(card, want) {
-			t.Fatalf("agent card missing %q:\n%s", want, card)
-		}
+	if strings.Contains(card, "detect") || strings.Contains(card, "⟳") {
+		t.Fatalf("agent card should not show detection text:\n%s", card)
+	}
+	got := agentStatusDotStyle(row).GetForeground()
+	if got == nil || string(got.(lipgloss.Color)) != string(palette.Red) {
+		t.Fatalf("blocked agent dot foreground = %v, want %s", got, palette.Red)
 	}
 }
 

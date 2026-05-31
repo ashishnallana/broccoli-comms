@@ -24,6 +24,17 @@ func statusDot(status string) string {
 	return statusDotStyle(status).Render("●")
 }
 
+func agentStatusDot(row agentRow) string {
+	return agentStatusDotStyle(row).Render("●")
+}
+
+func agentStatusDotStyle(row agentRow) lipgloss.Style {
+	if detectionBlocked(row.Detection) {
+		return lipgloss.NewStyle().Foreground(palette.Red)
+	}
+	return statusDotStyle(row.Status)
+}
+
 func statusDotStyle(status string) lipgloss.Style {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "running", "active", "online", "idle", "ready":

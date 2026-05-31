@@ -377,6 +377,90 @@ broccoli-comms agent-tracker send-key registry-a:host-a/alice Escape
 
 Remote-origin inbox delivery can optionally focus the destination pane when `BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES=1` is set. This is disabled by default; when enabled, the tracker uses only registered tmux pane/socket metadata and treats focus as best-effort so message delivery still succeeds if focus fails.
 
+## Blocked-agent detection
+
+The private tracker can detect common permission/approval prompts in local agent panes and notify `agent-communicator`. Detection is notify-only: it never approves, denies, presses keys, or executes captured pane text. When a block is detected, the notification tells you which pane looks blocked and asks you to inspect/capture it and use `/text` or `/keys` manually if you want to unblock it. In the TUI, a blocked agent is highlighted by a red status dot on the left of the agent name.
+
+Detection is configured by provider, not by individual agent name. The default config path is:
+
+```sh
+~/.config/agent-tracker/detection.json
+```
+
+You can override it for a tracker process with:
+
+```sh
+AGENT_TRACKER_DETECTION_CONFIG=/path/to/detection.json broccoli-comms ui
+```
+
+Start from the sample config:
+
+```sh
+mkdir -p ~/.config/agent-tracker
+cp agent-tracker/detection.sample.json ~/.config/agent-tracker/detection.json
+$EDITOR ~/.config/agent-tracker/detection.json
+broccoli-comms stop
+broccoli-comms ui
+```
+
+Minimal example:
+
+```json
+{
+  "version": 1,
+  "enabled": true,
+  "notify_target": "agent-communicator",
+  "providers": {
+    "claude": {
+      "enabled": true,
+      "scan_interval_seconds": 3,
+      "notify_cooldown_seconds": 300,
+      "keyword_matches_required": 2,
+      "keywords": [
+        "bash command",
+        "requires approval",
+        "do you want to proceed",
+        "web search",
+        "claude wants to search the web"
+      ]
+    },
+    "codex": {
+      "enabled": true,
+      "scan_interval_seconds": 3,
+      "notify_cooldown_seconds": 300,
+      "keyword_matches_required": 2,
+      "keywords": [
+        "would you like to run the following command",
+        "yes, proceed",
+        "don't ask again",
+        "no, and tell codex"
+      ]
+    },
+    "pi": {
+      "enabled": false,
+      "keywords": ["permission", "approve", "allow", "blocked"]
+    }
+  }
+}
+```
+
+Tuning tips:
+
+- Set `providers.<provider>.enabled` to turn detection on/off for `claude`, `codex`, or `pi` agents.
+- Add/remove `keywords` for the exact prompt text your provider shows.
+- Increase `keyword_matches_required` to reduce false positives; lower it only if prompts are being missed.
+- `scan_interval_seconds` controls how often panes are scanned.
+- `notify_cooldown_seconds` suppresses duplicate notifications for the same prompt.
+- `capture_lines` is capped at 10 lines so notifications stay small.
+- `agents.<agent-name>` can be used for a one-off override, but provider-level config is recommended for normal use.
+
+After editing the config, restart Broccoli Comms so the tracker reloads it:
+
+```sh
+broccoli-comms stop
+broccoli-comms ui
+```
+
 ## Local registry management
 
 `broccoli-comms registry ...` can run the in-repo `agent-registry` rendezvous service under Broccoli Comms runtime/cache/config paths:

@@ -92,7 +92,6 @@ type eventsLoaded struct {
 }
 type refreshTick struct{}
 type retryEvents struct{}
-type detectionTick struct{}
 type agentListSpinnerTick struct{}
 type clearDirectInputStatusTick struct{}
 
@@ -457,9 +456,6 @@ func tickRefresh() tea.Cmd {
 }
 func tickAgentListSpinner() tea.Cmd {
 	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return agentListSpinnerTick{} })
-}
-func tickDetectionCountdown() tea.Cmd {
-	return tea.Tick(time.Second, func(time.Time) tea.Msg { return detectionTick{} })
 }
 func retryWaitEvents() tea.Cmd {
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return retryEvents{} })
