@@ -232,11 +232,13 @@ Edit `$XDG_CONFIG_HOME/broccoli-comms/config.json`:
   "agents": {
     "main": {
       "cwd": "/home/user/project",
-      "command": "pi"
+      "command": "pi",
+      "autostart": true
     },
     "reviewer": {
       "cwd": "/home/user/project",
-      "command": "pi --role reviewer"
+      "command": "pi --role reviewer",
+      "autostart": true
     }
   }
 }
@@ -246,8 +248,8 @@ Or manage the same config through the CLI:
 
 ```sh
 broccoli-comms agent list --json
-broccoli-comms agent add main --cwd /home/user/project --command 'pi'
-broccoli-comms agent add reviewer --cwd /home/user/project --command 'pi --role reviewer'
+broccoli-comms agent add main --cwd /home/user/project --command 'pi' --autostart
+broccoli-comms agent add reviewer --cwd /home/user/project --command 'pi --role reviewer' --autostart
 broccoli-comms agent focus main
 broccoli-comms agent attach main
 broccoli-comms agent restart main
@@ -257,11 +259,13 @@ broccoli-comms agent remove reviewer
 Then run one of:
 
 ```sh
-broccoli-comms ui      # reconcile agents and open the TUI
-broccoli-comms start   # reconcile agents without opening the TUI
+broccoli-comms ui      # reconcile autostart agents and open the TUI
+broccoli-comms start   # reconcile autostart agents without opening the TUI
 ```
 
-`start` reconciles configured agents into the `broccoli-comms-agents` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `agent-wrapper` with the private tracker environment. By default this session is created in your normal tmux server, and an already-existing `broccoli-comms-agents` session is reused. `broccoli-comms stop` removes only Broccoli-owned windows plus the private tracker, leaving unrelated tmux sessions/windows alone. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/ui/stop` to use the Broccoli-owned private tmux socket behavior with the same session name.
+Agents added without `--autostart` remain configured but are not launched by `start`/`ui`; use `broccoli-comms agent restart NAME` to launch one explicitly.
+
+`start` reconciles configured agents with `"autostart": true` into the `broccoli-comms-agents` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `broccoli-comms track` with the private tracker environment. By default this session is created in your normal tmux server, and an already-existing `broccoli-comms-agents` session is reused. `broccoli-comms stop` removes only Broccoli-owned windows plus the private tracker, leaving unrelated tmux sessions/windows alone. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/ui/stop` to use the Broccoli-owned private tmux socket behavior with the same session name.
 
 ### Which agent launch command should I use?
 
@@ -269,7 +273,7 @@ Use the higher-level Broccoli commands for most workflows:
 
 | Use case | Command | Notes |
 | --- | --- | --- |
-| Persistent named agent that should come back on every `start`/`ui` | `broccoli-comms agent add NAME --cwd DIR --command 'COMMAND'` | Saves to Broccoli config and reconciles into the `broccoli-comms-agents` session. Best for coder/reviewer teams. |
+| Persistent named agent that should come back on every `start`/`ui` | `broccoli-comms agent add NAME --cwd DIR --command 'COMMAND' --autostart` | Saves to Broccoli config and reconciles into the `broccoli-comms-agents` session only when autostart is true. Best for coder/reviewer teams. |
 | One-off command in the current terminal/tmux pane that should appear in Agent Communicator | `broccoli-comms track --name NAME -- COMMAND [ARGS...]` | Does not create a new tmux window. It wraps the current process with Broccoli's bundled `agent-wrapper`. |
 | One-off new tmux pane/window through the lower-level tracker | `broccoli-comms agent-tracker spin DIR COMMAND [ARGS...]` | Useful for tracker-level experiments; for durable agents prefer `agent add`. |
 

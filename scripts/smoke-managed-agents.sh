@@ -5,6 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 app_name="broccoli-comms"
 session_name="broccoli-comms-agents"
 agent_name="sleeper"
+manual_agent="manual"
+wrapped_agent="wrapped-pi"
 
 tmpdir="$(mktemp -d)"
 export HOME="$tmpdir/home"
@@ -105,7 +107,44 @@ mkdir -p "$HOME" "$BROCCOLI_COMMS_RUNTIME_DIR" "$BROCCOLI_COMMS_CACHE_DIR" "$BRO
 
 printf 'Using temp runtime: %s\n' "$tmpdir"
 
-broccoli agent add "$agent_name" --cwd "$tmpdir/project" --command "sleep 60"
+broccoli agent add "$manual_agent" --cwd "$tmpdir/project" --command "sleep 60"
+list_json="$(broccoli agent list --json)"
+LIST_JSON="$list_json" python3 - "$manual_agent" <<'PY'
+import json, os, sys
+payload = json.loads(os.environ["LIST_JSON"])
+agent = payload["agents"].get(sys.argv[1])
+if not agent or agent.get("autostart") is not False:
+    raise SystemExit("manual agent should default to autostart=false")
+PY
+broccoli start
+if [[ "$(managed_count "$manual_agent")" != "0" ]]; then
+  echo "manual/non-autostart agent launched during start" >&2
+  exit 1
+fi
+status_json="$(broccoli status --json)"
+STATUS_JSON="$status_json" python3 <<'PY'
+import json, os
+status = json.loads(os.environ["STATUS_JSON"])
+if status.get("agents", {}).get("configured_count") != 1:
+    raise SystemExit("manual configured_count mismatch")
+if status.get("agents", {}).get("autostart_count") != 0:
+    raise SystemExit("manual autostart_count mismatch")
+if status.get("agents", {}).get("managed_running_count") != 0:
+    raise SystemExit("manual managed_running_count mismatch")
+PY
+broccoli agent restart "$manual_agent"
+if [[ "$(managed_count "$manual_agent")" != "1" ]]; then
+  echo "manual agent restart did not launch exactly one window" >&2
+  exit 1
+fi
+wait_for_agent "$manual_agent"
+broccoli agent remove "$manual_agent"
+if [[ "$(managed_count "$manual_agent")" != "0" ]]; then
+  echo "manual agent window still exists after remove" >&2
+  exit 1
+fi
+
+broccoli agent add "$agent_name" --cwd "$tmpdir/project" --command "sleep 60" --autostart
 
 doctor_json="$(broccoli doctor --json)"
 DOCTOR_JSON="$doctor_json" python3 - "$agent_name" <<'PY'
@@ -216,9 +255,42 @@ if sys.argv[1] in payload.get("agents", {}):
     raise SystemExit("removed agent still present in config")
 PY
 
+fake_bin="$tmpdir/fake-bin"
+mkdir -p "$fake_bin" "$tmpdir/wrapped-project"
+cat > "$fake_bin/pi" <<'SH'
+#!/usr/bin/env bash
+exec /bin/broccoli-comms track --name pi -- sleep "$@"
+SH
+chmod +x "$fake_bin/pi"
+export PATH="$fake_bin:$PATH"
+broccoli agent add "$wrapped_agent" --cwd "$tmpdir/wrapped-project" --command "pi 60" --autostart
+broccoli start
+if [[ "$(managed_count "$wrapped_agent")" != "1" ]]; then
+  echo "expected wrapped track command to keep managed agent name" >&2
+  tmux_private list-windows -t "$session_name" -F $'#{window_id}\t#{window_name}\t#{@broccoli_managed_agent}\t#{pane_id}' >&2
+  exit 1
+fi
+wait_for_agent "$wrapped_agent"
+list_json="$(broccoli agent-tracker list)"
+LIST_JSON="$list_json" python3 - "$wrapped_agent" <<'PY'
+import json, os, sys
+payload = json.loads(os.environ["LIST_JSON"])
+name = sys.argv[1]
+if name not in payload:
+    raise SystemExit("wrapped managed agent missing from tracker list")
+for unexpected in ("pi", "pi-1"):
+    if unexpected in payload:
+        raise SystemExit(f"nested track wrapper created unexpected agent {unexpected}")
+PY
+broccoli agent remove "$wrapped_agent"
+if [[ "$(managed_count "$wrapped_agent")" != "0" ]]; then
+  echo "wrapped managed agent window still exists after remove" >&2
+  exit 1
+fi
+
 collision_agent="bash"
 mkdir -p "$tmpdir/collision-project"
-broccoli agent add "$collision_agent" --cwd "$tmpdir/collision-project" --command "sleep 60"
+broccoli agent add "$collision_agent" --cwd "$tmpdir/collision-project" --command "sleep 60" --autostart
 broccoli start
 if [[ "$(managed_count "$collision_agent")" != "1" ]]; then
   echo "expected one managed collision window" >&2

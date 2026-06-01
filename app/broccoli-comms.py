@@ -279,6 +279,8 @@ def normalize_config(cfg: dict) -> dict:
         validate_agent_name(name)
         if not isinstance(spec, dict):
             raise ValueError(f"agent {name!r} config must be an object")
+        if "autostart" in spec and not isinstance(spec.get("autostart"), bool):
+            raise ValueError(f"agent {name!r} autostart must be a boolean")
     return normalized
 
 
@@ -315,6 +317,10 @@ def agent_spec(cfg: dict, name: str) -> dict:
     if name not in agents:
         raise SystemExit(f"agent {name!r} is not configured")
     return agents[name]
+
+
+def agent_autostart(spec: dict) -> bool:
+    return bool(spec.get("autostart", False))
 
 
 def tmux_up() -> bool:
@@ -445,23 +451,81 @@ def tmux_env_assignments_for_pane() -> list[str]:
     ]
 
 
-def managed_agent_launch_command(name: str, command: str) -> str:
-    p = paths()
+def shell_env_assignment(key: str, value: str) -> str:
+    return f"{key}={shlex.quote(str(value))}"
+
+
+def broccoli_comms_launcher_argv() -> list[str]:
+    candidate = sys.argv[0] or ""
+    if candidate:
+        if os.path.isabs(candidate) or os.sep in candidate:
+            path = Path(candidate).expanduser().resolve()
+            if path.exists():
+                if os.access(path, os.X_OK):
+                    return [str(path)]
+                return [sys.executable, str(path)]
+        resolved = shutil.which(candidate, path=f"{repo_root() / 'bin'}:{os.environ.get('PATH', '')}")
+        if resolved:
+            return [resolved]
+    local_launcher = repo_root() / "bin" / "broccoli-comms"
+    if local_launcher.exists():
+        if os.access(local_launcher, os.X_OK):
+            return [str(local_launcher)]
+        return [sys.executable, str(local_launcher)]
+    return [sys.executable, str(Path(__file__).resolve())]
+
+
+def managed_track_env_assignments() -> list[str]:
+    env = base_env()
+    if use_private_tmux():
+        env["BROCCOLI_COMMS_TMUX_MODE"] = "private"
+    elif "BROCCOLI_COMMS_TMUX_MODE" in os.environ:
+        env["BROCCOLI_COMMS_TMUX_MODE"] = tmux_mode()
+    keys = [
+        "PATH",
+        "BROCCOLI_COMMS_APP_RUNTIME",
+        "BROCCOLI_COMMS_RUNTIME_DIR",
+        "BROCCOLI_COMMS_CACHE_DIR",
+        "BROCCOLI_COMMS_CONFIG_DIR",
+        "BROCCOLI_COMMS_TMUX_MODE",
+        "BROCCOLI_COMMS_AGENT_TRACKER",
+        "BROCCOLI_COMMS_AGENT_TRACKER_CTL",
+        "BROCCOLI_COMMS_AGENT_WRAPPER",
+        "BROCCOLI_COMMS_AGENT_REGISTRY",
+        "BROCCOLI_COMMS_AGENT_COMMUNICATOR_TUI",
+        "AGENT_TRACKER_SOCKET",
+        "XDG_CACHE_HOME",
+        "AGENT_TRACKER_HOSTNAME",
+        "AGENT_TRACKER_HTTP_PORT",
+        "AGENT_REGISTRIES_JSON",
+        "AGENT_REGISTRY_TOKEN",
+        "AGENT_REGISTRY_AUTH",
+        "AGENT_REGISTRY_HEARTBEAT_SECONDS",
+        "BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED",
+        "BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED",
+        "BROCCOLI_COMMS_REMOTE_PANE_INPUT_RECEIVE_ENABLED",
+        "BROCCOLI_COMMS_REMOTE_PANE_INPUT_REGISTRY_ENABLED",
+    ]
+    return [shell_env_assignment(key, env[key]) for key in keys if env.get(key)]
+
+
+def managed_agent_launch_command(name: str, cwd: str, command: str) -> str:
+    track_prefix = [*broccoli_comms_launcher_argv(), "track", "--name", name, "--cwd", cwd, "--"]
     return " ".join([
-        f"SUGGESTED_AGENT_NAME={shlex.quote(name)}",
-        f"AGENT_TRACKER_SOCKET={shlex.quote(str(p['tracker_socket']))}",
-        *tmux_env_assignments_for_pane(),
-        shlex.quote(wrapper_path()),
+        *managed_track_env_assignments(),
+        *(shlex.quote(part) for part in track_prefix),
         command,
     ])
 
 
-def reconcile_agents(names: set[str] | None = None) -> list[str]:
+def reconcile_agents(names: set[str] | None = None, *, autostart_only: bool = False) -> list[str]:
     cfg = load_config()
     agents = cfg.get("agents") or {}
     launched = []
     for name, spec in agents.items():
         if names is not None and name not in names:
+            continue
+        if autostart_only and not agent_autostart(spec):
             continue
         if window_exists(name):
             continue
@@ -469,7 +533,7 @@ def reconcile_agents(names: set[str] | None = None) -> list[str]:
         if not os.path.isdir(cwd):
             raise SystemExit(f"configured cwd for agent {name!r} does not exist: {cwd}")
         command = spec.get("command") or "bash"
-        launch = managed_agent_launch_command(name, command)
+        launch = managed_agent_launch_command(name, cwd, command)
         result = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", SESSION, "-n", name, "-c", cwd, launch)
         window_id = result.stdout.strip()
         if window_id:
@@ -481,7 +545,7 @@ def reconcile_agents(names: set[str] | None = None) -> list[str]:
 def start(_args: argparse.Namespace) -> None:
     ensure_tracker()
     ensure_tmux()
-    reconcile_agents()
+    reconcile_agents(autostart_only=True)
     print(f"{APP} runtime started")
     print(f"tracker socket: {paths()['tracker_socket']}")
     print(f"tmux mode:      {tmux_mode()}")
@@ -623,10 +687,12 @@ def agent_list_payload() -> dict:
                 "configured": {
                     "cwd": spec.get("cwd"),
                     "command": spec.get("command"),
+                    "autostart": agent_autostart(spec),
                 },
                 # Backward-compatible direct fields for simple JSON consumers.
                 "cwd": spec.get("cwd"),
                 "command": spec.get("command"),
+                "autostart": agent_autostart(spec),
                 "running": bool(windows_by_name.get(name)),
                 "window_exists": bool(windows_by_name.get(name)),
                 "managed_windows": windows_by_name.get(name, []),
@@ -667,6 +733,7 @@ def status_payload() -> dict:
         },
         "agents": {
             "configured_count": len(configured_agents),
+            "autostart_count": sum(1 for spec in configured_agents.values() if agent_autostart(spec)),
             "managed_running_count": len(managed),
             "managed_windows": managed,
         },
@@ -700,9 +767,11 @@ def agent_add(args: argparse.Namespace) -> None:
         raise SystemExit("--command must not be empty")
     cfg = load_config()
     agents = cfg.setdefault("agents", {})
+    existing = agents.get(args.name)
     if args.name in agents and not args.force:
         raise SystemExit(f"agent {args.name!r} already exists; use --force to update")
-    agents[args.name] = {"cwd": cwd, "command": command}
+    autostart = bool(args.autostart) if args.autostart is not None else bool((existing or {}).get("autostart", False))
+    agents[args.name] = {"cwd": cwd, "command": command, "autostart": autostart}
     save_config(cfg)
     print(json.dumps({"added": args.name, "config": str(paths()["config_json"]), "agent": agents[args.name]}, indent=2, sort_keys=True))
 
@@ -788,6 +857,62 @@ def _derive_track_name(command: list[str], cwd: str | None = None) -> str:
     return "agent"
 
 
+def _resolve_command(command: str, env: dict[str, str]) -> str | None:
+    if not command:
+        return None
+    if os.path.isabs(command) or os.sep in command:
+        path = os.path.abspath(os.path.expanduser(command))
+        return path if os.path.exists(path) else None
+    return shutil.which(command, path=env.get("PATH"))
+
+
+def unwrap_track_wrapper_command(command: list[str], env: dict[str, str]) -> list[str]:
+    """Avoid nested Broccoli tracking for commands already wrapped with `broccoli-comms track`.
+
+    Some installed agent commands, such as the local `pi` launcher, are shell
+    wrappers that already exec `broccoli-comms track --name ... -- REAL_CMD`.
+    Running `broccoli-comms track -- pi` would otherwise stack two wrappers in
+    one pane and can create name collisions such as `pi` and `pi-1`.
+    """
+    if not command:
+        return command
+    resolved = _resolve_command(command[0], env)
+    if not resolved or not os.path.isfile(resolved):
+        return command
+    try:
+        with open(resolved, "r", encoding="utf-8") as f:
+            lines = f.read(8192).splitlines()
+    except (OSError, UnicodeDecodeError):
+        return command
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("exec ") or "broccoli-comms" not in stripped or " track " not in stripped:
+            continue
+        try:
+            parts = shlex.split(stripped)
+        except ValueError:
+            continue
+        track_index = None
+        for idx in range(1, len(parts)):
+            if parts[idx] == "track" and Path(parts[idx - 1]).name == "broccoli-comms":
+                track_index = idx
+                break
+        if track_index is None:
+            continue
+        try:
+            separator_index = parts.index("--", track_index + 1)
+        except ValueError:
+            continue
+        inner = parts[separator_index + 1:]
+        if not inner:
+            continue
+        inner = [part for part in inner if part not in {"$@", "${@}", "$*", "${*}"}]
+        if not inner or inner[0].startswith("$"):
+            continue
+        return [*inner, *command[1:]]
+    return command
+
+
 def track(args: argparse.Namespace) -> None:
     command = list(getattr(args, "command", None) or [])
     if command and command[0] == "--":
@@ -795,13 +920,17 @@ def track(args: argparse.Namespace) -> None:
     if not command:
         raise SystemExit("track requires a command after --")
 
+    original_command = list(command)
+    track_env = base_env()
+    command = unwrap_track_wrapper_command(command, track_env)
+
     cwd = None
     if args.cwd:
         cwd = os.path.abspath(os.path.expanduser(args.cwd))
         if not os.path.isdir(cwd):
             raise SystemExit(f"track cwd does not exist or is not a directory: {cwd}")
 
-    name = args.name or _derive_track_name(command, cwd)
+    name = args.name or _derive_track_name(original_command, cwd)
     try:
         validate_agent_name(name)
     except ValueError as e:
@@ -812,7 +941,7 @@ def track(args: argparse.Namespace) -> None:
         raise SystemExit(f"agent-wrapper not found or not executable: {wrapper}")
 
     ensure_tracker()
-    env = base_env()
+    env = track_env
     if os.environ.get("TMUX"):
         env.pop("AGENT_TRACKER_TMUX_SOCKET", None)
         env.pop("BROCCOLI_COMMS_TMUX_SOCKET", None)
@@ -1633,7 +1762,10 @@ def main() -> None:
     agent_add_parser = agent_sub.add_parser("add", help="Add or update a configured agent")
     agent_add_parser.add_argument("name", help="Agent/window name")
     agent_add_parser.add_argument("--cwd", required=True, help="Working directory")
-    agent_add_parser.add_argument("--command", required=True, help="Command to run through agent-wrapper")
+    agent_add_parser.add_argument("--command", required=True, help="Command to run through broccoli-comms track")
+    autostart_group = agent_add_parser.add_mutually_exclusive_group()
+    autostart_group.add_argument("--autostart", dest="autostart", action="store_true", default=None, help="Launch this agent during broccoli-comms start/ui")
+    autostart_group.add_argument("--no-autostart", dest="autostart", action="store_false", help="Keep this agent configured but do not launch it during start/ui")
     agent_add_parser.add_argument("--force", action="store_true", help="Update an existing agent")
     agent_add_parser.set_defaults(func=agent_add)
     agent_remove_parser = agent_sub.add_parser("remove", help="Remove a configured agent and stop its managed window if running")

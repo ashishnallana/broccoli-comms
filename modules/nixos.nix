@@ -16,6 +16,7 @@ let
     options = {
       cwd = lib.mkOption { type = lib.types.str; default = "~"; description = "Working directory for managed agent ${name}."; };
       command = lib.mkOption { type = lib.types.str; default = "pi"; description = "Command for managed agent ${name}."; };
+      autostart = lib.mkOption { type = lib.types.bool; default = false; description = "Whether broccoli-comms start/ui should launch managed agent ${name}."; };
     };
   });
 
@@ -39,7 +40,7 @@ let
 
   configDir = if cfg.configDir != null then cfg.configDir else "${userHome}/.config/broccoli-comms";
   cacheDir = if cfg.cacheDir != null then cfg.cacheDir else "${userHome}/.cache/broccoli-comms";
-  runtimeConfig = { agents = lib.mapAttrs (_: spec: { inherit (spec) cwd command; }) cfg.agents; };
+  runtimeConfig = { agents = lib.mapAttrs (_: spec: { inherit (spec) cwd command autostart; }) cfg.agents; };
 
   registryStatePath = if cfg.registry.statePath != null then cfg.registry.statePath else "/var/lib/broccoli-comms-registry/state.json";
   registryEnv = {

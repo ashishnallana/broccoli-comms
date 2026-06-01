@@ -58,7 +58,7 @@ From a checkout:
 git clone <broccoli-comms-repo> broccoli-comms
 cd broccoli-comms
 nix run .#broccoli-comms -- doctor --json
-nix run .#broccoli-comms -- agent add main --cwd "$HOME/project" --command 'pi'
+nix run .#broccoli-comms -- agent add main --cwd "$HOME/project" --command 'pi' --autostart
 nix run .#broccoli-comms -- start
 nix run .#broccoli-comms -- open
 ```
@@ -69,7 +69,7 @@ For persistent installation:
 cd broccoli-comms
 nix profile install .#broccoli-comms
 broccoli-comms doctor
-broccoli-comms agent add main --cwd "$HOME/project" --command 'pi'
+broccoli-comms agent add main --cwd "$HOME/project" --command 'pi' --autostart
 broccoli-comms start
 broccoli-comms open
 ```
@@ -91,7 +91,7 @@ git clone <broccoli-comms-repo> broccoli-comms
 cd broccoli-comms
 make build
 ./bin/broccoli-comms doctor --json
-./bin/broccoli-comms agent add main --cwd "$HOME/project" --command 'pi'
+./bin/broccoli-comms agent add main --cwd "$HOME/project" --command 'pi' --autostart
 ./bin/broccoli-comms start
 ./bin/broccoli-comms open
 ```

@@ -332,13 +332,13 @@ Outbox records persist target agent/tracker IDs. Inbound messages carry sender a
 Managed agent config/window commands:
 
 ```sh
-broccoli-comms agent add <name> --cwd <dir> --command <cmd>
+broccoli-comms agent add <name> --cwd <dir> --command <cmd> [--autostart]
 broccoli-comms agent focus <name>
 broccoli-comms agent attach <name>
 broccoli-comms agent remove <name>
 broccoli-comms agent restart <name>
 ```
 
-`focus` selects a running managed-agent window using tmux metadata/window ids and prints a JSON-friendly result. `attach` attaches or switches the current terminal/client directly to that managed window. Other commands also print JSON-friendly results.
+`start`/`ui` only launch configured agents with `autostart: true`; `agent restart <name>` can still launch a configured agent explicitly. `focus` selects a running managed-agent window using tmux metadata/window ids and prints a JSON-friendly result. `attach` attaches or switches the current terminal/client directly to that managed window. Other commands also print JSON-friendly results.
 
 When launched via `broccoli-comms open` / `broccoli-comms ui`, `agent-communicator` always receives the private `AGENT_TRACKER_SOCKET`. In default tmux mode it relies on pane `TMUX` metadata for tmux operations; in private mode it also receives `AGENT_TRACKER_TMUX_SOCKET` and `BROCCOLI_COMMS_TMUX_SOCKET`.
