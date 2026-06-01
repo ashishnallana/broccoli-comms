@@ -128,6 +128,18 @@
           default = broccoliComms;
         });
 
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell {
+          packages = with pkgs; [
+            go
+            gnumake
+            nodejs
+            python3
+            tmux
+          ];
+        };
+      });
+
       checks = forAllSystems (pkgs: {
         python-syntax = pkgs.runCommand "broccoli-comms-python-syntax" { } ''
           cp -R ${./app} app
