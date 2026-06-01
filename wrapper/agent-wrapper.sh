@@ -138,10 +138,13 @@ PY
 heartbeat &
 heartbeat_pid=$!
 
+# shellcheck disable=SC2329 # invoked via EXIT trap
 cleanup() {
   kill "$heartbeat_pid" >/dev/null 2>&1 || true
   if command -v agent-tracker-ctl >/dev/null 2>&1; then
-    agent-tracker-ctl unregister --pane "$pane_id" >/dev/null 2>&1 || true
+    agent-tracker-ctl unregister --pane "$pane_id" >/dev/null 2>&1 \
+      || agent-tracker-ctl unregister --id "$agent_id" >/dev/null 2>&1 \
+      || true
   fi
   "${tmux_cmd[@]}" set-option -p -u -t "$pane_id" @agent_name 2>/dev/null || true
   "${tmux_cmd[@]}" set-option -p -u -t "$pane_id" @agent_id 2>/dev/null || true
@@ -149,4 +152,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-exec "$cmd" "$@"
+run_status=0
+"$cmd" "$@" || run_status=$?
+exit "$run_status"
