@@ -119,8 +119,20 @@ PY
     exec ${cfg.electron.package}/bin/agent-communicator-electron
   '';
 
+  broccoliCommsCli = pkgs.writeShellApplication {
+    name = "broccoli-comms";
+    runtimeInputs = [ pcfg.package ];
+    text = ''
+      export BROCCOLI_COMMS_RUNTIME_DIR="''${BROCCOLI_COMMS_RUNTIME_DIR:-${broccoliRuntimeDir}}"
+      export BROCCOLI_COMMS_CACHE_DIR="''${BROCCOLI_COMMS_CACHE_DIR:-${broccoliCacheDir}}"
+      export BROCCOLI_COMMS_CONFIG_DIR="''${BROCCOLI_COMMS_CONFIG_DIR:-${broccoliConfigDir}}"
+      export AGENT_TRACKER_SOCKET="''${AGENT_TRACKER_SOCKET:-$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock}"
+      exec ${pcfg.package}/bin/broccoli-comms "$@"
+    '';
+  };
+
   installedPackages =
-    lib.optionals pcfg.enable ([ pcfg.package ]
+    lib.optionals pcfg.enable ([ broccoliCommsCli ]
       ++ lib.optional pcfg.install.tracker packages.agentTracker
       ++ lib.optional pcfg.install.trackerCtl packages.agentTrackerCtl
       ++ lib.optional pcfg.install.wrapper packages.agentWrapper
