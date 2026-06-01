@@ -1056,7 +1056,7 @@ class TestRpcHandler(unittest.TestCase):
     @mock.patch("registry_client.send_remote_message", return_value=(202, {"ok": True}))
     def test_send_message_routes_remote_target_address_via_registry(self, send_remote):
         state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
-        self.assertTrue(rpc_handler.handle_send_message({"agent_name": "sender", "target_address": "remote-host/agent2", "message": "hello"}))
+        self.assertTrue(rpc_handler.handle_send_message({"sender_id": "id-s", "target_address": "remote-host/agent2", "message": "hello"}))
         send_remote.assert_called_once_with("sender", "id-s", mock.ANY, "remote-host", "agent2", "hello", None, None, mock.ANY)
         self.assertEqual(send_remote.call_args.args[8]["sender_model_type"], "unknown")
 
@@ -1064,14 +1064,72 @@ class TestRpcHandler(unittest.TestCase):
     def test_send_message_routes_remote_uuid_target_address_via_registry(self, send_remote):
         state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
         target_id = "961477f2-6523-4dae-87ea-bc6223fa04df"
-        self.assertTrue(rpc_handler.handle_send_message({"agent_name": "sender", "target_address": f"remote-host/{target_id}", "message": "hello"}))
+        self.assertTrue(rpc_handler.handle_send_message({"sender_id": "id-s", "target_address": f"remote-host/{target_id}", "message": "hello"}))
         send_remote.assert_called_once_with("sender", "id-s", mock.ANY, "remote-host", target_id, "hello", None, None, mock.ANY)
 
     @mock.patch("registry_client.send_remote_message_to_registry", return_value=(202, {"ok": True}))
     def test_send_message_routes_explicit_registry_target_address(self, send_remote):
         state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
-        self.assertTrue(rpc_handler.handle_send_message({"agent_name": "sender", "target_address": "corp:remote-host/agent2", "message": "hello"}))
+        self.assertTrue(rpc_handler.handle_send_message({"sender_id": "id-s", "target_address": "corp:remote-host/agent2", "message": "hello"}))
         send_remote.assert_called_once_with("corp", "sender", "id-s", mock.ANY, "remote-host", "agent2", "hello", None, None, mock.ANY)
+
+    @mock.patch("tmux_util.send_keys")
+    def test_plain_local_target_without_sender_identity_uses_cli_user(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "target-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("target", {"agent_id": "target-id", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+
+            self.assertTrue(rpc_handler.handle_send_message({"agent_name": "target", "message": "hello"}))
+
+            with open(inbox_path) as f:
+                msg = json.loads(f.readline())
+            self.assertEqual(msg["sender"], "cli-user")
+            self.assertIsNone(msg.get("sender_agent_id"))
+            send_keys.assert_called_once()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    def test_plain_local_target_with_explicit_sender_id_resolves_sender(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "target-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("sender", {"agent_id": "sender-id", "status": "idle"})
+            state.set_agent("target", {"agent_id": "target-id", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+
+            self.assertTrue(rpc_handler.handle_send_message({"agent_name": "target", "message": "hello", "sender_id": "sender-id"}))
+
+            with open(inbox_path) as f:
+                msg = json.loads(f.readline())
+            self.assertEqual(msg["sender"], "sender")
+            self.assertEqual(msg["sender_agent_id"], "sender-id")
+            send_keys.assert_called_once()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
+    @mock.patch("tmux_util.send_keys")
+    def test_id_target_without_sender_identity_uses_cli_user(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "target-id.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("target", {"agent_id": "target-id", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+
+            self.assertTrue(rpc_handler.handle_send_message({"agent_id": "target-id", "message": "hello"}))
+
+            with open(inbox_path) as f:
+                msg = json.loads(f.readline())
+            self.assertEqual(msg["sender"], "cli-user")
+            self.assertIsNone(msg.get("sender_agent_id"))
+            send_keys.assert_called_once()
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
 
     @mock.patch("tmux_util.send_keys")
     def test_local_send_preserves_message_id_and_sender_metadata(self, send_keys):

@@ -832,25 +832,17 @@ def handle_send_input(params: dict, caller_pid: int = None) -> dict:
         raise RuntimeError(f"Failed to send direct pane input: {e}")
 
 
-def _identify_sender(params: dict, caller_pid: int = None) -> str | None:
-    """Identify the message/input sender without treating target fields as sender identity."""
-    sender_id = params.get("sender_id")
-    if sender_id:
-        resolved_name = state.get_agent_name_by_id(sender_id)
-        if resolved_name:
-            return resolved_name
+def _sender_identification_params(params: dict) -> dict:
+    """Return only explicit sender identity fields safe for sender inference.
 
-    sender_name = params.get("sender_name")
-    if sender_name:
-        return sender_name
-
-    sender_tmux_pane = params.get("sender_tmux_pane")
-    if sender_tmux_pane:
-        resolved_name = state.get_agent_name_by_pane(sender_tmux_pane)
-        if resolved_name:
-            return resolved_name
-
-    return _identify_agent({}, caller_pid)
+    send-message params may also contain target identifiers such as agent_name,
+    agent_id, or target_address. Those must never be fed into _identify_agent()
+    when resolving the sender.
+    """
+    result = {}
+    if params.get("sender_id"):
+        result["sender_id"] = params["sender_id"]
+    return result
 
 
 def _sender_metadata(sender_name: str, sender_info: dict, sender_id: str | None) -> dict:

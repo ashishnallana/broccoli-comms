@@ -97,10 +97,13 @@ def tmux_socket_label() -> str | None:
     return str(paths()["tmux_socket"]) if use_private_tmux() else None
 
 
-def base_env() -> dict[str, str]:
+def base_env(preserve_agent_identity: bool = False) -> dict[str, str]:
     p = paths()
     env = os.environ.copy()
-    for key in ("TMUX", "TMUX_PANE", "AGENT_ID", "AGENT_NAME", "AGENT_UUID", "SUGGESTED_AGENT_NAME"):
+    strip_keys = ["TMUX", "TMUX_PANE", "SUGGESTED_AGENT_NAME"]
+    if not preserve_agent_identity:
+        strip_keys.extend(["AGENT_ID", "AGENT_NAME", "AGENT_UUID"])
+    for key in strip_keys:
         env.pop(key, None)
     env.update({
         "BROCCOLI_COMMS_APP_RUNTIME": "1",
@@ -1672,11 +1675,15 @@ def agent_tracker(args: argparse.Namespace) -> None:
     ensure_tmux()
     ctl = tracker_ctl_script()
     tracker_args = list(getattr(args, "tracker_args", None) or ["--help"])
+<<<<<<< HEAD
     env = base_env()
     for key in ("AGENT_ID", "AGENT_NAME", "AGENT_UUID"):
         if os.environ.get(key):
             env[key] = os.environ[key]
     os.execvpe(sys.executable, [sys.executable, ctl, *tracker_args], env)
+=======
+    os.execvpe(sys.executable, [sys.executable, ctl, *tracker_args], base_env(preserve_agent_identity=True))
+>>>>>>> e056ce4 (Fix send-message sender attribution)
 
 
 def doctor(args: argparse.Namespace) -> None:
