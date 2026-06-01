@@ -338,7 +338,7 @@ find ~/.config/agent-tracker/agents -maxdepth 2 -name config.json -print
 python3 -m json.tool ~/.config/agent-tracker/agents/broccoli-comms/config.json
 ```
 
-`open` / `ui` launches or reuses `agent-communicator` as a wrapped frontend in the `broccoli-comms-agents` tmux session and attaches or switches to it. From inside an existing default-tmux client, `ui` uses `tmux switch-client` instead of attempting a nested attach. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views use the private tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
+`open` / `ui` launches or reuses `agent-communicator` as a wrapped frontend in the `broccoli-comms-agents` tmux session and attaches or switches to it with `AGENT_TRACKER_SOCKET` set to the app-owned runtime. From inside an existing default-tmux client, `ui` uses `tmux switch-client` instead of attempting a nested attach. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views use the private tracker without depending on the user's global tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
 
 Agent Communicator key highlights:
 
