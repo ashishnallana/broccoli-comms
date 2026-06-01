@@ -40,7 +40,7 @@ Implement a top-level subcommand:
 broccoli-comms track [--name NAME] [--cwd DIR] -- COMMAND [ARGS...]
 ```
 
-Initial implementation should run in the **current terminal/pane** by `exec`-ing `agent-wrapper`. It does not need to create a tmux window. Creating windows is already covered by managed agents and `agent-tracker spin`.
+Implementation should run in the **current tmux pane** by `exec`-ing `agent-wrapper`. It does not create a tmux window and should fail clearly outside tmux because no pane metadata is available. Creating windows is already covered by managed agents and `agent-tracker spin`.
 
 ## Behavior
 
@@ -135,7 +135,7 @@ Update `README.md` with a short section near agent commands:
 ```md
 ### Track an ad-hoc command in the current pane
 
-Use `broccoli-comms track` when you want to run a command yourself but still have it register with Agent Communicator:
+Use `broccoli-comms track` when you want to run a command yourself inside the current tmux pane but still have it register with Agent Communicator:
 
 ```sh
 broccoli-comms track --name my-agent -- my-agent

@@ -274,12 +274,12 @@ Use the higher-level Broccoli commands for most workflows:
 | Use case | Command | Notes |
 | --- | --- | --- |
 | Persistent named agent that should come back on every `start`/`ui` | `broccoli-comms agent add NAME --cwd DIR --command 'COMMAND' --autostart` | Saves to Broccoli config and reconciles into the `broccoli-comms-agents` session only when autostart is true. Best for coder/reviewer teams. |
-| One-off command in the current terminal/tmux pane that should appear in Agent Communicator | `broccoli-comms track --name NAME -- COMMAND [ARGS...]` | Does not create a new tmux window. It wraps the current process with Broccoli's bundled `agent-wrapper`. |
+| One-off command in the current tmux pane that should appear in Agent Communicator | `broccoli-comms track --name NAME -- COMMAND [ARGS...]` | Must be run from inside tmux. It does not create a new tmux window; it wraps the current process with Broccoli's bundled `agent-wrapper`. |
 | One-off new tmux pane/window through the lower-level tracker | `broccoli-comms agent-tracker spin DIR COMMAND [ARGS...]` | Useful for tracker-level experiments; for durable agents prefer `agent add`. |
 
 ### Track an ad-hoc command in the current pane
 
-Use `broccoli-comms track` when you want to run a command yourself in the current terminal/tmux pane but still have it register with Agent Communicator:
+Use `broccoli-comms track` when you want to run a command yourself in the current tmux pane but still have it register with Agent Communicator. It fails clearly outside tmux because there is no pane metadata to register:
 
 ```sh
 broccoli-comms track --name my-agent -- my-agent

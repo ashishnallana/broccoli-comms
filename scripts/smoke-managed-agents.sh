@@ -107,6 +107,16 @@ mkdir -p "$HOME" "$BROCCOLI_COMMS_RUNTIME_DIR" "$BROCCOLI_COMMS_CACHE_DIR" "$BRO
 
 printf 'Using temp runtime: %s\n' "$tmpdir"
 
+if broccoli track -- sleep 1 >"$tmpdir/track-outside-tmux.out" 2>"$tmpdir/track-outside-tmux.err"; then
+  echo "track unexpectedly succeeded outside tmux" >&2
+  exit 1
+fi
+if ! grep -q "must be run from within a tmux pane" "$tmpdir/track-outside-tmux.err"; then
+  echo "track outside tmux did not explain tmux requirement" >&2
+  cat "$tmpdir/track-outside-tmux.err" >&2
+  exit 1
+fi
+
 broccoli agent add "$manual_agent" --cwd "$tmpdir/project" --command "sleep 60"
 list_json="$(broccoli agent list --json)"
 LIST_JSON="$list_json" python3 - "$manual_agent" <<'PY'

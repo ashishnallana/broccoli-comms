@@ -919,6 +919,8 @@ def track(args: argparse.Namespace) -> None:
         command = command[1:]
     if not command:
         raise SystemExit("track requires a command after --")
+    if not os.environ.get("TMUX") or not os.environ.get("TMUX_PANE"):
+        raise SystemExit("broccoli-comms track must be run from within a tmux pane so the agent can be registered. Start or attach to tmux, then run the command again.")
 
     original_command = list(command)
     track_env = base_env()
