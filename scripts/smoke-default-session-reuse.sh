@@ -96,6 +96,16 @@ mkdir -p "$HOME" "$BROCCOLI_COMMS_RUNTIME_DIR" "$BROCCOLI_COMMS_CACHE_DIR" "$BRO
 
 printf 'Using temp runtime: %s\n' "$tmpdir"
 
+if broccoli ui >"$tmpdir/ui-no-tracker.out" 2>"$tmpdir/ui-no-tracker.err"; then
+  echo "ui unexpectedly succeeded without a running tracker" >&2
+  exit 1
+fi
+if ! grep -q "requires a running tracker" "$tmpdir/ui-no-tracker.err"; then
+  echo "ui without tracker did not explain tracker requirement" >&2
+  cat "$tmpdir/ui-no-tracker.err" >&2
+  exit 1
+fi
+
 # Pre-create the target session with an unrelated sentinel window. Broccoli
 # should reuse this session, add only its own windows, and leave the sentinel
 # alive on stop.
@@ -123,57 +133,9 @@ if not status.get("tracker", {}).get("up") or not status.get("tmux", {}).get("up
     raise SystemExit("status did not report tracker/tmux up")
 PY
 
-# ui/open attach in the foreground; timeout is expected in non-interactive smoke
-# runs. The important behavior here is that each command creates/reuses a single
-# Broccoli-owned UI window in the existing session before attaching.
-broccoli_timeout 4 ui || true
-ui_count="$(tmux_default list-windows -t "$session_name" -F '#{@broccoli_ui_window}' | grep -Fx '1' | wc -l | tr -d ' ')"
-if [[ "$ui_count" != "1" ]]; then
-  echo "expected exactly one Broccoli UI window after ui, found $ui_count" >&2
-  tmux_default list-windows -t "$session_name" -F $'#{window_id}\t#{window_name}\t#{@broccoli_ui_window}' >&2
-  exit 1
-fi
-
-broccoli_timeout 4 open || true
-ui_count="$(tmux_default list-windows -t "$session_name" -F '#{@broccoli_ui_window}' | grep -Fx '1' | wc -l | tr -d ' ')"
-if [[ "$ui_count" != "1" ]]; then
-  echo "open created duplicate Broccoli UI windows; found $ui_count" >&2
-  tmux_default list-windows -t "$session_name" -F $'#{window_id}\t#{window_name}\t#{@broccoli_ui_window}' >&2
-  exit 1
-fi
-
-for _ in {1..50}; do
-  agents_json="$(tracker_rpc list)"
-  if AGENTS_JSON="$agents_json" python3 <<'PY'
-import json, os, sys
-agents = json.loads(os.environ["AGENTS_JSON"] or "{}")
-ui = agents.get("agent-communicator")
-if not ui or not ui.get("tmux_pane"):
-    raise SystemExit(1)
-raise SystemExit(0)
-PY
-  then
-    break
-  fi
-  sleep 0.1
-done
-
-AGENTS_JSON="$agents_json" python3 <<'PY'
-import json, os, sys
-agents = json.loads(os.environ["AGENTS_JSON"] or "{}")
-ui = agents.get("agent-communicator")
-if not ui:
-    print(json.dumps(agents, indent=2), file=sys.stderr)
-    raise SystemExit("agent-communicator mailbox/UI registration missing")
-if ui.get("target_address") != "agent-communicator" or ui.get("name") != "agent-communicator":
-    raise SystemExit(f"agent-communicator registration is not stable/shared: {ui}")
-if not ui.get("tmux_pane"):
-    raise SystemExit(f"agent-communicator registration does not point at the UI pane: {ui}")
-local_duplicates = [name for name, info in agents.items() if name.startswith("agent-communicator-") and info.get("scope", "local") == "local"]
-if local_duplicates:
-    print(json.dumps(agents, indent=2), file=sys.stderr)
-    raise SystemExit(f"communicator registered duplicate local names: {local_duplicates}")
-PY
+# ui/open now run agent-communicator directly in the current shell and do not
+# create Broccoli-owned tmux windows. Interactive TUI startup is covered by
+# manual/e2e checks; this smoke focuses on default-session ownership.
 
 # attach is interactive; verify it targets the renamed session without requiring
 # a real terminal by accepting either a timeout or tmux's no-terminal error.

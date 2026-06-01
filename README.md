@@ -6,7 +6,7 @@ Broccoli Comms is a standalone agent workspace runtime. It runs terminal-based c
 
 `broccoli-comms` owns an isolated runtime containing:
 
-- managed agent panes and the TUI in your default tmux server/session by default
+- managed agent panes in your default tmux server/session by default
 - a private `agent-tracker` daemon/socket for registration, inboxes, pane capture, and local direct input
 - managed agent windows launched through `agent-wrapper`
 - the `agent-communicator` TUI as the primary interface
@@ -15,12 +15,13 @@ Broccoli Comms is a standalone agent workspace runtime. It runs terminal-based c
 Typical local workflow:
 
 ```sh
-broccoli-comms ui          # starts/reconciles runtime if needed, then opens the TUI; alias: open
+broccoli-comms start       # start tracker and reconcile autostart agents
+broccoli-comms ui          # open the TUI in the current shell; alias: open
 broccoli-comms status      # inspect runtime state
 broccoli-comms stop        # stop Broccoli-owned windows/session state and private tracker
 ```
 
-Use `broccoli-comms start` when you want to start/reconcile agents without opening the UI.
+`broccoli-comms ui` connects to an already-running tracker and fails clearly if the tracker is not running.
 
 Default paths/mode:
 
@@ -49,6 +50,7 @@ Run directly from a checkout:
 git clone https://github.com/tanmayv/broccoli-comms.git
 cd broccoli-comms
 nix run .#broccoli-comms -- doctor
+nix run .#broccoli-comms -- start
 nix run .#broccoli-comms -- ui
 ```
 
@@ -56,6 +58,7 @@ Run directly from GitHub:
 
 ```sh
 nix run github:tanmayv/broccoli-comms#broccoli-comms -- doctor
+nix run github:tanmayv/broccoli-comms#broccoli-comms -- start
 nix run github:tanmayv/broccoli-comms#broccoli-comms -- ui
 ```
 
@@ -64,6 +67,7 @@ Install persistently with Nix:
 ```sh
 nix profile install github:tanmayv/broccoli-comms#broccoli-comms
 broccoli-comms doctor
+broccoli-comms start
 broccoli-comms ui
 ```
 
@@ -77,7 +81,7 @@ Required on the host:
 - `make` to run the build/install targets
 - `go` to build `agent-communicator`
 - `python3` to run `broccoli-comms`, `agent-tracker`, and `agent-registry`
-- `tmux` for the agent/UI session runtime
+- `tmux` for managed agent panes
 - a POSIX shell; `bash` is needed for the smoke-test scripts
 - the agent commands you want to run on `PATH`, for example `pi`, `claude`, or `codex`
 
@@ -90,6 +94,7 @@ git clone https://github.com/tanmayv/broccoli-comms.git
 cd broccoli-comms
 make build
 ./bin/broccoli-comms doctor
+./bin/broccoli-comms start
 ./bin/broccoli-comms ui
 ```
 
@@ -167,10 +172,11 @@ Exposed Nix packages:
 This is the simplest mode. Agents on the same machine communicate through the private local tracker only. No central registry is needed.
 
 ```sh
+broccoli-comms start
 broccoli-comms ui
 ```
 
-`ui` starts the private tracker, reconciles configured agents, creates/reuses the `broccoli-comms-agents` tmux session, and opens the TUI. Use this when all agents you care about are running under the same Broccoli Comms runtime.
+`start` starts the private tracker, reconciles autostart agents, and creates/reuses the `broccoli-comms-agents` tmux session. `ui` then connects to that running tracker and opens the TUI in the current shell.
 
 ### 2. Use an existing central registry
 
@@ -182,6 +188,7 @@ Configure an existing registry URL before opening the UI so the private tracker 
 broccoli-comms registry add --name home --url https://registry.example.com --auth --token-file ~/.config/broccoli-comms/registry-token
 broccoli-comms registry list
 broccoli-comms registry env
+broccoli-comms start
 broccoli-comms ui
 broccoli-comms agent-tracker registry-status
 ```
@@ -190,13 +197,15 @@ For an unauthenticated local/dev registry:
 
 ```sh
 broccoli-comms registry add --name local --url http://127.0.0.1:8080 --noauth
+broccoli-comms start
 broccoli-comms ui
 ```
 
-Saved registry URLs live in `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` (default `~/.config/broccoli-comms/registries.json`). Token contents are not stored; use `token-file`. If `AGENT_REGISTRIES_JSON` is explicitly set in the environment, it overrides saved registry URLs for that invocation. If Broccoli Comms is already running when you add or change registry URLs, stop and reopen it so the tracker starts with the new config:
+Saved registry URLs live in `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` (default `~/.config/broccoli-comms/registries.json`). Token contents are not stored; use `token-file`. If `AGENT_REGISTRIES_JSON` is explicitly set in the environment, it overrides saved registry URLs for that invocation. If Broccoli Comms is already running when you add or change registry URLs, stop and restart it so the tracker starts with the new config:
 
 ```sh
 broccoli-comms stop
+broccoli-comms start
 broccoli-comms ui
 ```
 
@@ -211,6 +220,7 @@ broccoli-comms registry status
 
 # On each client machine before opening the UI:
 broccoli-comms registry add --name home --url http://REGISTRY_HOST:8080 --auth --token-file ~/.config/broccoli-comms/registry-token
+broccoli-comms start
 broccoli-comms ui
 broccoli-comms agent-tracker registry-status
 ```
@@ -256,16 +266,16 @@ broccoli-comms agent restart main
 broccoli-comms agent remove reviewer
 ```
 
-Then run one of:
+Then run:
 
 ```sh
-broccoli-comms ui      # reconcile autostart agents and open the TUI
-broccoli-comms start   # reconcile autostart agents without opening the TUI
+broccoli-comms start   # reconcile autostart agents
+broccoli-comms ui      # open the TUI against the running tracker
 ```
 
-Agents added without `--autostart` remain configured but are not launched by `start`/`ui`; use `broccoli-comms agent restart NAME` to launch one explicitly.
+Agents added without `--autostart` remain configured but are not launched by `start`; use `broccoli-comms agent restart NAME` to launch one explicitly.
 
-`start` reconciles configured agents with `"autostart": true` into the `broccoli-comms-agents` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `broccoli-comms track` with the private tracker environment. By default this session is created in your normal tmux server, and an already-existing `broccoli-comms-agents` session is reused. `broccoli-comms stop` removes only Broccoli-owned windows plus the private tracker, leaving unrelated tmux sessions/windows alone. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/ui/stop` to use the Broccoli-owned private tmux socket behavior with the same session name.
+`start` reconciles configured agents with `"autostart": true` into the `broccoli-comms-agents` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `broccoli-comms track` with the private tracker environment. By default this session is created in your normal tmux server, and an already-existing `broccoli-comms-agents` session is reused. `broccoli-comms ui` runs `agent-communicator` in the current shell and requires the tracker to already be running. `broccoli-comms stop` removes only Broccoli-owned windows plus the private tracker, leaving unrelated tmux sessions/windows alone. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/stop` to use the Broccoli-owned private tmux socket behavior with the same session name.
 
 ### Which agent launch command should I use?
 
@@ -342,7 +352,7 @@ find ~/.config/agent-tracker/agents -maxdepth 2 -name config.json -print
 python3 -m json.tool ~/.config/agent-tracker/agents/broccoli-comms/config.json
 ```
 
-`open` / `ui` launches or reuses `agent-communicator` as a wrapped frontend in the `broccoli-comms-agents` tmux session and attaches or switches to it with `AGENT_TRACKER_SOCKET` set to the app-owned runtime. From inside an existing default-tmux client, `ui` uses `tmux switch-client` instead of attempting a nested attach. Wrapping lets the communicator register as `agent-communicator`, so its inbox/status views use the private tracker without depending on the user's global tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
+`open` / `ui` runs `agent-communicator` directly in the current shell with `AGENT_TRACKER_SOCKET` set to the app-owned runtime. It requires the private tracker to already be running; run `broccoli-comms start` first. The communicator creates/uses the stable `agent-communicator` mailbox, so its inbox/status views use the private tracker without depending on the user's global tracker. The TUI shows a Broccoli Comms runtime/tracker status line when launched in this app mode, including RPC health, active target/model/machine, local/remote online counts, registry state, and current time.
 
 Agent Communicator key highlights:
 
@@ -394,7 +404,8 @@ Detection is configured by provider, not by individual agent name. The default c
 You can override it for a tracker process with:
 
 ```sh
-AGENT_TRACKER_DETECTION_CONFIG=/path/to/detection.json broccoli-comms ui
+AGENT_TRACKER_DETECTION_CONFIG=/path/to/detection.json broccoli-comms start
+broccoli-comms ui
 ```
 
 Start from the sample config:
@@ -404,6 +415,7 @@ mkdir -p ~/.config/agent-tracker
 cp agent-tracker/detection.sample.json ~/.config/agent-tracker/detection.json
 $EDITOR ~/.config/agent-tracker/detection.json
 broccoli-comms stop
+broccoli-comms start
 broccoli-comms ui
 ```
 
@@ -462,6 +474,7 @@ After editing the config, restart Broccoli Comms so the tracker reloads it:
 
 ```sh
 broccoli-comms stop
+broccoli-comms start
 broccoli-comms ui
 ```
 
@@ -684,7 +697,7 @@ make smoke-default-session-reuse
 make smoke-managed-agents
 ```
 
-The runtime test starts `broccoli-comms`, verifies the private tracker and active tmux mode/session, checks status JSON, stops the runtime, and verifies cleanup. The default-session reuse smoke verifies `broccoli-comms-agents` reuse, `ui`/`open` UI-window reuse, `attach` targeting, and stop safety for unrelated windows. The managed-agent test adds a harmless `sleep 60` configured agent, verifies reconciliation/no duplicates/restart/remove, and cleans up isolated temp state.
+The runtime test starts `broccoli-comms`, verifies the private tracker and active tmux mode/session, checks status JSON, stops the runtime, and verifies cleanup. The default-session reuse smoke verifies `broccoli-comms-agents` reuse, `ui` requiring a running tracker, `attach` targeting, and stop safety for unrelated windows. The managed-agent test adds a harmless `sleep 60` configured agent, verifies reconciliation/no duplicates/restart/remove, and cleans up isolated temp state.
 
 ## Source copied from home-manager-core
 

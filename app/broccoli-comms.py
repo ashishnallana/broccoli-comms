@@ -639,10 +639,19 @@ def ensure_ui_window() -> dict[str, str]:
     return {"window_id": window_id, "window_name": UI_WINDOW_NAME, "pane_id": pane_id}
 
 
-def ui(args: argparse.Namespace) -> None:
-    start(args)
-    window = ensure_ui_window()
-    exec_tmux_interactive(window["window_id"])
+def ui_env_for_current_shell() -> dict[str, str]:
+    env = base_env()
+    for key in ("TMUX", "TMUX_PANE"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
+
+
+def ui(_args: argparse.Namespace) -> None:
+    if not can_connect(paths()["tracker_socket"]):
+        raise SystemExit(f"broccoli-comms ui requires a running tracker at {paths()['tracker_socket']}. Run `broccoli-comms start` first.")
+    tui = tui_path()
+    os.execvpe(tui, [tui], ui_env_for_current_shell())
 
 
 def attach(_args: argparse.Namespace) -> None:
