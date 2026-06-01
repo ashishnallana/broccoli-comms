@@ -1388,23 +1388,29 @@ def registry_start(args: argparse.Namespace) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     config = _registry_config_from_args(args, auth_enabled, state_path)
     env = _registry_env(args, auth_enabled, state_path)
-    if args.foreground:
-        os.execvpe(sys.executable, [sys.executable, registry_script()], env)
-
+    _save_registry_config(config)
     pid_file = paths()["registry_pid"]
     existing_pid = _read_pid(pid_file)
-    if existing_pid and _pid_running(existing_pid) and not args.force:
-        print(f"registry already running pid={existing_pid} url={config['url']}")
-        return
-    if existing_pid and args.force:
+    if existing_pid and _pid_running(existing_pid):
+        if not args.force:
+            print(f"registry already running pid={existing_pid} url={config['url']}")
+            return
         try:
             os.kill(existing_pid, signal.SIGTERM)
         except OSError:
             pass
+        for _ in range(50):
+            if not _pid_running(existing_pid):
+                break
+            time.sleep(0.1)
+
+    if args.foreground:
+        pid_file.write_text(str(os.getpid()))
+        os.execvpe(sys.executable, [sys.executable, registry_script()], env)
+
     log = open(paths()["registry_log"], "ab", buffering=0)
     proc = subprocess.Popen([sys.executable, registry_script()], env=env, stdout=log, stderr=log, start_new_session=True)
     pid_file.write_text(str(proc.pid))
-    _save_registry_config(config)
     if not _wait_registry_ready(config):
         if proc.poll() is not None:
             raise SystemExit(f"agent-registry exited early; see {paths()['registry_log']}")

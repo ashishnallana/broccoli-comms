@@ -20,18 +20,24 @@ let
   stateRoot = config.xdg.stateHome or "${config.home.homeDirectory}/.local/state";
   configRoot = config.xdg.configHome or "${config.home.homeDirectory}/.config";
 
-  trackerCacheDir = if cfg.tracker.cacheDir != null then cfg.tracker.cacheDir else "${cacheRoot}/broccoli-comms/agent-tracker";
-  trackerSocket = if cfg.tracker.socketPath != null then cfg.tracker.socketPath else "${trackerCacheDir}/agent-tracker.sock";
-  trackerStdout = "${trackerCacheDir}/launchd.stdout.log";
-  trackerStderr = "${trackerCacheDir}/launchd.stderr.log";
+  broccoliRuntimeDir = if cfg.runtimeDir != null then cfg.runtimeDir else "${cacheRoot}/broccoli-comms/runtime";
+  broccoliCacheDir = if cfg.cacheDir != null then cfg.cacheDir else "${cacheRoot}/broccoli-comms";
+  broccoliConfigDir = if cfg.configDir != null then cfg.configDir else "${configRoot}/broccoli-comms";
+  trackerSocket = if broccoliRuntimeDir != null then "${broccoliRuntimeDir}/agent-tracker.sock" else null;
+  trackerStdout = "${broccoliCacheDir}/launchd.stdout.log";
+  trackerStderr = "${broccoliCacheDir}/launchd.stderr.log";
   trackerHostSuffixPath = "${stateRoot}/broccoli-comms/agent-tracker/hostname-suffix";
 
   envList = attrs: lib.mapAttrsToList (name: value: "${name}=${toString value}") attrs;
   optionalEnv = name: value: lib.optionalAttrs (value != null) { ${name} = value; };
 
-  trackerEnv = {
-    AGENT_TRACKER_SOCKET = trackerSocket;
-    XDG_CACHE_HOME = builtins.dirOf trackerCacheDir;
+  broccoliEnv = optionalEnv "BROCCOLI_COMMS_RUNTIME_DIR" broccoliRuntimeDir
+    // optionalEnv "BROCCOLI_COMMS_CACHE_DIR" broccoliCacheDir
+    // optionalEnv "BROCCOLI_COMMS_CONFIG_DIR" broccoliConfigDir;
+
+  broccoliSessionEnv = broccoliEnv // optionalEnv "AGENT_TRACKER_SOCKET" trackerSocket;
+
+  trackerEnv = broccoliEnv // {
     AGENT_TRACKER_HTTP_PORT = toString cfg.tracker.httpPort;
     AGENT_REGISTRY_HEARTBEAT_SECONDS = toString cfg.tracker.registryHeartbeatSeconds;
     AGENT_REGISTRY_AUTH = if cfg.tracker.registryAuth then "true" else "false";
@@ -87,27 +93,27 @@ PY
       export AGENT_TRACKER_HOSTNAME="''${base:-${config.home.username}}-$suffix"
     fi
     ${lib.optionalString (cfg.tracker.registryAuth && cfg.tracker.registryTokenFile != null) ''export AGENT_REGISTRY_TOKEN="$(cat ${lib.escapeShellArg (toString cfg.tracker.registryTokenFile)})"''}
-    exec ${cfg.tracker.package}/bin/agent-tracker
+    exec ${pcfg.package}/bin/broccoli-comms start
   '';
 
   registryStatePath = if cfg.registry.statePath != null then cfg.registry.statePath else "${stateRoot}/broccoli-comms/agent-registry/state.json";
-  registryCacheDir = if cfg.registry.cacheDir != null then cfg.registry.cacheDir else "${cacheRoot}/broccoli-comms/agent-registry";
-  registryEnv = {
-    AGENT_REGISTRY_HOST = cfg.registry.host;
-    AGENT_REGISTRY_PORT = toString cfg.registry.port;
-    AGENT_REGISTRY_AUTH = if cfg.registry.auth then "true" else "false";
-    TRACKER_STALE_SECONDS = toString cfg.registry.staleSeconds;
-    TRACKER_GONE_SECONDS = toString cfg.registry.goneSeconds;
-    AGENT_REGISTRY_STATE_PATH = registryStatePath;
+  registryCacheDir = if cfg.registry.cacheDir != null then cfg.registry.cacheDir else "${broccoliCacheDir}/agent-registry";
+  registryEnv = broccoliEnv // {
+    PATH = trackerEnv.PATH;
   } // cfg.registry.environment;
   registryStart = pkgs.writeShellScript "broccoli-comms-agent-registry-start" ''
-    ${lib.optionalString cfg.registry.auth ''export AGENT_REGISTRY_TOKEN="$(cat ${lib.escapeShellArg (toString cfg.registry.tokenFile)})"''}
-    exec ${cfg.registry.package}/bin/agent-registry
+    exec ${pcfg.package}/bin/broccoli-comms registry start --foreground --force \
+      --host ${lib.escapeShellArg cfg.registry.host} \
+      --port ${toString cfg.registry.port} \
+      --name ${lib.escapeShellArg cfg.registry.name} \
+      --state-path ${lib.escapeShellArg registryStatePath} \
+      --stale-seconds ${toString cfg.registry.staleSeconds} \
+      --gone-seconds ${toString cfg.registry.goneSeconds} \
+      ${if cfg.registry.auth then "--auth --token-file ${lib.escapeShellArg (toString cfg.registry.tokenFile)}" else "--noauth"}
   '';
 
-  electronEnv = {
-    AGENT_TRACKER_SOCKET = trackerSocket;
-  } // optionalEnv "AGENT_TRACKER_HOSTNAME" cfg.tracker.hostname
+  electronEnv = broccoliEnv // optionalEnv "AGENT_TRACKER_SOCKET" trackerSocket
+    // optionalEnv "AGENT_TRACKER_HOSTNAME" cfg.tracker.hostname
     // cfg.electron.environment;
   electronStart = pkgs.writeShellScript "broccoli-comms-electron-start" ''
     exec ${cfg.electron.package}/bin/agent-communicator-electron
@@ -132,18 +138,21 @@ in {
       description = "Main broccoli-comms CLI package.";
     };
     install = {
-      tracker = mkOption { type = types.bool; default = true; description = "Install agent-tracker."; };
-      trackerCtl = mkOption { type = types.bool; default = true; description = "Install agent-tracker-ctl."; };
-      wrapper = mkOption { type = types.bool; default = true; description = "Install agent-wrapper."; };
+      tracker = mkOption { type = types.bool; default = false; description = "Install the low-level agent-tracker binary. Prefer `broccoli-comms agent-tracker ...` for the app-owned runtime."; };
+      trackerCtl = mkOption { type = types.bool; default = false; description = "Install the low-level agent-tracker-ctl binary. Prefer `broccoli-comms agent-tracker ...` for the app-owned runtime."; };
+      wrapper = mkOption { type = types.bool; default = false; description = "Install the low-level agent-wrapper binary. Prefer `broccoli-comms track -- ...` for the app-owned runtime."; };
       registry = mkOption { type = types.bool; default = false; description = "Install agent-registry."; };
       managedAgent = mkOption { type = types.bool; default = false; description = "Install agent-registry-managed-agent."; };
-      tui = mkOption { type = types.bool; default = true; description = "Install agent-communicator TUI."; };
+      tui = mkOption { type = types.bool; default = false; description = "Install the low-level agent-communicator TUI. Prefer `broccoli-comms ui` for the app-owned runtime."; };
       electron = mkOption { type = types.bool; default = false; description = "Install Electron launcher."; };
     };
   };
 
   options.services.broccoli-comms = with lib; {
     enable = mkEnableOption "Broccoli Comms agent-tracker service";
+    runtimeDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_RUNTIME_DIR. Defaults to ~/.cache/broccoli-comms/runtime so all Home Manager-managed frontends share the app-owned tracker socket."; };
+    cacheDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_CACHE_DIR. Defaults to ~/.cache/broccoli-comms for Home Manager-managed logs and state."; };
+    configDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_CONFIG_DIR. Defaults to ~/.config/broccoli-comms."; };
 
     tracker = {
       enable = mkOption { type = types.bool; default = cfg.enable; description = "Enable agent-tracker as a systemd user service or launchd agent."; };
@@ -153,8 +162,8 @@ in {
         default = null;
         description = "Optional AGENT_TRACKER_HOSTNAME override. When null, the service generates a stable <machine-hostname>-<three-letter-suffix> identity and stores the suffix under XDG state.";
       };
-      socketPath = mkOption { type = types.nullOr types.str; default = null; description = "AGENT_TRACKER_SOCKET. Defaults to ~/.cache/broccoli-comms/agent-tracker/agent-tracker.sock."; };
-      cacheDir = mkOption { type = types.nullOr types.str; default = null; description = "Tracker cache directory. Defaults to ~/.cache/broccoli-comms/agent-tracker."; };
+      socketPath = mkOption { type = types.nullOr types.str; default = null; description = "Deprecated and ignored by the Broccoli Comms app-owned runtime. Set services.broccoli-comms.runtimeDir instead; the socket is <runtimeDir>/agent-tracker.sock."; };
+      cacheDir = mkOption { type = types.nullOr types.str; default = null; description = "Deprecated and ignored by the Broccoli Comms app-owned runtime. Set services.broccoli-comms.cacheDir instead."; };
       tmuxSocketPath = mkOption { type = types.nullOr types.str; default = null; description = "Optional AGENT_TRACKER_TMUX_SOCKET."; };
       httpPort = mkOption { type = types.port; default = 19876; };
       registries = mkOption { type = types.listOf registrySpecType; default = []; description = "Registries published to AGENT_REGISTRIES_JSON."; };
@@ -173,6 +182,7 @@ in {
       package = mkOption { type = types.package; default = packages.agentRegistry; defaultText = "self.packages.<system>.agentRegistry"; };
       host = mkOption { type = types.str; default = "127.0.0.1"; description = "Bind host for agent-registry."; };
       port = mkOption { type = types.port; default = 18000; };
+      name = mkOption { type = types.str; default = "local"; description = "Logical registry name used by `broccoli-comms registry start`."; };
       auth = mkOption { type = types.bool; default = false; };
       tokenFile = mkOption { type = types.nullOr types.path; default = null; };
       staleSeconds = mkOption { type = types.int; default = 60; };
@@ -190,8 +200,17 @@ in {
   };
 
   config = lib.mkMerge [
+    {
+      warnings = lib.optionals (cfg.tracker.socketPath != null) [
+        "services.broccoli-comms.tracker.socketPath is deprecated and ignored by the app-owned Broccoli Comms runtime; set services.broccoli-comms.runtimeDir instead."
+      ] ++ lib.optionals (cfg.tracker.cacheDir != null) [
+        "services.broccoli-comms.tracker.cacheDir is deprecated and ignored by the app-owned Broccoli Comms runtime; set services.broccoli-comms.cacheDir instead."
+      ];
+    }
+
     (lib.mkIf (cfg.tracker.enable || cfg.registry.enable || cfg.electron.enable) {
       programs.broccoli-comms.enable = lib.mkDefault true;
+      home.sessionVariables = broccoliSessionEnv;
     })
 
     (lib.mkIf pcfg.enable {
@@ -200,8 +219,9 @@ in {
 
     (lib.mkIf cfg.tracker.enable {
       assertions = [{ assertion = !cfg.tracker.registryAuth || cfg.tracker.registryTokenFile != null || cfg.tracker.registryToken != null; message = "services.broccoli-comms.tracker.registryTokenFile or registryToken is required when registryAuth is enabled."; }];
-      home.activation.ensureBroccoliCommsTrackerDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        mkdir -p ${lib.escapeShellArg trackerCacheDir}
+      home.activation.ensureBroccoliCommsRuntimeDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        mkdir -p ${lib.escapeShellArg broccoliCacheDir} ${lib.escapeShellArg broccoliConfigDir}
+        ${lib.optionalString (broccoliRuntimeDir != null) "mkdir -p ${lib.escapeShellArg broccoliRuntimeDir}"}
       '';
     })
 
@@ -209,16 +229,35 @@ in {
       systemd.user.services.broccoli-comms-agent-tracker = {
         Unit.Description = "Broccoli Comms agent-tracker daemon";
         Service = {
+          Type = "oneshot";
+          RemainAfterExit = true;
           Environment = envList trackerEnv;
           ExecStart = toString trackerStart;
-          Restart = "always";
-          RestartSec = 2;
+          ExecStop = "${pcfg.package}/bin/broccoli-comms stop";
         };
         Install.WantedBy = [ "default.target" ];
       };
     })
 
     (lib.mkIf (cfg.tracker.enable && pkgs.stdenv.isDarwin) {
+      home.activation.restartBroccoliCommsTracker = lib.hm.dag.entryAfter [ "setupLaunchAgents" ] ''
+        label="org.nix-community.home.broccoli-comms-agent-tracker"
+        domain="gui/$(id -u)"
+        service="$domain/$label"
+        plist="$HOME/Library/LaunchAgents/$label.plist"
+        if [ -f "$plist" ]; then
+          /bin/launchctl bootout "$service" >/dev/null 2>&1 || true
+          for _ in 1 2 3 4 5; do
+            if ! /bin/launchctl print "$service" >/dev/null 2>&1; then
+              break
+            fi
+            /bin/sleep 1
+          done
+          /bin/launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1 || true
+          /bin/launchctl kickstart -k "$service" >/dev/null 2>&1 || true
+        fi
+      '';
+
       launchd.agents.broccoli-comms-agent-tracker = {
         enable = true;
         config = {
@@ -235,7 +274,6 @@ in {
 
     (lib.mkIf cfg.registry.enable {
       assertions = [{ assertion = !cfg.registry.auth || cfg.registry.tokenFile != null; message = "services.broccoli-comms.registry.tokenFile is required when auth is enabled."; }];
-      programs.broccoli-comms.install.registry = lib.mkDefault true;
       home.activation.ensureBroccoliCommsRegistryDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         mkdir -p ${lib.escapeShellArg (builtins.dirOf registryStatePath)} ${lib.escapeShellArg registryCacheDir}
       '';
@@ -254,6 +292,24 @@ in {
     })
 
     (lib.mkIf (cfg.registry.enable && pkgs.stdenv.isDarwin) {
+      home.activation.restartBroccoliCommsRegistry = lib.hm.dag.entryAfter [ "setupLaunchAgents" ] ''
+        label="org.nix-community.home.broccoli-comms-agent-registry"
+        domain="gui/$(id -u)"
+        service="$domain/$label"
+        plist="$HOME/Library/LaunchAgents/$label.plist"
+        if [ -f "$plist" ]; then
+          /bin/launchctl bootout "$service" >/dev/null 2>&1 || true
+          for _ in 1 2 3 4 5; do
+            if ! /bin/launchctl print "$service" >/dev/null 2>&1; then
+              break
+            fi
+            /bin/sleep 1
+          done
+          /bin/launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1 || true
+          /bin/launchctl kickstart -k "$service" >/dev/null 2>&1 || true
+        fi
+      '';
+
       launchd.agents.broccoli-comms-agent-registry = {
         enable = true;
         config = {
@@ -292,8 +348,8 @@ in {
           EnvironmentVariables = electronEnv;
           RunAtLoad = true;
           ProcessType = "Interactive";
-          StandardOutPath = "${trackerCacheDir}/electron.stdout.log";
-          StandardErrorPath = "${trackerCacheDir}/electron.stderr.log";
+          StandardOutPath = "${broccoliCacheDir}/electron.stdout.log";
+          StandardErrorPath = "${broccoliCacheDir}/electron.stderr.log";
         };
       };
     })
