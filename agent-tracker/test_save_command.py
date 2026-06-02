@@ -21,11 +21,12 @@ class TestSaveCommand(unittest.TestCase):
         self.env_patcher.stop()
         self.temp_dir.cleanup()
 
+    @mock.patch("test_save_command.ctl.ensure_tracker_running", return_value=True)
     @mock.patch("ctl_commands.save.call_rpc", return_value={})
     @mock.patch("ctl_commands.save.query_tmux_option", return_value="my-agent")
     @mock.patch("ctl_commands.save.query_tmux_path", return_value="/tmp/active-project")
     @mock.patch("subprocess.run")
-    def test_save_autodetects_from_tmux_environment(self, mock_run, mock_tmux_path, mock_tmux_option, mock_rpc):
+    def test_save_autodetects_from_tmux_environment(self, mock_run, mock_tmux_path, mock_tmux_option, mock_rpc, mock_ensure):
         with mock.patch.dict(os.environ, {"TMUX_PANE": "%99"}):
             with mock.patch.object(ctl.sys, "argv", ["agent-tracker-ctl", "save"]):
                 ctl.main()
@@ -41,8 +42,9 @@ class TestSaveCommand(unittest.TestCase):
         self.assertEqual(cfg["agent-command"], "my-agent")
         self.assertEqual(cfg["agent-args"], [])
 
+    @mock.patch("test_save_command.ctl.ensure_tracker_running", return_value=True)
     @mock.patch("ctl_commands.save.call_rpc")
-    def test_save_running_agent_queries_local_daemon_by_name(self, mock_rpc):
+    def test_save_running_agent_queries_local_daemon_by_name(self, mock_rpc, mock_ensure):
         mock_rpc.return_value = {
             "zv2-billing-fix-agent-1": {
                 "cwd": "/google/src/cloud/tanmayvijay/zv2-billing-fix/google3",
@@ -65,8 +67,9 @@ class TestSaveCommand(unittest.TestCase):
         self.assertEqual(cfg["agent-args"], ["-p", "hello"])
         self.assertEqual(cfg["description"], "Auto-saved configuration for agent zv2-billing-fix in /google/src/cloud/tanmayvijay/zv2-billing-fix/google3")
 
+    @mock.patch("test_save_command.ctl.ensure_tracker_running", return_value=True)
     @mock.patch("ctl_commands.save.call_rpc", return_value={})
-    def test_save_manual_overrides_persist_correctly(self, mock_rpc):
+    def test_save_manual_overrides_persist_correctly(self, mock_rpc, mock_ensure):
         with mock.patch.object(
             ctl.sys, "argv", [
                 "agent-tracker-ctl", "save",

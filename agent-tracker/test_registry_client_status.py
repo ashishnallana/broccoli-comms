@@ -17,7 +17,8 @@ class TestRegistryClientStatus(unittest.TestCase):
             }
         }
         client = registry_client.RegistryClient(name="corp", url="https://corp.example")
-        with mock.patch.object(registry_client.time, "time", return_value=120.0):
+        with mock.patch.object(registry_client.time, "time", return_value=120.0), \
+             mock.patch("registry_client._configured_registry_names", return_value={"lab", "corp"}):
             payload = registry_client._registry_status_payload(200, "heartbeat", existing, client)
         self.assertIn("lab", payload["registries"])
         self.assertIn("corp", payload["registries"])

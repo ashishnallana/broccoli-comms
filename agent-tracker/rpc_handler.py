@@ -842,6 +842,8 @@ def _sender_identification_params(params: dict) -> dict:
     result = {}
     if params.get("sender_id"):
         result["sender_id"] = params["sender_id"]
+    if params.get("sender_name"):
+        result["agent_name"] = params["sender_name"]
     return result
 
 
