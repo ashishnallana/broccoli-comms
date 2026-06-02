@@ -27,15 +27,15 @@ func TestHiddenAgentsPersist(t *testing.T) {
 	}
 }
 
-func TestHiddenAgentsSortAfterActiveWithSeparator(t *testing.T) {
+func TestHiddenAgentsSortAfterActiveWithoutVisibleExplanation(t *testing.T) {
 	m := model{hiddenAgents: map[string]bool{"beta": true}, rows: []agentRow{{Name: "beta", Scope: "local"}, {Name: "alpha", Scope: "local"}}}
 	m.sortRowsByHidden("")
 	if m.rows[0].Name != "alpha" || m.rows[1].Name != "beta" {
 		t.Fatalf("rows = %+v", m.rows)
 	}
 	view := m.agentList(40, 20)
-	if !strings.Contains(view, "hidden") || strings.Index(view, "alpha") > strings.Index(view, "beta") {
-		t.Fatalf("agent list =\n%s", view)
+	if strings.Contains(strings.ToLower(view), "system agents hidden") || strings.Contains(view, "hidden / Filtered") {
+		t.Fatalf("agent list should not show hidden explanatory text =\n%s", view)
 	}
 }
 

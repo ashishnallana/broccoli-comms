@@ -28,6 +28,10 @@ if [[ "$obs_enabled" == "true" ]]; then
   :
 fi
 
+if [[ "${BROCCOLI_COMMS_TRACK_ACTIVE:-}" == "1" || "${AGENT_WRAPPER_DEPTH:-0}" != "0" ]]; then
+  exec "$cmd" "$@"
+fi
+
 if [[ -z "${TMUX:-}" ]]; then
   exec "$cmd" "$@"
 fi
@@ -37,7 +41,14 @@ if [[ -z "$pane_id" ]]; then
   exec "$cmd" "$@"
 fi
 
-export AGENT_TRACKER_SOCKET="${AGENT_TRACKER_SOCKET:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/broccoli-comms/agent-tracker.sock}"
+if [[ -n "${BROCCOLI_COMMS_RUNTIME_DIR:-}" ]]; then
+  runtime_dir="$BROCCOLI_COMMS_RUNTIME_DIR"
+elif [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+  runtime_dir="$XDG_RUNTIME_DIR/broccoli-comms"
+else
+  runtime_dir="/tmp/$(id -u)/broccoli-comms"
+fi
+export AGENT_TRACKER_SOCKET="${AGENT_TRACKER_SOCKET:-$runtime_dir/agent-tracker.sock}"
 tmux_socket="${AGENT_TRACKER_TMUX_SOCKET:-${BROCCOLI_COMMS_TMUX_SOCKET:-}}"
 if [[ -z "$tmux_socket" ]]; then
   tmux_socket="${TMUX%%,*}"
@@ -48,10 +59,6 @@ if [[ -n "$tmux_socket" ]]; then
 fi
 export AGENT_TRACKER_TMUX_SOCKET="${AGENT_TRACKER_TMUX_SOCKET:-$tmux_socket}"
 export BROCCOLI_COMMS_TMUX_SOCKET="${BROCCOLI_COMMS_TMUX_SOCKET:-$tmux_socket}"
-
-if command -v agent-tracker-ctl >/dev/null 2>&1; then
-  agent-tracker-ctl ensure-running >/dev/null 2>&1 || true
-fi
 
 session_name=$("${tmux_cmd[@]}" display-message -p -t "$pane_id" '#S' 2>/dev/null || echo broccoli-comms)
 wrapper_pid="$$"
@@ -138,19 +145,39 @@ PY
 heartbeat &
 heartbeat_pid=$!
 
+# shellcheck disable=SC2329 # invoked by cleanup, which is invoked via EXIT trap
+rpc_unregister() {
+  python3 - "$pane_id" "$agent_id" <<'PY' >/dev/null 2>>/tmp/broccoli-comms-agent-wrapper.log || true
+import json, os, socket, sys
+pane_id, agent_id = sys.argv[1:]
+for params in ({"tmux_pane": pane_id}, {"agent_id": agent_id}):
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect(os.environ["AGENT_TRACKER_SOCKET"])
+        s.sendall(json.dumps({"jsonrpc":"2.0","method":"unregister","params":params,"id":1}).encode())
+        s.shutdown(socket.SHUT_WR)
+        data = json.loads(s.recv(4096).decode() or "{}")
+        s.close()
+        if not data.get("error"):
+            break
+    except Exception:
+        pass
+PY
+}
+
 # shellcheck disable=SC2329 # invoked via EXIT trap
 cleanup() {
   kill "$heartbeat_pid" >/dev/null 2>&1 || true
-  if command -v agent-tracker-ctl >/dev/null 2>&1; then
-    agent-tracker-ctl unregister --pane "$pane_id" >/dev/null 2>&1 \
-      || agent-tracker-ctl unregister --id "$agent_id" >/dev/null 2>&1 \
-      || true
-  fi
+  rpc_unregister
   "${tmux_cmd[@]}" set-option -p -u -t "$pane_id" @agent_name 2>/dev/null || true
   "${tmux_cmd[@]}" set-option -p -u -t "$pane_id" @agent_id 2>/dev/null || true
   "${tmux_cmd[@]}" select-pane -t "$pane_id" -T "" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+export BROCCOLI_COMMS_TRACK_ACTIVE=1
+export AGENT_WRAPPER_DEPTH=1
 
 run_status=0
 "$cmd" "$@" || run_status=$?

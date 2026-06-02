@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -141,7 +140,7 @@ func (m model) renderSaveForm() string {
 	for i := range m.saveFormInputs {
 		style := lipgloss.NewStyle()
 		if i == m.saveFormIndex {
-			style = style.Foreground(palette.Blue)
+			style = style.Foreground(colors.Info)
 		}
 		b.WriteString(style.Render(labels[i]) + "\n")
 		b.WriteString(m.saveFormInputs[i].View() + "\n\n")
@@ -152,15 +151,15 @@ func (m model) renderSaveForm() string {
 	cancelStyle := lipgloss.NewStyle().Padding(0, 2)
 
 	if m.saveFormIndex == 4 {
-		saveStyle = saveStyle.Background(palette.Blue).Foreground(palette.Base)
+		saveStyle = saveStyle.Background(colors.Info).Foreground(colors.BaseBg)
 	} else {
-		saveStyle = saveStyle.Border(lipgloss.NormalBorder()).BorderForeground(palette.Overlay0)
+		saveStyle = saveStyle.Border(lipgloss.NormalBorder()).BorderForeground(colors.Muted)
 	}
 
 	if m.saveFormIndex == 5 {
-		cancelStyle = cancelStyle.Background(palette.Red).Foreground(palette.Base)
+		cancelStyle = cancelStyle.Background(colors.Error).Foreground(colors.BaseBg)
 	} else {
-		cancelStyle = cancelStyle.Border(lipgloss.NormalBorder()).BorderForeground(palette.Overlay0)
+		cancelStyle = cancelStyle.Border(lipgloss.NormalBorder()).BorderForeground(colors.Muted)
 	}
 
 	buttons := lipgloss.JoinHorizontal(lipgloss.Left,
@@ -173,7 +172,7 @@ func (m model) renderSaveForm() string {
 	// Wrap in a box
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(palette.Blue).
+		BorderForeground(colors.Info).
 		Padding(1, 3).
 		Width(60)
 
@@ -214,7 +213,7 @@ func saveLocalAgentCmd(agentName, command, description, cwd string) tea.Cmd {
 		if description != "" {
 			args = append(args, "-d", description)
 		}
-		cmd := exec.CommandContext(ctx, "agent-tracker-ctl", args...)
+		cmd := broccoliAgentTrackerCommandContext(ctx, args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			trimmed := strings.TrimSpace(string(out))

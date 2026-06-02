@@ -11,7 +11,7 @@ build:
 	cp app/broccoli-comms.py bin/broccoli-comms
 	cp wrapper/agent-wrapper.sh bin/agent-wrapper
 	printf '#!/usr/bin/env sh\nexec $(PYTHON) "%s/agent-tracker/agent-tracker.py" "$$@"\n' "$$(pwd)" > bin/agent-tracker
-	printf '#!/usr/bin/env sh\nexec $(PYTHON) "%s/agent-tracker/agent-tracker-ctl.py" "$$@"\n' "$$(pwd)" > bin/agent-tracker-ctl
+	printf '#!/usr/bin/env sh\necho "agent-tracker-ctl is deprecated. Use: broccoli-comms agent-tracker <subcommand> [args...]" >&2\nexit 1\n' > bin/agent-tracker-ctl
 	chmod +x bin/broccoli-comms bin/agent-wrapper bin/agent-tracker bin/agent-tracker-ctl
 
 install: build

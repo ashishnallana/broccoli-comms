@@ -63,15 +63,10 @@ func DefaultSocketPath() string {
 	if runtimeDir := os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR"); runtimeDir != "" {
 		return filepath.Join(runtimeDir, "agent-tracker.sock")
 	}
-	cacheHome := os.Getenv("XDG_CACHE_HOME")
-	if cacheHome == "" {
-		home, err := os.UserHomeDir()
-		if err != nil || home == "" {
-			return filepath.Join(".cache", "agent-tracker", "agent-tracker.sock")
-		}
-		cacheHome = filepath.Join(home, ".cache")
+	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+		return filepath.Join(runtimeDir, "broccoli-comms", "agent-tracker.sock")
 	}
-	return filepath.Join(cacheHome, "agent-tracker", "agent-tracker.sock")
+	return filepath.Join("/tmp", fmt.Sprint(os.Getuid()), "broccoli-comms", "agent-tracker.sock")
 }
 
 func New(socketPath string) *Client {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -14,6 +15,19 @@ import (
 )
 
 var agentListProvider = loadAgentsFromCtlProvider
+
+func broccoliAgentTrackerCommand(args ...string) *exec.Cmd {
+	return broccoliAgentTrackerCommandContext(context.Background(), args...)
+}
+
+func broccoliAgentTrackerCommandContext(ctx context.Context, args ...string) *exec.Cmd {
+	cli := os.Getenv("BROCCOLI_COMMS_CLI")
+	if cli == "" {
+		cli = "broccoli-comms"
+	}
+	trackerArgs := append([]string{"agent-tracker"}, args...)
+	return exec.CommandContext(ctx, cli, trackerArgs...)
+}
 
 func loadHealth(local localClient) tea.Cmd {
 	return func() tea.Msg {
@@ -84,13 +98,13 @@ func loadAgentsFromRPC(ctx context.Context, local localClient) ([]agentRow, erro
 }
 
 func loadAgentsFromCtl(ctx context.Context) ([]agentRow, error) {
-	out, err := exec.CommandContext(ctx, "agent-tracker-ctl", "list").Output()
+	out, err := broccoliAgentTrackerCommandContext(ctx, "list").Output()
 	if err != nil {
-		return nil, fmt.Errorf("agent-tracker-ctl list: %w", err)
+		return nil, fmt.Errorf("broccoli-comms agent-tracker list: %w", err)
 	}
 	var agents map[string]ctlAgent
 	if err := json.Unmarshal(out, &agents); err != nil {
-		return nil, fmt.Errorf("decode agent-tracker-ctl list: %w", err)
+		return nil, fmt.Errorf("decode broccoli-comms agent-tracker list: %w", err)
 	}
 	rows := make([]agentRow, 0, len(agents))
 	for key, agent := range agents {

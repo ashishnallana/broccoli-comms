@@ -15,11 +15,11 @@ func TestRowFromTrackerAgentKeepsLocalTmuxPane(t *testing.T) {
 	}
 }
 
-func TestCtrlEnterAttemptsPaneSwitchForSelectedAgent(t *testing.T) {
+func TestFocusSelectedPaneCommandAttemptsPaneSwitchForSelectedAgent(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}}
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	cmd := focusSelectedPaneCommand(t, &m)
 	if cmd == nil {
-		t.Fatal("ctrl+enter should attempt pane switch")
+		t.Fatal("focus selected pane should attempt pane switch")
 	}
 	msg := cmd().(paneSwitched)
 	if msg.Err == nil || !strings.Contains(msg.Err.Error(), "no tmux pane") {
@@ -27,11 +27,11 @@ func TestCtrlEnterAttemptsPaneSwitchForSelectedAgent(t *testing.T) {
 	}
 }
 
-func TestCtrlEnterRejectsRemoteSelectedAgent(t *testing.T) {
+func TestFocusSelectedPaneCommandRejectsRemoteSelectedAgent(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "remote"}}}
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	cmd := focusSelectedPaneCommand(t, &m)
 	if cmd == nil {
-		t.Fatal("ctrl+enter should return error command")
+		t.Fatal("focus selected pane should return error command")
 	}
 	msg := cmd().(paneSwitched)
 	if msg.Err == nil || !strings.Contains(msg.Err.Error(), "remote agent") {
@@ -55,7 +55,7 @@ func TestNewTmuxCommandUsesPrivateSocketAndStripsInheritedTmux(t *testing.T) {
 	}
 }
 
-func TestCtrlEnterUsesPaneSwitchCommand(t *testing.T) {
+func TestFocusSelectedPaneCommandUsesPaneSwitchCommand(t *testing.T) {
 	oldRun := runTmuxCommand
 	var got []string
 	runTmuxCommand = func(args ...string) error {
@@ -65,9 +65,9 @@ func TestCtrlEnterUsesPaneSwitchCommand(t *testing.T) {
 	defer func() { runTmuxCommand = oldRun }()
 
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", TmuxPane: "%7"}}}
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	cmd := focusSelectedPaneCommand(t, &m)
 	if cmd == nil {
-		t.Fatal("ctrl+j should return pane switch command")
+		t.Fatal("focus selected pane should return pane switch command")
 	}
 	if msg := cmd().(paneSwitched); msg.Err != nil {
 		t.Fatalf("pane switch err = %v", msg.Err)
@@ -75,4 +75,15 @@ func TestCtrlEnterUsesPaneSwitchCommand(t *testing.T) {
 	if strings.Join(got, " ") != "switch-client -t %7" {
 		t.Fatalf("runTmuxCommand args = %#v", got)
 	}
+}
+
+func focusSelectedPaneCommand(t *testing.T, m *model) tea.Cmd {
+	t.Helper()
+	for _, action := range commandPaletteActions() {
+		if action.ID == "focus-selected-pane" {
+			return action.Run(m)
+		}
+	}
+	t.Fatal("focus-selected-pane command not found")
+	return nil
 }

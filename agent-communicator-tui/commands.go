@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -93,6 +92,7 @@ type eventsLoaded struct {
 type refreshTick struct{}
 type retryEvents struct{}
 type agentListSpinnerTick struct{}
+type cursorBlinkTick struct{}
 type clearDirectInputStatusTick struct{}
 
 type promptTemplate struct {
@@ -457,6 +457,9 @@ func tickRefresh() tea.Cmd {
 func tickAgentListSpinner() tea.Cmd {
 	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return agentListSpinnerTick{} })
 }
+func tickCursorBlink() tea.Cmd {
+	return tea.Tick(550*time.Millisecond, func(time.Time) tea.Msg { return cursorBlinkTick{} })
+}
 func retryWaitEvents() tea.Cmd {
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return retryEvents{} })
 }
@@ -496,7 +499,7 @@ func spinAgentCmd(cfg AgentConfig) tea.Cmd {
 		}
 
 		args := append([]string{"spin", dir, cfg.AgentCommand}, cfg.AgentArgs...)
-		cmd := exec.Command("agent-tracker-ctl", args...)
+		cmd := broccoliAgentTrackerCommand(args...)
 		err := cmd.Run()
 		return agentConfigSpun{Name: cfg.Name, Err: err}
 	}
@@ -591,7 +594,7 @@ type clearPaneCaptureStatusTick struct{}
 func requestPaneCaptureCmd(targetAddress string) tea.Cmd {
 	return func() tea.Msg {
 		args := []string{"send-pane", "agent-communicator", "--source", targetAddress, "--last", "20", "--note", "Requested from agent-communicator"}
-		cmd := exec.Command("agent-tracker-ctl", args...)
+		cmd := broccoliAgentTrackerCommand(args...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return paneCaptured{Target: targetAddress, Err: fmt.Errorf("%s: %s", err, string(out))}

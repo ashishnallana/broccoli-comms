@@ -121,18 +121,18 @@ func TestRuntimeInfoFromEnvDetectsBroccoliRuntime(t *testing.T) {
 	}
 }
 
-func TestFooterShowsBroccoliRuntimeStatus(t *testing.T) {
+func TestRightStatusShowsRegistryOnly(t *testing.T) {
 	m := model{
 		width:   120,
 		runtime: runtimeInfo{AppRuntime: true, TrackerSocket: "/tmp/broccoli-runtime/agent-tracker.sock"},
 		rows:    []agentRow{{Name: "alpha", Scope: "local"}},
 	}
-	footer := m.footer(120)
-	if !strings.Contains(footer, "Broccoli Comms runtime") || !strings.Contains(footer, "rpc ok") || !strings.Contains(footer, "online 0/1") {
-		t.Fatalf("footer missing runtime status: %q", footer)
+	status := m.registryStatusLine()
+	if status != "registry online" {
+		t.Fatalf("registry status = %q", status)
 	}
 }
-func TestCtrlNCtrlPNavigationAndInboxLoad(t *testing.T) {
+func TestCtrlNCtrlPNavigateAndCtrlOOpensPalette(t *testing.T) {
 	m := model{messageOffset: 3, rows: []agentRow{{Name: "a", Scope: "local"}, {Name: "b", Scope: "local"}}, local: &fakeLocal{}}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	m = updated.(model)
@@ -142,14 +142,15 @@ func TestCtrlNCtrlPNavigationAndInboxLoad(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("down should request inbox load")
 	}
-	m.messageOffset = 3
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
 	m = updated.(model)
-	if m.selected != 0 {
-		t.Fatalf("selected = %d, want 0", m.selected)
+	if m.selected != 0 || m.commandPalette.Open || cmd == nil {
+		t.Fatalf("ctrl+p should navigate previous, selected=%d open=%v cmd=%v", m.selected, m.commandPalette.Open, cmd)
 	}
-	if cmd == nil {
-		t.Fatal("up should request inbox load")
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m = updated.(model)
+	if !m.commandPalette.Open || cmd != nil {
+		t.Fatalf("ctrl+o should open palette: open=%v cmd=%v", m.commandPalette.Open, cmd)
 	}
 }
 func TestAgentsLoadedKeepsRowsAndRequestsInbox(t *testing.T) {
@@ -204,15 +205,12 @@ func TestLoadPromptTemplatesCreatesMissingDir(t *testing.T) {
 	}
 }
 
-func TestCtrlOOpensPromptMenu(t *testing.T) {
+func TestCtrlOOpensCommandPaletteNotPromptMenu(t *testing.T) {
 	m := model{local: &fakeLocal{}}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	m = updated.(model)
-	if !m.showingPromptMenu {
-		t.Fatal("ctrl+o should open prompt menu")
-	}
-	if cmd == nil {
-		t.Fatal("ctrl+o should reload prompt templates")
+	if !m.commandPalette.Open || m.showingPromptMenu || cmd != nil {
+		t.Fatalf("ctrl+o should open command palette only: palette=%v prompt=%v cmd=%v", m.commandPalette.Open, m.showingPromptMenu, cmd)
 	}
 }
 
@@ -462,14 +460,10 @@ func TestRemoteDirectInputEnabledFailureRestoresComposer(t *testing.T) {
 	}
 }
 
-func TestFooterLabelsRemoteDirectInputCapability(t *testing.T) {
-	disabled := model{width: 200}.footer(200)
-	if !strings.Contains(disabled, "pane control (local only)") {
-		t.Fatalf("disabled footer = %q", disabled)
-	}
-	enabled := model{width: 200, runtime: runtimeInfo{RemoteDirectInputEnabled: true}}.footer(200)
-	if !strings.Contains(enabled, "pane control (local+remote enabled)") {
-		t.Fatalf("enabled footer = %q", enabled)
+func TestFooterOmitsUnsupportedShortcutHints(t *testing.T) {
+	footer := model{width: 200}.footer(200)
+	if strings.Contains(footer, "pane control") || strings.Contains(footer, "F1-F3") || strings.Contains(footer, "ctrl") {
+		t.Fatalf("footer should be sparse: %q", footer)
 	}
 }
 

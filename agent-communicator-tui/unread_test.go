@@ -9,7 +9,7 @@ import (
 )
 
 func TestIncomingEventHighlightsAgentListRow(t *testing.T) {
-	m := model{ownName: "coding-agent", rows: []agentRow{{Name: "alice", Scope: "local"}}}
+	m := model{ownName: "coding-agent", selected: 1, rows: []agentRow{{Name: "alice", Scope: "local"}, {Name: "bob", Scope: "local"}}}
 	m.markUnreadFromEvents(tracker.WaitEventsResult{Events: []tracker.Event{{TargetAgentName: "coding-agent", Sender: "alice"}}})
 	if !m.hasUnread(m.rows[0]) {
 		t.Fatal("incoming event did not mark row unread")

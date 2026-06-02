@@ -17,47 +17,27 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	}()
 	colorKey := m.messageColorKey(msg)
 	body := msg.Body
-
-	if width < 70 {
-		innerWidth := max(4, width-4)
-		if msg.ContentType == "" || msg.ContentType == "text/markdown" {
-			body = renderMarkdown(body, innerWidth)
-		}
-
-		var out []string
-		prefix := "  "
-		if index == m.messageSelected {
-			prefix = "┃ "
-		}
-
-		headerStyle := lipgloss.NewStyle().Bold(true)
-		if index == m.messageSelected {
-			headerStyle = headerStyle.Foreground(palette.Blue)
-		} else {
-			headerStyle = headerStyle.Foreground(m.messageBorderColor(msg, colorKey))
-		}
-
-		headerText := m.messageHeader(msg, index, colorKey, innerWidth)
-		out = append(out, prefix+headerStyle.Render(headerText))
-
-		for _, line := range m.visibleBodyLines(bubbleBodyLines(body, innerWidth), index) {
-			out = append(out, prefix+line)
-		}
-		out = append(out, prefix+mutedStyle.Render(strings.Repeat("─", innerWidth)))
-		return out
-	}
-
-	innerWidth := max(4, width-12)
+	innerWidth := max(8, width-8)
 	if msg.ContentType == "" || msg.ContentType == "text/markdown" {
 		body = renderMarkdown(body, innerWidth)
 	}
-	lines := []string{m.messageHeader(msg, index, colorKey, innerWidth)}
-	lines = append(lines, m.visibleBodyLines(bubbleBodyLines(body, innerWidth), index)...)
-	bubble := renderBubble(lines, innerWidth, m.messageBorderColor(msg, colorKey), isSentMessage(msg), index == m.messageSelected)
-	if !isSentMessage(msg) {
-		return indentLines(bubble, 5)
+	rail := mutedStyle.Render("┃")
+	if index == m.messageSelected {
+		rail = lipgloss.NewStyle().Foreground(colors.Accent).Bold(true).Render("┃")
 	}
-	return bubble
+	header := agentStyle(colorKey, true).Render(m.messageHeader(msg, index, colorKey, innerWidth))
+	out := []string{rail + "  " + header}
+	for _, line := range m.visibleBodyLines(bubbleBodyLines(body, innerWidth), index) {
+		line = truncateCells(line, innerWidth)
+		if !isSentMessage(msg) && width >= 70 {
+			line = lipgloss.NewStyle().Background(colors.PanelBgAlt).Padding(0, 1).Render(line)
+		}
+		out = append(out, rail+"  "+line)
+	}
+	if receipt := sentReceiptLine(msg); receipt != "" {
+		out = append(out, rail+"  "+receipt)
+	}
+	return out
 }
 
 func (m model) messageHeader(msg tracker.Message, index int, colorKey string, width int) string {
@@ -67,10 +47,10 @@ func (m model) messageHeader(msg tracker.Message, index int, colorKey string, wi
 	}
 	saved := ""
 	if m.isSavedMessage(msg) {
-		saved = lipgloss.NewStyle().Foreground(palette.Yellow).Render("★ ")
+		saved = lipgloss.NewStyle().Foreground(colors.Saved).Render("★ ")
 	}
 	label := messageSenderLabel(msg, sender)
-	header := saved + sentReadMarker(msg) + agentStyle(colorKey, true).Render(truncateCells(label, max(1, width-25)))
+	header := saved + truncateCells(label, max(1, width-25))
 	if ts := formatDisplayTime(msg.Timestamp); ts != "" && lipgloss.Width(header)+1 < width {
 		if m.isSavedMessage(msg) {
 			ts += " ★"
@@ -161,10 +141,10 @@ func (m model) messageColorKey(msg tracker.Message) string {
 
 func (m model) messageBorderColor(msg tracker.Message, colorKey string) lipgloss.Color {
 	if m.isSavedMessage(msg) {
-		return palette.Yellow
+		return colors.Saved
 	}
 	if isSentMessage(msg) {
-		return palette.Blue
+		return colors.Info
 	}
-	return palette.AgentColors[agentColorIndex(colorKey)]
+	return colors.AgentColors[agentColorIndex(colorKey)]
 }

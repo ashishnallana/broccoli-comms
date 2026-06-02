@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Communicator — Two Column Design Mock</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #151923;
+      --panel-2: #1c2230;
+      --panel-3: #252c3b;
+      --text: #e8eaf0;
+      --muted: #8d96a8;
+      --subtle: #596274;
+      --cyan: #7dd3fc;
+      --green: #86efac;
+      --yellow: #fde68a;
+      --purple: #c4b5fd;
+      --line: #30384a;
+      --fs: 12px; /* TUI mock: small terminal font; hierarchy uses spacing/color/weight/fill only. */
+      --shadow: rgba(0,0,0,.35);
+      font-size: var(--fs);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 18% 0%, #172033 0%, var(--bg) 44%);
+      color: var(--text);
+      display: grid;
+      min-height: 100vh;
+      place-items: center;
+      padding: 28px;
+    }
+
+    .terminal {
+      width: min(1480px, 100%);
+      height: 900px;
+      background: var(--bg);
+      box-shadow: 0 30px 90px var(--shadow), inset 0 0 0 1px #202635;
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      grid-template-rows: 1fr 56px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 34px 40px 0;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
+    .chat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      padding-bottom: 28px;
+    }
+    .title { font-size: var(--fs); font-weight: 900; letter-spacing: .01em; }
+    .subtitle { color: var(--muted); font-size: var(--fs); margin-top: 5px; }
+    .mode-pill { background: var(--panel-2); color: var(--cyan); padding: 7px 10px; font-size: var(--fs); font-weight: 800; }
+
+    .timeline {
+      min-height: 0;
+      overflow: hidden;
+      padding-top: 2px;
+    }
+    .turn { display: grid; grid-template-columns: 34px 1fr; gap: 16px; margin-bottom: 34px; }
+    .rail { color: var(--line); font-size: var(--fs); text-align: center; line-height: 1.2; }
+    .speaker { color: var(--muted); font-size: var(--fs); margin-bottom: 12px; }
+    .speaker strong { color: var(--text); }
+    .text { font-size: var(--fs); line-height: 1.55; white-space: pre-wrap; }
+    .agent-output { background: #121722; border-left: 4px solid var(--purple); padding: 18px 20px; line-height: 1.55; }
+    .receipt { margin-top: 9px; color: var(--muted); font-size: var(--fs); }
+    .receipt .solid { color: var(--green); font-weight: 900; }
+    .ticks { font-weight: 900; letter-spacing: -0.12em; margin-right: 8px; }
+    .ticks.sent { color: var(--muted); }
+    .ticks.delivered { color: var(--cyan); }
+    .ticks.read { color: var(--green); }
+
+    .composer { padding-bottom: 28px; }
+    .input {
+      min-height: 82px;
+      background: var(--panel-2);
+      color: var(--muted);
+      padding: 20px 22px;
+      display: flex;
+      align-items: center;
+      font-size: var(--fs);
+    }
+    .mode-inline { background: #071018; color: var(--cyan); padding: 5px 9px; margin-right: 12px; font-weight: 900; }
+    .cursor { width: 8px; height: 16px; background: var(--cyan); margin-right: 8px; display: inline-block; }
+    .composer-meta { margin-top: 12px; color: var(--muted); font-size: var(--fs); display: flex; justify-content: space-between; gap: 18px; }
+
+    .right {
+      grid-column: 2 / 3;
+      grid-row: 1 / 3;
+      background: #11151e;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-width: 0;
+    }
+
+    .current-agent {
+      padding: 26px 22px 22px;
+      background: #11151e;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .brand { display: flex; justify-content: space-between; align-items: baseline; }
+    .brand h1 { margin: 0; font-size: var(--fs); font-weight: 900; }
+    .brand .host { color: var(--muted); font-size: var(--fs); }
+    .agent-hero { background: var(--cyan); color: #071018; padding: 16px; }
+    .agent-hero.compact { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; }
+    .agent-hero .name { font-size: var(--fs); font-weight: 900; margin-bottom: 2px; }
+    .agent-hero .meta { font-size: var(--fs); line-height: 1.2; }
+    .status-dot { font-size: var(--fs); color: #075019; }
+    .state { background: #071018; color: var(--cyan); padding: 5px 9px; font-weight: 900; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .info-card { background: var(--panel-2); padding: 10px; min-width: 0; }
+    .label { color: var(--subtle); font-size: var(--fs); text-transform: uppercase; letter-spacing: .12em; margin-bottom: 4px; }
+    .value { color: var(--text); font-size: var(--fs); overflow-wrap: anywhere; }
+    .value.ok { color: var(--green); }
+    .value.warn { color: var(--yellow); }
+    .current-actions { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .action { background: var(--panel-3); color: var(--text); padding: 13px 14px; font-size: var(--fs); text-align: center; }
+
+    .agent-panel {
+      min-height: 0;
+      border-top: 1px solid #222a3a;
+      padding: 22px 18px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .list-header { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px; }
+    .list-header .title { font-size: var(--fs); }
+    .count { color: var(--muted); font-size: var(--fs); }
+    .search { background: var(--panel-2); color: var(--muted); padding: 14px 16px; font-size: var(--fs); }
+    .section-title { color: var(--subtle); font-size: var(--fs); text-transform: uppercase; letter-spacing: .14em; margin: 14px 4px 4px; }
+    .agents { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 8px; }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      grid-template-rows: auto auto;
+      gap: 3px 8px;
+      padding: 12px 14px;
+      min-height: 62px;
+      color: var(--muted);
+    }
+    .row .name { color: var(--text); font-size: var(--fs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row .sub { color: var(--muted); font-size: var(--fs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge { font-size: var(--fs); font-weight: 900; padding: 4px 8px; color: #07130d; background: var(--green); align-self: start; }
+    .row.remote .badge { background: var(--purple); color: #151023; }
+    .row.active { background: var(--cyan); color: #071018; }
+    .row.active .name, .row.active .sub { color: #071018; }
+    .row.active .badge { background: #071018; color: var(--cyan); }
+    .hidden { background: #121a28; color: var(--muted); padding: 14px 16px; font-size: var(--fs); line-height: 1.45; margin-top: auto; }
+    .hidden strong { color: var(--text); }
+
+    .footer { display: none; }
+    .right-status {
+      background: #0c0f15;
+      color: var(--muted);
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: var(--fs);
+    }
+    .right-status strong { color: var(--text); }
+    .hint { color: var(--cyan); }
+
+    .palette {
+      position: absolute;
+      width: 680px;
+      max-width: calc(100% - 80px);
+      top: 112px;
+      left: calc((100% - 400px) / 2);
+      transform: translateX(-50%);
+      background: #10141d;
+      box-shadow: 0 24px 80px rgba(0,0,0,.58), inset 0 0 0 1px #2a3345;
+      padding: 20px;
+    }
+    .palette-title { display: flex; justify-content: space-between; color: var(--muted); font-size: var(--fs); margin-bottom: 10px; }
+    .palette-search { background: var(--panel-2); color: var(--text); padding: 15px 16px; margin-bottom: 12px; }
+    .cmd-group { color: var(--subtle); text-transform: uppercase; letter-spacing: .12em; font-size: var(--fs); margin: 12px 0 4px; }
+    .cmd { display: grid; grid-template-columns: 1fr auto; gap: 14px; padding: 13px 14px; color: var(--muted); }
+    .cmd.active { background: var(--purple); color: #151023; }
+    .cmd.active strong, .cmd.active .shortcut { color: #151023; }
+    .cmd strong { color: var(--text); font-size: var(--fs); }
+    .cmd .desc { font-size: var(--fs); margin-top: 2px; }
+    .shortcut { color: var(--cyan); font-size: var(--fs); }
+  </style>
+</head>
+<body>
+  <div class="terminal">
+    <main class="main">
+      <header class="chat-header">
+        <div>
+          <div class="title">Conversation</div>
+          
+        </div>
+      </header>
+
+      <section class="timeline">
+        <div class="turn">
+          <div class="rail">┃</div>
+          <div>
+            <div class="speaker"><strong>you</strong> via agent-communicator · 23:58</div>
+            <div class="text">Can you validate the socket/wrapper fix and rerun the routing E2E suite?</div>
+          </div>
+        </div>
+        <div class="turn">
+          <div class="rail">┃</div>
+          <div>
+            <div class="speaker"><strong>local-alpha</strong> · pi · 23:59</div>
+            <div class="agent-output">I’ll rerun the isolated registry + test-vm validation. I’ll focus on local sender attribution, stale registry-status leakage, canonical socket usage, and wrapper depth.</div>
+            <div class="receipt"><span class="ticks read">✓✓</span> read · 4.2s</div>
+          </div>
+        </div>
+        <div class="turn">
+          <div class="rail">┃</div>
+          <div>
+            <div class="speaker"><strong>system</strong> · registry e2e</div>
+            <div class="text" style="color:var(--muted)">Remote tracker e2e-vm connected. 4 remote agents visible. 6 system agents hidden.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="composer">
+        <div class="input"><span class="mode-inline">/msg</span><span class="cursor"></span>type message…</div>
+        <div class="composer-meta"><span>/msg sends an inbox message</span><span>Enter send</span></div>
+      </section>
+    </main>
+
+    <aside class="right">
+      <section class="current-agent">
+        <div class="brand">
+          <h1>Agent Communicator</h1>
+          <div class="host">zephyrus</div>
+        </div>
+        <div class="agent-hero compact">
+          <div class="status-dot">●</div>
+          <div>
+            <div class="name">local-alpha</div>
+            <div class="meta">zephyrus · pi</div>
+          </div>
+          <div class="state">idle</div>
+        </div>
+      </section>
+
+      <section class="agent-panel">
+        <div class="list-header"><div class="title">Switch agent</div><div class="count">4 shown · 6 hidden</div></div>
+        <div class="search">⌕ filter agents…</div>
+        <div class="section-title">LOCAL (3)</div>
+        <div class="agents">
+          <div class="row"><div class="name">● local-beta</div><div class="badge">pi</div><div class="sub">zephyrus</div><div class="sub">idle</div></div>
+          <div class="row"><div class="name">● reviewer</div><div class="badge">pi</div><div class="sub">zephyrus</div><div class="sub">busy</div></div>
+          <div class="section-title">REMOTE (2)</div>
+          <div class="row remote"><div class="name">● remote-alpha</div><div class="badge">pi</div><div class="sub">e2e-vm</div><div class="sub">idle</div></div>
+          <div class="row remote"><div class="name">● build-agent</div><div class="badge">claude</div><div class="sub">mac</div><div class="sub">idle</div></div>
+        </div>
+      </section>
+      <section class="right-status">
+        <div>registry online</div>
+      </section>
+    </aside>
+
+    <footer class="footer"></footer>
+
+    <div class="palette">
+      <div class="palette-title"><span>Command palette</span><span>esc</span></div>
+      <div class="palette-search">show system agents</div>
+      <div class="cmd-group">Agents</div>
+      <div class="cmd active"><div><strong>Show system agents</strong><div class="desc">Reveal hidden agent-communicator mailboxes and internal agents.</div></div><div class="shortcut">toggle</div></div>
+      <div class="cmd"><div><strong>Switch agent</strong><div class="desc">Search normal local and remote agents.</div></div><div class="shortcut">open</div></div>
+      <div class="cmd"><div><strong>Focus selected pane</strong><div class="desc">Switch tmux focus to the current agent.</div></div><div class="shortcut">run</div></div>
+      <div class="cmd-group">Runtime</div>
+      <div class="cmd"><div><strong>Registry status</strong><div class="desc">Show connected registries and remote trackers.</div></div><div class="shortcut">open</div></div>
+    </div>
+  </div>
+</body>
+</html>

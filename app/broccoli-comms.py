@@ -118,6 +118,9 @@ def base_env() -> dict[str, str]:
         env.pop("BROCCOLI_COMMS_TMUX_SOCKET", None)
         env.pop("AGENT_TRACKER_TMUX_SOCKET", None)
     apply_configured_registries(env)
+    launcher = broccoli_comms_launcher_argv()
+    if len(launcher) == 1:
+        env["BROCCOLI_COMMS_CLI"] = launcher[0]
     bin_dir = repo_root() / "bin"
     env["PATH"] = f"{bin_dir}:{repo_root() / 'wrapper'}:{env.get('PATH', '')}"
     return env
@@ -928,6 +931,15 @@ def track(args: argparse.Namespace) -> None:
         command = command[1:]
     if not command:
         raise SystemExit("track requires a command after --")
+
+    if os.environ.get("BROCCOLI_COMMS_TRACK_ACTIVE") == "1" or os.environ.get("AGENT_WRAPPER_DEPTH", "0") != "0":
+        if args.cwd:
+            cwd = os.path.abspath(os.path.expanduser(args.cwd))
+            if not os.path.isdir(cwd):
+                raise SystemExit(f"track cwd does not exist or is not a directory: {cwd}")
+            os.chdir(cwd)
+        os.execvpe(command[0], command, os.environ.copy())
+
     if not os.environ.get("TMUX") or not os.environ.get("TMUX_PANE"):
         raise SystemExit("broccoli-comms track must be run from within a tmux pane so the agent can be registered. Start or attach to tmux, then run the command again.")
 
@@ -1660,7 +1672,11 @@ def agent_tracker(args: argparse.Namespace) -> None:
     ensure_tmux()
     ctl = tracker_ctl_script()
     tracker_args = list(getattr(args, "tracker_args", None) or ["--help"])
-    os.execvpe(sys.executable, [sys.executable, ctl, *tracker_args], base_env())
+    env = base_env()
+    for key in ("AGENT_ID", "AGENT_NAME", "AGENT_UUID"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+    os.execvpe(sys.executable, [sys.executable, ctl, *tracker_args], env)
 
 
 def doctor(args: argparse.Namespace) -> None:

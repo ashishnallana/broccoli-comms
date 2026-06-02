@@ -7,14 +7,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var linkStyle = lipgloss.NewStyle().Foreground(palette.Blue).Underline(true)
-var codeStyle = lipgloss.NewStyle().Foreground(palette.Yellow)
-var commentStyle = lipgloss.NewStyle().Foreground(palette.Overlay0).Italic(true)
-var keywordStyle = lipgloss.NewStyle().Foreground(palette.Mauve).Bold(true)
-var stringStyle = lipgloss.NewStyle().Foreground(palette.Green)
-var numberStyle = lipgloss.NewStyle().Foreground(palette.Sky)
-var typeStyle = lipgloss.NewStyle().Foreground(palette.Blue).Bold(true)
-var boolStyle = lipgloss.NewStyle().Foreground(palette.Red).Bold(true)
+var linkStyle = lipgloss.NewStyle().Foreground(colors.Info).Underline(true)
+var codeStyle = lipgloss.NewStyle().Foreground(colors.Warning)
+var commentStyle = lipgloss.NewStyle().Foreground(colors.Muted).Italic(true)
+var keywordStyle = lipgloss.NewStyle().Foreground(colors.AccentAlt).Bold(true)
+var stringStyle = lipgloss.NewStyle().Foreground(colors.Success)
+var numberStyle = lipgloss.NewStyle().Foreground(colors.Accent)
+var typeStyle = lipgloss.NewStyle().Foreground(colors.Info).Bold(true)
+var boolStyle = lipgloss.NewStyle().Foreground(colors.Error).Bold(true)
 
 var urlRE = regexp.MustCompile(`https?://[^\s)]+`)
 var mdLinkRE = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^\s)]+)\)`)

@@ -20,7 +20,10 @@ let
   stateRoot = config.xdg.stateHome or "${config.home.homeDirectory}/.local/state";
   configRoot = config.xdg.configHome or "${config.home.homeDirectory}/.config";
 
-  broccoliRuntimeDir = if cfg.runtimeDir != null then cfg.runtimeDir else "${cacheRoot}/broccoli-comms/runtime";
+  # Keep the default runtime/socket owned by the Broccoli CLI itself:
+  # ${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms/agent-tracker.sock.
+  # Home Manager only pins BROCCOLI_COMMS_RUNTIME_DIR when explicitly configured.
+  broccoliRuntimeDir = cfg.runtimeDir;
   broccoliCacheDir = if cfg.cacheDir != null then cfg.cacheDir else "${cacheRoot}/broccoli-comms";
   broccoliConfigDir = if cfg.configDir != null then cfg.configDir else "${configRoot}/broccoli-comms";
   trackerSocket = if broccoliRuntimeDir != null then "${broccoliRuntimeDir}/agent-tracker.sock" else null;
@@ -123,10 +126,10 @@ PY
     name = "broccoli-comms";
     runtimeInputs = [ pcfg.package ];
     text = ''
-      export BROCCOLI_COMMS_RUNTIME_DIR="''${BROCCOLI_COMMS_RUNTIME_DIR:-${broccoliRuntimeDir}}"
+      ${lib.optionalString (broccoliRuntimeDir != null) ''export BROCCOLI_COMMS_RUNTIME_DIR="''${BROCCOLI_COMMS_RUNTIME_DIR:-${broccoliRuntimeDir}}"''}
       export BROCCOLI_COMMS_CACHE_DIR="''${BROCCOLI_COMMS_CACHE_DIR:-${broccoliCacheDir}}"
       export BROCCOLI_COMMS_CONFIG_DIR="''${BROCCOLI_COMMS_CONFIG_DIR:-${broccoliConfigDir}}"
-      export AGENT_TRACKER_SOCKET="''${AGENT_TRACKER_SOCKET:-$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock}"
+      ${lib.optionalString (broccoliRuntimeDir != null) ''export AGENT_TRACKER_SOCKET="''${AGENT_TRACKER_SOCKET:-$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock}"''}
       exec ${pcfg.package}/bin/broccoli-comms "$@"
     '';
   };
@@ -162,7 +165,7 @@ in {
 
   options.services.broccoli-comms = with lib; {
     enable = mkEnableOption "Broccoli Comms agent-tracker service";
-    runtimeDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_RUNTIME_DIR. Defaults to ~/.cache/broccoli-comms/runtime so all Home Manager-managed frontends share the app-owned tracker socket."; };
+    runtimeDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_RUNTIME_DIR. When unset, Broccoli Comms uses its canonical CLI default: \${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms."; };
     cacheDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_CACHE_DIR. Defaults to ~/.cache/broccoli-comms for Home Manager-managed logs and state."; };
     configDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_CONFIG_DIR. Defaults to ~/.config/broccoli-comms."; };
 

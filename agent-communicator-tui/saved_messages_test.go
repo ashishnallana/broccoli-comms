@@ -84,8 +84,8 @@ func TestSavedMessagesHighlightedInConversation(t *testing.T) {
 	if !strings.Contains(view, "★ alice") || !strings.Contains(view, "15:54 ★") {
 		t.Fatalf("saved markers missing:\n%s", view)
 	}
-	if got := m.messageBorderColor(msg, "alice"); got != palette.Yellow {
-		t.Fatalf("border color=%s want %s", got, palette.Yellow)
+	if got := m.messageBorderColor(msg, "alice"); got != colors.Saved {
+		t.Fatalf("border color=%s want %s", got, colors.Saved)
 	}
 }
 

@@ -66,10 +66,10 @@ func TestStatusDotMapping(t *testing.T) {
 		status string
 		color  string
 	}{
-		{"idle", string(palette.Green)},
-		{"waiting", string(palette.Yellow)},
-		{"failed", string(palette.Red)},
-		{"mystery", string(palette.Overlay0)},
+		{"idle", string(colors.Success)},
+		{"waiting", string(colors.Warning)},
+		{"failed", string(colors.Error)},
+		{"mystery", string(colors.Muted)},
 	}
 	for _, tc := range cases {
 		got := statusDotStyle(tc.status).GetForeground()

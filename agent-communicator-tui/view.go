@@ -11,9 +11,9 @@ import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
-var composerBoxStyle = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(palette.Surface0).Padding(0, 1)
-var panelBoxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(palette.Surface0).Padding(0, 1)
-var mobileComposerBoxStyle = lipgloss.NewStyle().Border(lipgloss.Border{Top: "─"}).BorderTop(true).BorderForeground(palette.Surface0).Padding(0, 0)
+var composerBoxStyle = lipgloss.NewStyle().Background(colors.InputBg).Foreground(colors.Text).Padding(1, 2)
+var panelBoxStyle = lipgloss.NewStyle().Background(colors.PanelBg).Padding(0, 1)
+var mobileComposerBoxStyle = lipgloss.NewStyle().Background(colors.InputBg).Padding(1, 1)
 
 const composerMaxLines = 5
 
@@ -22,120 +22,150 @@ func (m model) View() string {
 	if m.width == 0 {
 		return "loading..."
 	}
-	footer := m.footer(m.width)
-	bodyH := max(3, m.height-lineCount(footer))
+	if m.commandPalette.Open {
+		return m.commandPaletteView(m.width, m.height)
+	}
+	return m.baseView()
+}
 
+func (m model) baseView() string {
+	bodyH := max(3, m.height)
 	if m.showingSaveForm {
-		return m.renderSaveForm() + "\n" + footer
+		return m.renderSaveForm()
 	}
 	if m.showingPromptMenu {
-		return m.renderPromptMenu(m.width, bodyH) + "\n" + footer
+		return m.renderPromptMenu(m.width, bodyH)
 	}
 	if m.showingConfigMenu {
-		return m.renderConfigMenu(m.width, bodyH) + "\n" + footer
+		return m.renderConfigMenu(m.width, bodyH)
 	}
-
-	// Adaptive Mobile/Narrow View
 	if m.width < 70 {
-		return m.conversationPanel(m.width, bodyH) + "\n" + footer
+		return truncateLines(m.conversationPanel(m.width, bodyH), bodyH)
 	}
-
-	leftW, midW, rightW := m.layoutWidths()
-	_ = rightW
-	left := box(m.sidebarView(panelInnerWidth(leftW), panelInnerHeight(bodyH)), leftW, bodyH)
-	mid := m.conversationPanel(midW, bodyH)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid) + "\n" + footer
+	chatW, rightW, _ := m.layoutWidths()
+	chat := m.conversationPanel(chatW, bodyH)
+	right := m.rightColumn(rightW, bodyH)
+	return truncateLines(lipgloss.JoinHorizontal(lipgloss.Top, chat, right), bodyH)
 }
 
 func (m model) layoutWidths() (int, int, int) {
-	left := max(12, (m.width*30)/100)
-	if m.width < 40 {
-		left = max(10, m.width/3)
+	right := min(42, max(28, (m.width*32)/100))
+	if m.width < 100 {
+		right = min(34, max(24, m.width/3))
 	}
-	mid := max(10, m.width-left)
-	return left, mid, 0
+	chat := max(10, m.width-right)
+	return chat, right, 0
 }
 
 func (m model) sidebarView(width, height int) string {
-	if m.mode == savedView {
-		body := shellTitleStyle.Render("Agent Communicator") + "\n" + sectionHeaderStyle.Render("Saved") + "\n" + m.savedAgentList(width, max(1, height-2))
-		return truncateLines(body, height)
+	return m.rightColumn(width, height)
+}
+
+func (m model) rightColumn(width, height int) string {
+	status := m.registryStatusLine()
+	statusH := 2
+	currentH := min(7, max(5, height/4))
+	listH := max(1, height-currentH-statusH)
+	current := m.currentAgentPanel(width, currentH)
+	list := m.switcherPanel(width, listH)
+	statusView := lipgloss.NewStyle().Width(width).Height(statusH).Padding(0, 2).Background(colors.RightColumnBg).Foreground(colors.Muted).Render(status)
+	return lipgloss.JoinVertical(lipgloss.Left, current, list, statusView)
+}
+
+func (m model) currentAgentPanel(width, height int) string {
+	row := m.currentRow()
+	view := m.agentView(row)
+	name := fallback(view.Name, "no agent selected")
+	host := fallback(view.HostnameLabel, localHostname())
+	provider := strings.ToLower(view.ModelBadge)
+	if provider == "??" {
+		provider = "unknown"
 	}
-	title := shellTitleStyle.Render("Agent Communicator")
-	device := mutedStyle.Render("This device: " + localHostname())
-	total, hidden := len(m.rows), m.hiddenCount()
-	header := fmt.Sprintf("Agents %d", total)
+	status := view.StatusLabel
+	if row.Name == "" {
+		status = "unknown"
+	}
+	heroW := max(1, width-4)
+	heroInnerW := max(1, heroW-2)
+	statusBadge := lipgloss.NewStyle().Background(colors.RightColumnBg).Foreground(colors.Accent).Padding(0, 1).Render(status)
+	namePrefix := statusDot(status) + " "
+	nameBudget := max(1, heroInnerW-lipgloss.Width(namePrefix)-lipgloss.Width(statusBadge)-1)
+	nameText := truncateCells(name, nameBudget)
+	gap := max(1, heroInnerW-lipgloss.Width(namePrefix)-lipgloss.Width(nameText)-lipgloss.Width(statusBadge))
+	line1 := namePrefix + nameText + strings.Repeat(" ", gap) + statusBadge
+	line2 := lipgloss.NewStyle().Foreground(colors.SelectedFg).Faint(true).Render(truncateCells("  "+host+" · "+provider, heroInnerW))
+	hero := lipgloss.NewStyle().Width(heroW).Background(colors.SelectedBg).Foreground(colors.SelectedFg).Bold(true).Padding(1, 1).Render(line1 + "\n" + line2)
+	body := shellTitleStyle.Render("Agent Communicator") + "\n" + mutedStyle.Render(host) + "\n" + hero
+	return lipgloss.NewStyle().Width(width).Height(height).Padding(1, 1).Background(colors.RightColumnBg).Render(truncateLines(body, max(1, height-1)))
+}
+
+func (m model) switcherPanel(width, height int) string {
+	shown := max(0, len(m.rows)-1)
+	hidden := m.hiddenCount() + m.systemHiddenCount()
+	headerRight := fmt.Sprintf("%d shown", shown)
 	if hidden > 0 {
-		header = fmt.Sprintf("Agents %d · Hidden %d", total, hidden)
+		headerRight = fmt.Sprintf("%d shown · %d hidden", shown, hidden)
 	}
-	body := title + "\n" + device + "\n" + sectionHeaderStyle.Render(header) + "\n" + m.agentList(width, max(1, height-3))
-	return truncateLines(body, height)
+	header := lipgloss.JoinHorizontal(lipgloss.Top,
+		titleStyle.Render("Switch agent"),
+		strings.Repeat(" ", max(1, width-4-lipgloss.Width("Switch agent")-lipgloss.Width(headerRight))),
+		mutedStyle.Render(headerRight),
+	)
+	filter := lipgloss.NewStyle().Width(max(1, width-4)).Background(colors.PanelBg).Foreground(colors.Muted).Padding(0, 1).Render("⌕ filter agents…")
+	list := m.agentList(width-2, max(1, height-lineCount(header)-lineCount(filter)-3))
+	body := header + "\n" + filter + "\n" + list
+	return lipgloss.NewStyle().Width(width).Height(height).Padding(1, 1).Background(colors.RightColumnBg).Render(truncateLines(body, max(1, height-1)))
+}
+
+func (m model) registryStatusLine() string {
+	if m.healthErr != nil || m.agentListStale || m.err != nil {
+		return "registry degraded"
+	}
+	if m.health.RegistryConnected != nil {
+		if *m.health.RegistryConnected {
+			return "registry online"
+		}
+		return "registry offline"
+	}
+	if m.health.Status != "" && m.health.Status != "ok" {
+		return "registry " + m.health.Status
+	}
+	return "registry online"
 }
 
 func (m model) conversationPanel(width, height int) string {
 	defer debugSince("conversation_panel", time.Now())
-	innerW := panelInnerWidth(width)
-	innerH := panelInnerHeight(height)
-	titleText := m.conversationTitle()
-
-	if width < 70 { // Mobile / Narrow view header overrides
-		innerW = max(1, width-2)
-		innerH = max(1, height)
-		viewName := "Chat"
-		if m.mode == advancedView {
-			viewName = "Advanced Chat"
-		} else if m.mode == savedView {
-			viewName = "Saved Messages"
-		}
-
-		if m.mode == savedView {
-			titleText = fmt.Sprintf("View: %s", viewName)
-		} else if len(m.rows) > 0 && m.selected >= 0 && m.selected < len(m.rows) {
-			row := m.rows[m.selected]
-			titleText = fmt.Sprintf("View: %s\nAgent: %s", viewName, row.Name)
-		} else {
-			titleText = fmt.Sprintf("View: %s\nAgent: None", viewName)
-		}
+	padX := 3
+	if width < 70 {
+		padX = 1
 	}
-
-	title := titleStyle.Render(titleText)
+	innerW := max(1, width-(padX*2))
+	title := titleStyle.Render(m.conversationTitle())
 	composer := m.composerBox(innerW)
 	if m.mode == savedView {
-		composer = mutedStyle.Render("c-f unsave selected · c-n/p saved entry")
+		composer = mutedStyle.Render("Saved messages")
 	}
-	messageH := max(1, innerH-lineCount(title)-lineCount(composer))
-	body := title + "\n" + composer + "\n" + m.messageViewWithHeight(innerW, messageH)
-
-	if width < 70 {
-		return lipgloss.NewStyle().
-			Width(width).
-			Height(height).
-			MaxWidth(width).
-			MaxHeight(height).
-			Padding(0, 1).
-			Render(body)
-	}
-	return box(body, width, height)
+	messageH := max(1, height-lineCount(title)-lineCount(composer)-3)
+	messages := m.messageViewWithHeight(innerW, messageH)
+	body := title + "\n\n" + messages + "\n" + composer
+	return lipgloss.NewStyle().
+		Width(width).
+		Height(height).
+		MaxWidth(width).
+		MaxHeight(height).
+		Padding(1, padX, 0, padX).
+		Background(colors.BaseBg).
+		Render(body)
 }
 
 func (m model) conversationTitle() string {
 	if m.mode == savedView {
-		return "Saved Messages ⭐"
+		return "Saved Messages"
 	}
-	label := "Conversation"
 	if m.mode == advancedView {
-		label = "Advanced Conversation"
+		return "Conversation"
 	}
-	row := m.currentRow()
-	if row.Name == "" {
-		return label + " · no agent selected"
-	}
-	view := m.agentView(row)
-	parts := []string{label, statusDot(view.Status), view.ModelBadge, view.Name}
-	if machine := view.MachineLabel; machine != "" {
-		parts = append(parts, "@ "+machine)
-	}
-	return strings.Join(parts, " ")
+	return "Conversation"
 }
 
 func (m model) composerBox(width int) string {
@@ -149,34 +179,21 @@ func (m model) composerBox(width int) string {
 
 func (m model) composerInputBox(width int) string {
 	if m.width < 70 {
-		return mobileComposerBoxStyle.Width(width).MaxWidth(width).Render(m.composerView(width))
+		return mobileComposerBoxStyle.Width(width).MaxWidth(width).Render(m.composerView(max(1, width-2)))
 	}
-	inner := max(1, width-4)
-	return composerBoxStyle.Width(inner).MaxWidth(max(1, width)).Render(m.composerView(inner))
+	return composerBoxStyle.Width(width).MaxWidth(width).Render(m.composerView(max(1, width-4)))
 }
 
 func (m model) footer(width int) string {
-	directScope := "local only"
-	if m.runtime.RemoteDirectInputEnabled {
-		directScope = "local+remote enabled"
-	}
-	status := m.runtimeStatusLine()
-	if status == "" {
-		status = fmt.Sprintf("rpc · local · agents %d", len(m.rows))
-	}
-	lines := []string{
-		statusBarStyle.Render(status),
-		"c-t view · tab section · c-n/p agent · F1-F3 input · c-a read · c-o prompts · c-H hide · c-f save · c-s save agent",
-		fmt.Sprintf("↑/↓ select msg · c-u/d scroll · c-e open · c-r config · enter send · /msg message · /text /key pane control (%s) · c-q quit · c-x debug capture", directScope),
-	}
+	lines := []string{}
 	if m.paneCaptureStatus != "" {
-		lines = append([]string{m.paneCaptureStatus}, lines...)
+		lines = append(lines, m.paneCaptureStatus)
 	} else if m.directInputStatus != "" {
 		statusLine := m.directInputStatus
 		if m.directInputStatusErr {
 			statusLine = errorBarStyle.Render(statusLine)
 		}
-		lines = append([]string{statusLine}, lines...)
+		lines = append(lines, statusLine)
 	}
 	if m.err != nil {
 		lines = append(lines, errorBarStyle.Render(m.errorStatusLine()))
@@ -283,46 +300,33 @@ func (m model) agentListTitle() string {
 
 func (m model) agentCard(row agentRow, selected bool, width int) string {
 	cardWidth := max(8, width)
-	hidden := m.isHiddenAgent(row)
 	inner := max(4, cardWidth-4)
 	view := m.agentView(row)
+	provider := strings.ToLower(view.ModelBadge)
+	if provider == "??" {
+		provider = "unknown"
+	}
 	unread := ""
 	if view.UnreadCount > 0 {
 		unread = " " + unreadCountBadge(view.UnreadCount)
 	}
-	prefix := agentStatusDot(row) + " "
-	nameBudget := max(1, inner-lipgloss.Width(prefix)-lipgloss.Width(unread))
-	nameText := agentStyle(row.Name, true).Render(truncateCells(row.Name, nameBudget))
-	nameLine := prefix + nameText + unread
-	if lipgloss.Width(nameLine) > inner {
-		nameLine = truncateCells(agentStatusDot(row)+" "+view.Name, inner)
-	}
-	detailParts := nonEmpty([]string{view.ModelBadge, view.RegistryLabel})
-	if view.HostnameLabel != "" {
-		detailParts = append(detailParts, view.HostnameLabel)
-	}
-	detailLine := strings.Join(detailParts, " · ")
-	lines := nameLine + "\n" + mutedStyle.Render(truncateCells(detailLine, inner))
-	border := lipgloss.RoundedBorder()
+	nameLine := agentStatusDot(row) + " " + truncateCells(view.Name, max(1, inner-2-lipgloss.Width(unread))) + unread
+	metaLeft := provider + " · " + fallback(view.HostnameLabel, localHostname())
+	metaRight := view.StatusLabel
+	gap := max(1, inner-lipgloss.Width(metaLeft)-lipgloss.Width(metaRight))
+	metaLine := mutedStyle.Render(truncateCells(metaLeft+strings.Repeat(" ", gap)+metaRight, inner))
+	body := nameLine + "\n" + metaLine
+	style := lipgloss.NewStyle().Width(cardWidth).Padding(0, 1)
 	if selected {
-		border = lipgloss.DoubleBorder()
+		style = style.Background(colors.SelectedBg).Foreground(colors.SelectedFg).Bold(true)
+	} else if m.hasUnread(row) {
+		style = style.Background(colors.PanelBgAlt).Foreground(colors.Text)
 	}
-	borderColor := palette.AgentColors[agentColorIndex(row.Name)]
-	if hidden {
-		borderColor = palette.Overlay0
-	}
-	style := lipgloss.NewStyle().Width(cardWidth-2).Border(border).BorderForeground(borderColor).Padding(0, 1)
-	if selected {
-		style = style.Background(palette.Surface0).Foreground(palette.Text).Bold(true)
-	}
-	return style.Render(lines)
+	return style.Render(body)
 }
 
 func (m model) hiddenSeparator(width int) string {
-	hidden := max(0, len(m.rows)-m.hiddenStartIndex())
-	text := fmt.Sprintf(" hidden / Filtered %d ", hidden)
-	lineWidth := max(0, width-lipgloss.Width(text)-2)
-	return mutedStyle.Render(strings.Repeat("─", lineWidth/2) + text + strings.Repeat("─", lineWidth-lineWidth/2))
+	return ""
 }
 
 func compactCWD(cwd string) string {
@@ -357,34 +361,55 @@ func (m model) agentList(width, height int) string {
 	if len(m.rows) == 0 {
 		return mutedStyle.Render("no agents")
 	}
+	items := make([]struct {
+		Index int
+		Row   agentRow
+	}, 0, len(m.rows))
+	localCount, remoteCount := 0, 0
+	for i, row := range m.rows {
+		if i == m.selected {
+			continue
+		}
+		if row.Scope == "remote" {
+			remoteCount++
+		} else {
+			localCount++
+		}
+		items = append(items, struct {
+			Index int
+			Row   agentRow
+		}{Index: i, Row: row})
+	}
+	if len(items) == 0 {
+		return mutedStyle.Render("no other agents")
+	}
 	visible := max(1, height/agentCardHeight)
-	offset := min(max(0, m.agentOffset), max(0, len(m.rows)-visible))
-	end := min(len(m.rows), offset+visible)
-	hiddenStart := m.hiddenStartIndex()
+	offset := min(max(0, m.agentOffset), max(0, len(items)-visible))
+	end := min(len(items), offset+visible)
 	var b strings.Builder
 	lastGroup := ""
-	for i := offset; i < end; i++ {
-		if i == hiddenStart && hiddenStart > 0 {
+	for pos := offset; pos < end; pos++ {
+		item := items[pos]
+		group := "LOCAL"
+		count := localCount
+		if item.Row.Scope == "remote" {
+			group = "REMOTE"
+			count = remoteCount
+		}
+		heading := fmt.Sprintf("%s (%d)", group, count)
+		if heading != lastGroup {
 			if b.Len() > 0 {
 				b.WriteString("\n")
 			}
-			b.WriteString(m.hiddenSeparator(width) + "\n")
-			lastGroup = ""
+			b.WriteString(sectionHeaderStyle.Render(truncateCells(heading, max(1, width-1))) + "\n")
+			lastGroup = heading
 		}
-		group := m.agentView(m.rows[i]).GroupHeader
-		if group != "" && group != lastGroup {
-			if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
-				b.WriteString("\n")
-			}
-			b.WriteString(sectionHeaderStyle.Render(truncateCells(group, max(1, width-1))) + "\n")
-			lastGroup = group
-		}
-		b.WriteString(m.agentCard(m.rows[i], i == m.selected, width-2))
-		if i < end-1 {
+		b.WriteString(m.agentCard(item.Row, false, width-2))
+		if pos < end-1 {
 			b.WriteString("\n")
 		}
 	}
-	if end < len(m.rows) {
+	if end < len(items) {
 		b.WriteString("\n" + mutedStyle.Render("…"))
 	}
 	return truncateLines(b.String(), height)
@@ -474,19 +499,37 @@ func (m model) messageLinesForWidth(width int) []string {
 }
 
 func sentReadMarker(msg tracker.Message) string {
-	if msg.Sender != "You" && !strings.Contains(msg.Sender, "→") && !strings.HasPrefix(msg.Sender, "to ") {
+	if !isSentMessage(msg) {
 		return ""
 	}
 	if msg.Read {
-		return readStatusStyle.Render("✓✓ ")
+		return readStatusStyle.Render("✓✓")
 	}
 	if msg.Notified {
-		return "✓✓ "
+		return lipgloss.NewStyle().Foreground(colors.DeliveredTick).Render("✓✓")
 	}
 	if msg.Delivered {
-		return "✓ "
+		return lipgloss.NewStyle().Foreground(colors.DeliveredTick).Render("✓✓")
 	}
-	return ""
+	return lipgloss.NewStyle().Foreground(colors.SentTick).Render("✓")
+}
+
+func sentReceiptLine(msg tracker.Message) string {
+	if !isSentMessage(msg) {
+		return ""
+	}
+	state := "sent"
+	if msg.Delivered || msg.Notified {
+		state = "delivered"
+	}
+	if msg.Read {
+		state = "read"
+	}
+	parts := []string{sentReadMarker(msg), state}
+	if ts := formatDisplayTime(msg.Timestamp); ts != "" {
+		parts = append(parts, ts)
+	}
+	return mutedStyle.Render(strings.Join(parts, " · "))
 }
 
 func messageBodyLines(body string, wrapWidth int) []string {
@@ -505,13 +548,13 @@ func (m model) visibleBodyLines(lines []string, index int) []string {
 }
 
 func (m model) messageContentWidth() int {
-	_, mid, _ := m.layoutWidths()
-	return panelInnerWidth(mid)
+	chat, _, _ := m.layoutWidths()
+	return max(1, chat-6)
 }
 
 func (m model) messageChromeHeight() int {
-	_, mid, _ := m.layoutWidths()
-	return lineCount(titleStyle.Render("Conversation") + "\n" + m.composerBox(panelInnerWidth(mid)))
+	chat, _, _ := m.layoutWidths()
+	return lineCount(titleStyle.Render("Conversation") + "\n" + m.composerBox(max(1, chat-6)))
 }
 
 func (m model) messageVisibleLines() int {
@@ -543,7 +586,7 @@ func (m model) composerView(width int) string {
 func (m model) composerLines(width int) []string {
 	focused := !m.messageFocused
 	cursor := ""
-	if focused {
+	if focused && !m.cursorHidden {
 		cursor = selectedStyle.Render("█")
 	}
 	prefix := m.composerPrefix()
@@ -567,24 +610,21 @@ func (m model) composerLines(width int) []string {
 }
 
 func (m model) composerPrefix() string {
-	if m.mode == advancedView {
-		name := fallback(m.currentRow().Name, "agent")
-		return agentStyle(name, true).Render("@"+name) + mutedStyle.Render(": ")
+	label := "/" + m.activeComposerModeName()
+	if label == "/key" {
+		label = "/keys"
 	}
-	return mutedStyle.Render("> ")
+	return lipgloss.NewStyle().Background(colors.InputBg).Foreground(colors.Accent).Bold(true).Padding(0, 1).Render(label) + " "
 }
 
 func (m model) composerPlaceholder() string {
-	switch m.inputMode {
-	case inputModeText:
-		return "type pane text (F1 returns to message mode)"
-	case inputModeKeys:
-		return "type key tokens, e.g. C-c Enter"
-	case inputModeBroadcast:
-		return "type message"
-	default:
-		return "type message"
+	if m.inputMode == inputModeText {
+		return "type pane text…"
 	}
+	if m.inputMode == inputModeKeys {
+		return "type key tokens…"
+	}
+	return "type message…"
 }
 
 type inputModeButton struct {
@@ -622,12 +662,10 @@ func (m model) activeComposerModeName() string {
 }
 
 func (m model) composerModeControls(width int) string {
-	buttons := m.composerModeButtons(width)
-	if buttons == "" {
-		return ""
-	}
-	description := lipgloss.NewStyle().Height(3).PaddingTop(1).Render(m.composerModeDescription(width))
-	return lipgloss.JoinHorizontal(lipgloss.Top, buttons, " ", description)
+	left := mutedStyle.Render("/msg sends an inbox message")
+	right := mutedStyle.Render("Enter send")
+	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func (m model) composerModeButtons(width int) string {
@@ -762,15 +800,15 @@ func (m model) renderPromptMenu(width, height int) string {
 	var body string
 	if len(m.prompts) == 0 {
 		body = lipgloss.NewStyle().
-			Foreground(palette.Yellow).
+			Foreground(colors.Warning).
 			Render("No prompt templates found.\nAdd <prompt-name>.md files in ~/.config/agent-communicator/prompts/")
 	} else {
 		var listLines []string
 		for i, prompt := range m.prompts {
-			style := lipgloss.NewStyle().Foreground(palette.Text)
+			style := lipgloss.NewStyle().Foreground(colors.Text)
 			prefix := "  "
 			if i == m.promptSelected {
-				style = style.Background(palette.Surface0).Foreground(palette.Yellow)
+				style = style.Background(colors.SelectedBg).Foreground(colors.SelectedFg)
 				prefix = "> "
 			}
 			listLines = append(listLines, prefix+style.Render(prompt.Name))
@@ -788,15 +826,15 @@ func (m model) renderConfigMenu(width, height int) string {
 	var body string
 	if len(m.configItems) == 0 {
 		body = lipgloss.NewStyle().
-			Foreground(palette.Red).
+			Foreground(colors.Error).
 			Render("No custom agent configurations found.\nPlace config.json in ~/.config/agent-tracker/agents/<name>/")
 	} else {
 		var listLines []string
 		for i, item := range m.configItems {
-			style := lipgloss.NewStyle().Foreground(palette.Text)
+			style := lipgloss.NewStyle().Foreground(colors.Text)
 			prefix := "  "
 			if i == m.configSelected {
-				style = style.Background(palette.Surface0).Foreground(palette.Yellow)
+				style = style.Background(colors.SelectedBg).Foreground(colors.SelectedFg)
 				prefix = "> "
 			}
 
@@ -805,12 +843,12 @@ func (m model) renderConfigMenu(width, height int) string {
 				scopePrefix = fmt.Sprintf("[%s] ", shortHost(item.Hostname))
 			}
 
-			scopeStyle := lipgloss.NewStyle().Foreground(palette.Overlay0)
+			scopeStyle := lipgloss.NewStyle().Foreground(colors.Muted)
 			if !item.IsRemote {
-				scopeStyle = lipgloss.NewStyle().Foreground(palette.Green)
+				scopeStyle = lipgloss.NewStyle().Foreground(colors.Success)
 			}
 			if i == m.configSelected {
-				scopeStyle = scopeStyle.Background(palette.Surface0).Foreground(palette.Peach)
+				scopeStyle = scopeStyle.Background(colors.SelectedBg).Foreground(colors.SelectedFg)
 			}
 
 			listLines = append(listLines, prefix+scopeStyle.Render(scopePrefix)+style.Render(item.Name)+" - "+item.Description)

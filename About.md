@@ -76,7 +76,7 @@ You may already have tmux sessions, shell hooks, or a Home Manager setup. You do
 
 Broccoli Comms owns a private runtime by default:
 
-- private tracker socket: `$XDG_RUNTIME_DIR/broccoli-comms/agent-tracker.sock`
+- private tracker socket: `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms/agent-tracker.sock`
 - tmux mode: default tmux server/session, or private socket mode with `BROCCOLI_COMMS_TMUX_MODE=private`
 - config under `$XDG_CONFIG_HOME/broccoli-comms`
 - logs/cache under `$XDG_CACHE_HOME/broccoli-comms`

@@ -12,13 +12,13 @@ func TestFunctionKeysSwitchPersistentInputModes(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", ModelType: "pi", Hostname: "workstation"}}}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyF2})
 	m = updated.(model)
-	if m.inputMode != inputModeText || !strings.Contains(m.composerModeHint(120), "/text") {
-		t.Fatalf("text mode not active: mode=%v hint=%q", m.inputMode, m.composerModeHint(120))
+	if m.inputMode != inputModeText || !strings.Contains(m.composerView(80), "/text") {
+		t.Fatalf("text mode not active: mode=%v composer=%q", m.inputMode, m.composerView(80))
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF3})
 	m = updated.(model)
-	if m.inputMode != inputModeKeys || !strings.Contains(m.composerModeHint(120), "/keys") {
-		t.Fatalf("key mode not active: mode=%v hint=%q", m.inputMode, m.composerModeHint(120))
+	if m.inputMode != inputModeKeys || !strings.Contains(m.composerView(80), "/keys") {
+		t.Fatalf("key mode not active: mode=%v composer=%q", m.inputMode, m.composerView(80))
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyF4})
 	m = updated.(model)
@@ -81,63 +81,39 @@ func TestBroadcastSlashRemainsDisabledInternally(t *testing.T) {
 	}
 }
 
-func TestComposerModeButtonsExcludeTargetAndBroadcast(t *testing.T) {
+func TestComposerShowsOnlyMinimalSupportedHelp(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", ModelType: "pi", Hostname: "workstation"}}, inputMode: inputModeMessage}
 	hint := m.composerModeHint(160)
-	for _, want := range []string{"/msg", "/text", "/keys", "╭", "╰"} {
+	for _, want := range []string{"/msg sends an inbox message", "Enter send"} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("hint missing %q: %s", want, hint)
 		}
 	}
-	for _, unwanted := range []string{"target", "alpha Pi", "broadcast", "F4"} {
+	for _, unwanted := range []string{"/text", "/keys", "broadcast", "F4", "Ctrl"} {
 		if strings.Contains(hint, unwanted) {
 			t.Fatalf("hint should not contain %q: %s", unwanted, hint)
 		}
 	}
 }
 
-func TestComposerModeDescriptionTracksSelectedMode(t *testing.T) {
-	cases := []struct {
-		name string
-		m    model
-		want string
-	}{
-		{name: "message", m: model{inputMode: inputModeMessage}, want: "Send chat message."},
-		{name: "text", m: model{inputMode: inputModeText}, want: "Type into agent pane."},
-		{name: "keys", m: model{inputMode: inputModeKeys}, want: "Send keys to agent pane."},
-		{name: "slash text", m: model{inputMode: inputModeMessage, composer: []rune("/text hello")}, want: "Type into agent pane."},
-		{name: "slash keys", m: model{inputMode: inputModeMessage, composer: []rune("/keys Enter")}, want: "Send keys to agent pane."},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			controls := tc.m.composerModeHint(160)
-			if !strings.Contains(controls, tc.want) {
-				t.Fatalf("mode description missing %q: %s", tc.want, controls)
-			}
-		})
-	}
-}
-
-func TestComposerInputAreaDoesNotIncludeModeButtons(t *testing.T) {
+func TestComposerInputAreaIncludesInlineModeOnly(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}}, inputMode: inputModeMessage}
 	input := m.composerView(120)
-	for _, unwanted := range []string{"/msg", "/text", "/keys", "Send chat message", "broadcast", "target"} {
+	if !strings.Contains(input, "/msg") {
+		t.Fatalf("composer input should contain inline mode: %s", input)
+	}
+	for _, unwanted := range []string{"/text", "/keys", "Send chat message", "broadcast", "target", "alpha"} {
 		if strings.Contains(input, unwanted) {
 			t.Fatalf("composer input should not contain %q: %s", unwanted, input)
 		}
 	}
 }
 
-func TestFooterDoesNotAdvertiseBroadcastOrF4(t *testing.T) {
+func TestFooterDoesNotAdvertiseShortcuts(t *testing.T) {
 	footer := model{width: 160}.footer(160)
-	for _, unwanted := range []string{"broadcast", "F4"} {
+	for _, unwanted := range []string{"broadcast", "F4", "F1-F3", "Ctrl", "pane control"} {
 		if strings.Contains(footer, unwanted) {
 			t.Fatalf("footer should not contain %q: %s", unwanted, footer)
-		}
-	}
-	for _, want := range []string{"F1-F3 input", "/msg message", "/text /key pane control"} {
-		if !strings.Contains(footer, want) {
-			t.Fatalf("footer missing %q: %s", want, footer)
 		}
 	}
 }

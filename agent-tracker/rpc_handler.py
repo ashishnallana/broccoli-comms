@@ -740,7 +740,7 @@ def _route_remote_send_input(params: dict, caller_pid: int = None) -> dict | Non
     if not registry_client.remote_pane_input_send_enabled():
         raise RuntimeError("remote direct pane input is disabled")
     mode, payload = _validate_send_input_payload(params)
-    sender_name = params.get("sender_name") or _identify_agent(params, caller_pid) or "cli-user"
+    sender_name = _identify_sender(params, caller_pid) or "cli-user"
     sender_info = state.get_agent(params.get("sender_id") or sender_name) or {}
     sender_id = sender_info.get("agent_id") or params.get("sender_id")
     pane_input_id = params.get("pane_input_id") or params.get("request_id") or str(uuid.uuid4())
@@ -832,6 +832,27 @@ def handle_send_input(params: dict, caller_pid: int = None) -> dict:
         raise RuntimeError(f"Failed to send direct pane input: {e}")
 
 
+def _identify_sender(params: dict, caller_pid: int = None) -> str | None:
+    """Identify the message/input sender without treating target fields as sender identity."""
+    sender_id = params.get("sender_id")
+    if sender_id:
+        resolved_name = state.get_agent_name_by_id(sender_id)
+        if resolved_name:
+            return resolved_name
+
+    sender_name = params.get("sender_name")
+    if sender_name:
+        return sender_name
+
+    sender_tmux_pane = params.get("sender_tmux_pane")
+    if sender_tmux_pane:
+        resolved_name = state.get_agent_name_by_pane(sender_tmux_pane)
+        if resolved_name:
+            return resolved_name
+
+    return _identify_agent({}, caller_pid)
+
+
 def _sender_metadata(sender_name: str, sender_info: dict, sender_id: str | None) -> dict:
     return {
         "sender_agent_id": sender_id,
@@ -845,7 +866,7 @@ def _sender_metadata(sender_name: str, sender_info: dict, sender_id: str | None)
 
 def handle_send_message(params: dict, caller_pid: int = None) -> bool:
     """Sends a message locally or routes it remotely via the registry when target_address is hostname-qualified."""
-    sender_name = params.get("sender_name") or _identify_agent(params, caller_pid) or "cli-user"
+    sender_name = _identify_sender(params, caller_pid) or "cli-user"
     msg = params.get("message")
     attachments = params.get("attachments")
     target_address = params.get("target_address")

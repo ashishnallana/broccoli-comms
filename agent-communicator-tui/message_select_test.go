@@ -31,16 +31,21 @@ func TestComposerShowsCursorOnlyWhenInputFocused(t *testing.T) {
 	if strings.Index(view, "█") > strings.Index(view, "type message") {
 		t.Fatalf("cursor should appear before placeholder: %q", view)
 	}
+	m.cursorHidden = true
+	if strings.Contains(m.composerView(30), "█") {
+		t.Fatal("blink-hidden composer should hide cursor")
+	}
+	m.cursorHidden = false
 	m.messageFocused = true
 	if strings.Contains(m.composerView(30), "█") {
 		t.Fatal("message focus should hide composer cursor")
 	}
 }
 
-func TestMessageViewMarksSelectedMessageWithWideBorder(t *testing.T) {
+func TestMessageViewMarksSelectedMessageWithRail(t *testing.T) {
 	m := model{width: 80, height: 20, messageSelected: 0, messages: []tracker.Message{{Sender: "a", Body: "one"}, {Sender: "b", Body: "two"}}}
 	view := m.messageView(80)
-	if !strings.Contains(view, "╔") || strings.Contains(view, "● b") {
+	if !strings.Contains(view, "┃") || strings.Contains(view, "● b") || strings.Contains(view, "╔") {
 		t.Fatalf("view = %q", view)
 	}
 }

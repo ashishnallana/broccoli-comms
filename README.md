@@ -25,10 +25,10 @@ broccoli-comms stop        # stop Broccoli-owned windows/session state and priva
 
 Default paths/mode:
 
-- runtime: `$XDG_RUNTIME_DIR/broccoli-comms`
-- tracker socket: `$XDG_RUNTIME_DIR/broccoli-comms/agent-tracker.sock`
+- runtime: `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms`
+- tracker socket: `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms/agent-tracker.sock`
 - tmux mode: `default` (uses your normal tmux server and a `broccoli-comms-agents` session)
-- private tmux compatibility: set `BROCCOLI_COMMS_TMUX_MODE=private` to use `$XDG_RUNTIME_DIR/broccoli-comms/tmux.sock`
+- private tmux compatibility: set `BROCCOLI_COMMS_TMUX_MODE=private` to use `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms/tmux.sock`
 - config: `$XDG_CONFIG_HOME/broccoli-comms/config.json`
 - logs/cache: `$XDG_CACHE_HOME/broccoli-comms`
 

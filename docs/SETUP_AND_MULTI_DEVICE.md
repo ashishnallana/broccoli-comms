@@ -21,9 +21,9 @@ Default paths:
 
 | Purpose | Default |
 | --- | --- |
-| Runtime dir | `$XDG_RUNTIME_DIR/broccoli-comms` |
-| Tracker socket | `$XDG_RUNTIME_DIR/broccoli-comms/agent-tracker.sock` |
-| Tmux mode | `default` uses the user's normal tmux server; `BROCCOLI_COMMS_TMUX_MODE=private` uses `$XDG_RUNTIME_DIR/broccoli-comms/tmux.sock` |
+| Runtime dir | `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms` |
+| Tracker socket | `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms/agent-tracker.sock` |
+| Tmux mode | `default` uses the user's normal tmux server; `BROCCOLI_COMMS_TMUX_MODE=private` uses `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms/tmux.sock` |
 | Config | `$XDG_CONFIG_HOME/broccoli-comms/config.json` |
 | Logs/cache | `$XDG_CACHE_HOME/broccoli-comms` |
 

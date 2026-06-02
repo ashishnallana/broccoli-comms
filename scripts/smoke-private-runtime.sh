@@ -27,11 +27,7 @@ broccoli() {
 }
 
 tracker_ctl() {
-  if [[ -n "${AGENT_TRACKER_CTL_BIN:-}" ]]; then
-    "$AGENT_TRACKER_CTL_BIN" "$@"
-  else
-    "${nix_cmd[@]}" run "$repo_root#agent-tracker-ctl" -- "$@"
-  fi
+  broccoli agent-tracker "$@"
 }
 
 tmux_private() {

@@ -312,6 +312,9 @@ def is_registry_connected(now: float | None = None) -> bool:
 def format_registry_status(status: dict, now: float | None = None) -> str:
     now = time.time() if now is None else now
     registries = status.get("registries") or {"default": status} if status else {}
+    configured_names = {config.get("name") or "default" for config in registry_configs()}
+    if configured_names:
+        registries = {name: entry for name, entry in registries.items() if name in configured_names}
     if not registries:
         return "No registry status found."
     lines = []

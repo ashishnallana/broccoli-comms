@@ -70,8 +70,10 @@ interface RegistryStatusFile extends RegistryStatusEntry {
 export function resolveTrackerSocket(env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (env.AGENT_TRACKER_SOCKET) return env.AGENT_TRACKER_SOCKET
   if (env.BROCCOLI_COMMS_RUNTIME_DIR) return join(env.BROCCOLI_COMMS_RUNTIME_DIR, 'agent-tracker.sock')
-  const defaultHomeManagerSocket = join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'agent-tracker', 'agent-tracker.sock')
-  if (existsSync(defaultHomeManagerSocket)) return defaultHomeManagerSocket
+  const runtimeBase = env.XDG_RUNTIME_DIR || (typeof process.getuid === 'function' ? join('/tmp', String(process.getuid())) : undefined)
+  if (!runtimeBase) return undefined
+  const broccoliDefaultSocket = join(runtimeBase, 'broccoli-comms', 'agent-tracker.sock')
+  if (existsSync(broccoliDefaultSocket)) return broccoliDefaultSocket
   return undefined
 }
 

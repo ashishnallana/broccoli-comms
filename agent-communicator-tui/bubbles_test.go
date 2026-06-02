@@ -7,32 +7,26 @@ import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
-func TestMessagesUseBoxesAndWideSelectionBorder(t *testing.T) {
+func TestMessagesUseBubblelessTimelineRail(t *testing.T) {
 	m := model{messageSelected: 0, messages: []tracker.Message{{Sender: "alice", Body: "hello"}}}
 	view := strings.Join(m.messageLinesForWidth(80), "\n")
-	for _, want := range []string{"╔", "╚", "║ alice", "hello"} {
+	for _, want := range []string{"┃", "alice", "hello"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("message view missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "●") {
-		t.Fatalf("selected message should not render selector dot:\n%s", view)
+	for _, unwanted := range []string{"╔", "╚", "╭", "╰"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("bubbleless timeline should not contain %q:\n%s", unwanted, view)
+		}
 	}
 }
 
-func TestIncomingMessagesAreIndentedFiveCells(t *testing.T) {
-	m := model{messages: []tracker.Message{{Sender: "alice", Body: "hello"}}}
-	lines := m.messageLinesForWidth(80)
-	if len(lines) == 0 || !strings.HasPrefix(lines[0], "     ") {
-		t.Fatalf("incoming bubble not indented:\n%s", strings.Join(lines, "\n"))
-	}
-}
-
-func TestOutgoingMessagesAreLeftAligned(t *testing.T) {
-	m := model{messages: []tracker.Message{{Sender: "You", Body: "hello"}}}
-	lines := m.messageLinesForWidth(80)
-	if len(lines) == 0 || strings.HasPrefix(lines[0], "     ") {
-		t.Fatalf("outgoing bubble should not be indented:\n%s", strings.Join(lines, "\n"))
+func TestOutgoingMessagesShowReceiptTicks(t *testing.T) {
+	m := model{messages: []tracker.Message{{Sender: "You", Body: "hello", Read: true}}}
+	view := strings.Join(m.messageLinesForWidth(80), "\n")
+	if !strings.Contains(view, "✓✓") || !strings.Contains(view, "read") {
+		t.Fatalf("outgoing receipt missing:\n%s", view)
 	}
 }
 

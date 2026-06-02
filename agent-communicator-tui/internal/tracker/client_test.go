@@ -48,6 +48,15 @@ func TestDefaultSocketPathPrefersExplicitAgentTrackerSocket(t *testing.T) {
 	}
 }
 
+func TestDefaultSocketPathUsesCanonicalRuntimeDefault(t *testing.T) {
+	t.Setenv("AGENT_TRACKER_SOCKET", "")
+	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "")
+	t.Setenv("XDG_RUNTIME_DIR", "/tmp/xdg-runtime")
+	if got, want := DefaultSocketPath(), filepath.Join("/tmp/xdg-runtime", "broccoli-comms", "agent-tracker.sock"); got != want {
+		t.Fatalf("DefaultSocketPath() = %q, want %q", got, want)
+	}
+}
+
 func TestListDecodesDetectionStatus(t *testing.T) {
 	client := fakeClient(t, func(req rpcRequest) any {
 		return map[string]Agent{"alpha": {Detection: DetectionStatus{Configured: true, Enabled: true, Provider: "claude", SecondsUntilNextScan: 4, LastResult: "no_match"}}}

@@ -21,10 +21,10 @@ func TestComposerHeightShrinksMessageViewport(t *testing.T) {
 	}
 }
 
-func TestAdvancedComposerPrefixWrapsWithReceiver(t *testing.T) {
+func TestAdvancedComposerPrefixWrapsWithInlineMode(t *testing.T) {
 	m := model{mode: advancedView, rows: []agentRow{{Name: "review-agent"}}, composer: []rune(strings.Repeat("hello ", 12))}
 	view := m.composerView(28)
-	if !strings.Contains(view, "@review-agent") || lineCount(view) <= 1 {
+	if !strings.Contains(view, "/msg") || strings.Contains(view, "@review-agent") || lineCount(view) <= 1 {
 		t.Fatalf("advanced composer view = %q", view)
 	}
 }

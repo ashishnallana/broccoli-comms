@@ -182,6 +182,7 @@ class TestAgentTrackerCtl(unittest.TestCase):
                 self.assertTrue(ctl.is_registry_connected(now=120.0))
                 self.assertFalse(ctl.is_registry_connected(now=200.0))
 
+    @mock.patch.dict(os.environ, {}, clear=True)
     def test_format_registry_status_shows_each_registry(self):
         out = ctl.format_registry_status({
             "registries": {
@@ -192,6 +193,72 @@ class TestAgentTrackerCtl(unittest.TestCase):
         self.assertIn("corp: connected, last_success=30s ago", out)
         self.assertIn("lab: disconnected, last_success=never", out)
         self.assertIn("heartbeat:unreachable", out)
+
+    def test_format_registry_status_filters_to_configured_registries(self):
+        status = {
+            "registries": {
+                "mundus": {"connected": True, "registry_url": "https://agents.mundus.in", "last_success": 1},
+                "e2e": {"connected": True, "registry_url": "http://127.0.0.1:18000", "last_success": 1},
+            }
+        }
+        with mock.patch.dict(os.environ, {"AGENT_REGISTRIES_JSON": '[{"name":"e2e","url":"http://127.0.0.1:18000"}]'}, clear=True):
+            rendered = ctl.format_registry_status(status, now=2)
+        self.assertIn("e2e:", rendered)
+        self.assertNotIn("mundus", rendered)
+
+    def test_registry_status_payload_prunes_stale_registries(self):
+        import registry_client
+        e2e_client = registry_client.RegistryClient(name="e2e", url="http://127.0.0.1:18000")
+        existing = {
+            "registries": {
+                "mundus": {"connected": True, "registry_url": "https://agents.mundus.in", "last_success": 1},
+                "e2e": {"connected": False, "registry_url": "http://127.0.0.1:18000"},
+            }
+        }
+        with mock.patch.object(registry_client, "load_registry_clients", return_value=[e2e_client]):
+            payload = registry_client._registry_status_payload(200, "heartbeat", existing, e2e_client)
+        self.assertEqual(set(payload["registries"]), {"e2e"})
+
+    def test_send_message_does_not_treat_target_name_as_sender(self):
+        import rpc_handler
+        caller_pid = os.getpid()
+        agents = {
+            "local-alpha": {"agent_id": "alpha-id", "uuid": "alpha-id", "wrapper_pid": caller_pid, "agent_type": "pi", "agent_cmd": "pi"},
+            "local-beta": {"agent_id": "beta-id", "uuid": "beta-id", "wrapper_pid": caller_pid + 100000, "agent_type": "pi", "agent_cmd": "pi"},
+        }
+        delivered = {}
+
+        def get_agent(name_or_id):
+            if name_or_id in agents:
+                return agents[name_or_id]
+            for info in agents.values():
+                if info.get("agent_id") == name_or_id:
+                    return info
+            return None
+
+        def name_by_id(agent_id):
+            for name, info in agents.items():
+                if info.get("agent_id") == agent_id:
+                    return name
+            return None
+
+        def capture_delivery(agent_name, payload, sender_name, verify=False):
+            delivered.update(agent_name=agent_name, payload=payload, sender_name=sender_name, verify=verify)
+            return agent_name
+
+        with mock.patch.object(rpc_handler.state, "get_all_agents", return_value=agents), \
+             mock.patch.object(rpc_handler.state, "get_agent", side_effect=get_agent), \
+             mock.patch.object(rpc_handler.state, "get_agent_name_by_id", side_effect=name_by_id), \
+             mock.patch.object(rpc_handler.state, "get_agent_name_by_pane", return_value=None), \
+             mock.patch.object(rpc_handler.state, "normalize_model_type", return_value="pi"), \
+             mock.patch.object(rpc_handler, "deliver_local_message", side_effect=capture_delivery):
+            result = rpc_handler.handle_send_message({"agent_name": "local-beta", "message": "hello"}, caller_pid=caller_pid)
+
+        self.assertTrue(result)
+        self.assertEqual(delivered["agent_name"], "local-beta")
+        self.assertEqual(delivered["sender_name"], "local-alpha")
+        self.assertEqual(delivered["payload"]["sender"], "local-alpha")
+        self.assertNotEqual(delivered["payload"]["sender"], "local-beta")
 
     @mock.patch.dict(os.environ, {}, clear=True)
     def test_capture_pane_parser_registration(self):

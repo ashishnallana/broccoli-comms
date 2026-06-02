@@ -12,7 +12,7 @@ import (
 func TestMessageLinesHighlightSenderAndSeparateMessages(t *testing.T) {
 	m := model{messages: []tracker.Message{{Sender: "alice", Timestamp: "t1", Body: "**hello**"}, {Sender: "bob", Body: "second"}}}
 	lines := strings.Join(m.messageLinesForWidth(80), "\n")
-	for _, want := range []string{"alice", "t1", "hello", "─", "bob", "second"} {
+	for _, want := range []string{"alice", "t1", "hello", "┃", "bob", "second"} {
 		if !strings.Contains(lines, want) {
 			t.Fatalf("message lines missing %q:\n%s", want, lines)
 		}
@@ -46,7 +46,7 @@ func TestMessageLinesWrapLongMessageBody(t *testing.T) {
 func TestMessageViewportScrollsIndependently(t *testing.T) {
 	m := model{height: 8, messageOffset: 3, messages: []tracker.Message{{Sender: "a", Body: "one\ntwo\nthree\nfour\nfive"}}}
 	view := m.messageView(80)
-	if strings.Contains(view, "one") || !strings.Contains(view, "two") {
+	if strings.Contains(view, "one") || !strings.Contains(view, "three") {
 		t.Fatalf("unexpected scrolled message view:\n%s", view)
 	}
 }
@@ -94,7 +94,7 @@ func TestCtrlUCtrlDClampMessageScroll(t *testing.T) {
 func TestViewWideAndNarrowIncludeCoreRegions(t *testing.T) {
 	m := model{width: 120, height: 30, rows: []agentRow{{Name: "alpha", Scope: "local", Status: "idle", CWD: "/repo"}}, messages: []tracker.Message{{Sender: "agent", Body: "**hello**"}}}
 	wide := m.View()
-	for _, want := range []string{"Agents", "Conversation", "alpha", "hello"} {
+	for _, want := range []string{"Switch agent", "Conversation", "alpha", "hello"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("wide view missing %q:\n%s", want, wide)
 		}
@@ -107,7 +107,7 @@ func TestViewWideAndNarrowIncludeCoreRegions(t *testing.T) {
 	}
 	m.width = 48
 	narrow := m.View()
-	if !strings.Contains(narrow, "View: Chat") || strings.Contains(narrow, "Selected") {
+	if !strings.Contains(narrow, "Conversation") || strings.Contains(narrow, "Selected") {
 		t.Fatalf("unexpected narrow view:\n%s", narrow)
 	}
 	if got := maxRenderedLineWidth(narrow); got > m.width {
@@ -115,31 +115,27 @@ func TestViewWideAndNarrowIncludeCoreRegions(t *testing.T) {
 	}
 }
 
-func TestWideComposerSitsAtPanelTop(t *testing.T) {
+func TestWideComposerSitsNearBottom(t *testing.T) {
 	m := model{width: 120, height: 30, rows: []agentRow{{Name: "alpha", Scope: "local"}}, messages: []tracker.Message{{Sender: "agent", Body: "hello"}}}
 	view := m.View()
-	composerIndex := strings.Index(view, "/msg")
+	composerIndex := strings.LastIndex(view, "/msg")
 	messageIndex := strings.Index(view, "hello")
-	if composerIndex < 0 || messageIndex < 0 || composerIndex > messageIndex {
-		t.Fatalf("composer should render above messages:\n%s", view)
-	}
-	lines := strings.Split(view, "\n")
-	if len(lines) < 3 || !strings.Contains(lines[2], "┌") {
-		t.Fatalf("composer top border should be directly below the title line; line 3 = %q\n%s", lines[2], view)
+	if composerIndex < 0 || messageIndex < 0 || composerIndex < messageIndex {
+		t.Fatalf("composer should render below timeline near bottom:\n%s", view)
 	}
 }
 
 func TestLayoutWidthsConsumeAvailableWidth(t *testing.T) {
 	m := model{width: 160}
-	left, mid, right := m.layoutWidths()
-	if right != 0 {
-		t.Fatalf("right panel = %d, want 0 for two-panel layout", right)
+	chat, right, extra := m.layoutWidths()
+	if extra != 0 {
+		t.Fatalf("extra panel = %d, want 0 for two-column layout", extra)
 	}
-	if got := left + mid; got != m.width {
-		t.Fatalf("two-pane width = %d, want %d", got, m.width)
+	if got := chat + right; got != m.width {
+		t.Fatalf("two-column width = %d, want %d", got, m.width)
 	}
-	if left != 48 || mid != 112 {
-		t.Fatalf("left/mid = %d/%d, want 30/70 split 48/112", left, mid)
+	if right != 42 || chat != 118 {
+		t.Fatalf("chat/right = %d/%d, want 118/42", chat, right)
 	}
 }
 

@@ -26,11 +26,11 @@ func TestCtrlTTogglesAdvancedViewAndLoadsAllInbox(t *testing.T) {
 	}
 }
 
-func TestAdvancedComposerShowsSelectedReceiverName(t *testing.T) {
+func TestAdvancedComposerShowsMessageModeInline(t *testing.T) {
 	m := model{mode: advancedView, rows: []agentRow{{Name: "alpha"}}}
 	view := m.composerView(80)
-	if !strings.Contains(view, "@alpha") || !strings.Contains(view, ": ") {
-		t.Fatalf("composer should show receiver name: %q", view)
+	if !strings.Contains(view, "/msg") || strings.Contains(view, "@alpha") {
+		t.Fatalf("composer should show inline mode without repeating receiver: %q", view)
 	}
 	if !strings.Contains(view, "type message") {
 		t.Fatalf("composer = %q", view)
@@ -43,7 +43,7 @@ func TestAdvancedComposerShowsSelectedReceiverName(t *testing.T) {
 func TestAdvancedViewUsesAgentListAndConversationPanels(t *testing.T) {
 	m := model{mode: advancedView, width: 100, height: 20, rows: []agentRow{{Name: "alpha", Scope: "local"}}, allMessages: []tracker.Message{{Sender: "beta", Body: "hello"}}}
 	view := m.View()
-	for _, want := range []string{"Agents", "Conversation", "alpha", "hello"} {
+	for _, want := range []string{"Switch agent", "Conversation", "alpha", "hello"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("advanced view missing %q:\n%s", want, view)
 		}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -89,6 +90,52 @@ func saveHiddenAgentsCmd(hidden map[string]bool) tea.Cmd {
 
 func (m model) isHiddenAgent(row agentRow) bool {
 	return m.hiddenAgents != nil && m.hiddenAgents[conversationKey(row)]
+}
+
+func isSystemAgent(row agentRow) bool {
+	name := strings.TrimSpace(row.Name)
+	agentName := strings.TrimSpace(row.AgentName)
+	target := strings.TrimSpace(row.TargetAddress)
+	agentType := strings.ToLower(strings.TrimSpace(row.AgentType))
+	agentCmd := strings.ToLower(strings.TrimSpace(row.AgentCmd))
+	if name == "agent-communicator" || agentName == "agent-communicator" {
+		return true
+	}
+	for _, value := range []string{name, agentName, target} {
+		if strings.HasSuffix(value, "/agent-communicator") {
+			return true
+		}
+	}
+	return strings.HasPrefix(agentType, "agent-communicator") || strings.Contains(agentCmd, "agent-communicator")
+}
+
+func (m *model) applyAgentVisibility(preserveKey string) {
+	if preserveKey == "" {
+		preserveKey = conversationKey(m.currentRow())
+	}
+	source := m.allRows
+	if source == nil {
+		source = m.rows
+	}
+	visible := make([]agentRow, 0, len(source))
+	for _, row := range source {
+		if isSystemAgent(row) && !m.showSystemAgents {
+			continue
+		}
+		visible = append(visible, row)
+	}
+	m.rows = visible
+	m.sortRowsByHidden(preserveKey)
+}
+
+func (m model) systemHiddenCount() int {
+	count := 0
+	for _, row := range m.allRows {
+		if isSystemAgent(row) && !m.showSystemAgents {
+			count++
+		}
+	}
+	return count
 }
 
 func (m *model) sortRowsByHidden(preserveKey string) {

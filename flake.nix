@@ -31,28 +31,18 @@
             '';
           };
 
-          agentTrackerCtlBase = pkgs.writeShellApplication {
-            name = "agent-tracker-ctl";
-            runtimeInputs = with pkgs; [ python3 tmux coreutils gnugrep procps bash ];
-            text = ''
-              export PYTHONPATH=${agentTrackerFiles}:''${PYTHONPATH:-}
-              exec ${pkgs.python3}/bin/python3 ${agentTrackerFiles}/agent-tracker-ctl.py "$@"
-            '';
-          };
-
           agentWrapper = pkgs.writeShellApplication {
             name = "agent-wrapper";
-            runtimeInputs = with pkgs; [ bash tmux coreutils gnugrep python3 procps agentTrackerCtlBase ];
+            runtimeInputs = with pkgs; [ bash tmux coreutils gnugrep python3 procps ];
             text = builtins.readFile ./wrapper/agent-wrapper.sh;
           };
 
           agentTrackerCtl = pkgs.writeShellApplication {
             name = "agent-tracker-ctl";
-            runtimeInputs = with pkgs; [ python3 tmux coreutils gnugrep procps bash agentWrapper ];
+            runtimeInputs = with pkgs; [ bash ];
             text = ''
-              export BROCCOLI_COMMS_AGENT_WRAPPER=${agentWrapper}/bin/agent-wrapper
-              export PYTHONPATH=${agentTrackerFiles}:''${PYTHONPATH:-}
-              exec ${pkgs.python3}/bin/python3 ${agentTrackerFiles}/agent-tracker-ctl.py "$@"
+              echo "agent-tracker-ctl is deprecated. Use: broccoli-comms agent-tracker <subcommand> [args...]" >&2
+              exit 1
             '';
           };
 
@@ -154,7 +144,7 @@
           cp -R ${./agent-tracker} agent-tracker
           chmod -R u+w agent-tracker
           cd agent-tracker
-          ${pkgs.python3}/bin/python3 -m unittest test_tmux_util.py test_spin_command.py
+          ${pkgs.python3}/bin/python3 -m unittest test_tmux_util.py test_spin_command.py test_agent_tracker_ctl.py
           touch $out
         '';
 

@@ -373,6 +373,10 @@ def fetch_trackers():
     return 404, {"message": "registry not configured"}
 
 
+def _configured_registry_names() -> set[str]:
+    return {client.name for client in load_registry_clients()}
+
+
 def _registry_status_payload(status_code, operation, existing, client=None):
     now = time.time()
     connected = isinstance(status_code, int) and 200 <= status_code < 300
@@ -397,7 +401,10 @@ def _registry_status_payload(status_code, operation, existing, client=None):
         entry["last_error"] = f"{operation}:{status_code if status_code is not None else 'unreachable'}"
     else:
         entry["last_error"] = f"{operation}:{status_code if status_code is not None else 'unreachable'}"
-    registries = dict(existing.get("registries") or {})
+    configured_names = _configured_registry_names()
+    if name:
+        configured_names.add(name)
+    registries = {k: v for k, v in dict(existing.get("registries") or {}).items() if k in configured_names}
     registries[name] = entry
     payload = {**entry, "connected": any(r.get("connected") for r in registries.values()), "registries": registries}
     if payload["connected"]:
@@ -405,6 +412,16 @@ def _registry_status_payload(status_code, operation, existing, client=None):
         if successes:
             payload["last_success"] = max(successes)
     return payload
+
+
+def _reset_registry_status_if_unconfigured():
+    if load_registry_clients():
+        return
+    try:
+        if os.path.exists(STATUS_PATH):
+            os.remove(STATUS_PATH)
+    except Exception as e:
+        logging.debug(f"failed to remove stale registry status: {e}")
 
 
 def _record_sync_result(status_code, operation, client=None):
@@ -932,6 +949,7 @@ def _delivery_loop(client=None):
 def background_sync():
     clients = load_registry_clients()
     if not clients:
+        _reset_registry_status_if_unconfigured()
         LOG.info("registry sync disabled: no registries configured")
         return
     LOG.info("starting registry sync for %s registries tracker_id=%s hostname=%s", len(clients), TRACKER_ID, HOSTNAME)
