@@ -306,28 +306,51 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	if provider == "??" {
 		provider = "unknown"
 	}
+
+	bg := colors.RightColumnBg
+	if selected {
+		bg = colors.SelectedBg
+	} else if m.hasUnread(row) {
+		bg = colors.PanelBgAlt
+	}
+
 	unread := ""
 	if view.UnreadCount > 0 {
-		unread = " " + unreadCountBadge(view.UnreadCount)
+		unread = lipgloss.NewStyle().Background(bg).Render(" ") + unreadCountBadge(view.UnreadCount)
 	}
+
 	limit := max(1, inner-2-lipgloss.Width(unread))
 	suffix := ""
 	if m.isHiddenAgent(row) {
-		suffix = mutedStyle.Render(" ◌")
+		suffix = mutedStyle.Background(bg).Render(" ◌")
 		limit = max(1, limit-2)
 	}
-	displayName := truncateCells(view.Name, limit) + suffix
-	nameLine := agentStatusDot(row) + " " + displayName + unread
+
+	dot := agentStatusDotStyle(row).Background(bg).Render("●")
+	space := lipgloss.NewStyle().Background(bg).Render(" ")
+
+	nameStyle := lipgloss.NewStyle().Background(bg)
+	if selected {
+		nameStyle = nameStyle.Foreground(colors.SelectedFg).Bold(true)
+	} else if m.hasUnread(row) {
+		nameStyle = nameStyle.Foreground(colors.TextStrong).Bold(true)
+	} else {
+		nameStyle = nameStyle.Foreground(colors.Text)
+	}
+	nameStr := nameStyle.Render(truncateCells(view.Name, limit)) + suffix
+
+	nameLine := dot + space + nameStr + unread
+
 	metaLeft := provider + " · " + fallback(view.HostnameLabel, localHostname())
 	metaRight := view.StatusLabel
 	gap := max(1, inner-lipgloss.Width(metaLeft)-lipgloss.Width(metaRight))
-	metaLine := mutedStyle.Render(truncateCells(metaLeft+strings.Repeat(" ", gap)+metaRight, inner))
+	metaStyle := mutedStyle.Background(bg)
+	metaLine := metaStyle.Render(truncateCells(metaLeft+strings.Repeat(" ", gap)+metaRight, inner))
+
 	body := nameLine + "\n" + metaLine
-	style := lipgloss.NewStyle().Width(cardWidth).Padding(0, 1)
+	style := lipgloss.NewStyle().Width(cardWidth).Padding(0, 1).Background(bg)
 	if selected {
-		style = style.Background(colors.SelectedBg).Foreground(colors.SelectedFg).Bold(true)
-	} else if m.hasUnread(row) {
-		style = style.Background(colors.PanelBgAlt).Foreground(colors.Text)
+		style = style.Foreground(colors.SelectedFg).Bold(true)
 	}
 	return style.Render(body)
 }

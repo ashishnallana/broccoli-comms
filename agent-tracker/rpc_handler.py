@@ -1563,6 +1563,7 @@ def handle_client(conn: socket.socket) -> None:
             
         try:
             req = json.loads(data.decode())
+            logging.info("JSON-RPC Request: %s", req)
         except json.JSONDecodeError:
             return
             

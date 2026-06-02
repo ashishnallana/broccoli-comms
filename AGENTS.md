@@ -117,6 +117,32 @@ Verify that the mailbox is globally addressable and connected:
 * Querying the local endpoint `curl http://127.0.0.1:18000/agents | jq` should show the hostname `tanmayvijay-mac-broccoli` and the mailbox agent `agent-communicator`.
 * Querying the remote endpoint `curl https://agents.mundus.in/agents | jq` should show `tanmayvijay-mac-broccoli/agent-communicator` successfully published!
 
+## Local Development & Testing Workarounds (Bypassing Nix Store)
+
+To iterate rapidly on local modifications without having to run a global `home-manager switch` or overwrite system packages, you can point the runtime variables directly to your local workspace:
+
+### 1. Running local edits of the Tracker Daemon
+The standard `broccoli-comms start` script launches the pre-compiled, read-only tracker daemon from the Nix store. To bypass this and execute your local workspace Python edits:
+```bash
+# Stop any currently running background daemon
+python3 app/broccoli-comms.py stop
+
+# Start the daemon pointing explicitly to your local workspace tracker script
+BROCCOLI_COMMS_AGENT_TRACKER=/usr/local/google/home/tanmayvijay/broccoli-comms/agent-tracker/agent-tracker.py \
+python3 app/broccoli-comms.py start
+```
+
+### 2. Running local edits of the Go TUI (agent-communicator)
+To test local Go TUI styling/rendering edits immediately without global recompilation:
+```bash
+# 1. Compile the Go TUI locally inside the sandboxed Nix environment
+nix build .#agentCommunicator
+
+# 2. Run the communicator UI pointing explicitly to your new locally compiled binary
+BROCCOLI_COMMS_AGENT_COMMUNICATOR_TUI=/usr/local/google/home/tanmayvijay/broccoli-comms/result/bin/agent-communicator \
+broccoli-comms ui
+```
+
 ---
 
 ## Key Artifacts & Links
