@@ -31,7 +31,9 @@ let
   trackerStderr = "${broccoliCacheDir}/launchd.stderr.log";
   trackerHostSuffixPath = "${stateRoot}/broccoli-comms/agent-tracker/hostname-suffix";
 
-  envList = attrs: lib.mapAttrsToList (name: value: "${name}=${toString value}") attrs;
+  escapedRegistries = builtins.replaceStrings ["\""] ["\\\""] (builtins.toJSON cfg.tracker.registries);
+
+  envList = attrs: lib.mapAttrsToList (name: value: "${name}=\"${builtins.replaceStrings ["\""] ["\\\""] (toString value)}\"") attrs;
   optionalEnv = name: value: lib.optionalAttrs (value != null) { ${name} = value; };
 
   broccoliEnv = optionalEnv "BROCCOLI_COMMS_RUNTIME_DIR" broccoliRuntimeDir
@@ -63,7 +65,7 @@ let
     // optionalEnv "AGENT_TRACKER_TMUX_SOCKET" cfg.tracker.tmuxSocketPath
     // optionalEnv "AGENT_REGISTRY_TOKEN" cfg.tracker.registryToken
     // lib.optionalAttrs (cfg.tracker.registries != []) {
-      AGENT_REGISTRIES_JSON = builtins.replaceStrings ["\""] ["'"] (builtins.toJSON cfg.tracker.registries);
+      AGENT_REGISTRIES_JSON = builtins.toJSON cfg.tracker.registries;
     }
     // lib.optionalAttrs cfg.tracker.remotePaneInput.enable {
       BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED = "1";
@@ -129,6 +131,11 @@ PY
       ${lib.optionalString (broccoliRuntimeDir != null) ''export BROCCOLI_COMMS_RUNTIME_DIR="''${BROCCOLI_COMMS_RUNTIME_DIR:-${broccoliRuntimeDir}}"''}
       export BROCCOLI_COMMS_CACHE_DIR="''${BROCCOLI_COMMS_CACHE_DIR:-${broccoliCacheDir}}"
       export BROCCOLI_COMMS_CONFIG_DIR="''${BROCCOLI_COMMS_CONFIG_DIR:-${broccoliConfigDir}}"
+      ${lib.optionalString (cfg.tracker.registries != []) ''
+        if [ -z "''${AGENT_REGISTRIES_JSON:-}" ]; then
+          export AGENT_REGISTRIES_JSON="${escapedRegistries}"
+        fi
+      ''}
       ${lib.optionalString (broccoliRuntimeDir != null) ''export AGENT_TRACKER_SOCKET="''${AGENT_TRACKER_SOCKET:-$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock}"''}
       exec ${pcfg.package}/bin/broccoli-comms "$@"
     '';

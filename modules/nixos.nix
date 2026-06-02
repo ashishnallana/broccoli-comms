@@ -25,7 +25,7 @@ let
     else if lib.hasAttrByPath [ "users" "users" cfg.user "home" ] config then lib.getAttrFromPath [ "users" "users" cfg.user "home" ] config
     else "/home/${cfg.user}";
 
-  envList = attrs: lib.mapAttrsToList (name: value: "${name}=${toString value}") attrs;
+  envList = attrs: lib.mapAttrsToList (name: value: "${name}=\"${builtins.replaceStrings ["\""] ["\\\""] (toString value)}\"") attrs;
   optionalEnv = name: value: lib.optionalAttrs (value != null) { ${name} = value; };
 
   runtimeEnv = {
