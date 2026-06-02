@@ -100,7 +100,7 @@ func (m model) currentAgentPanel(width, height int) string {
 }
 
 func (m model) switcherPanel(width, height int) string {
-	shown := max(0, len(m.rows)-1)
+	shown := len(m.rows)
 	hidden := m.hiddenCount() + m.systemHiddenCount()
 	headerRight := fmt.Sprintf("%d shown", shown)
 	if hidden > 0 {
@@ -310,7 +310,14 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	if view.UnreadCount > 0 {
 		unread = " " + unreadCountBadge(view.UnreadCount)
 	}
-	nameLine := agentStatusDot(row) + " " + truncateCells(view.Name, max(1, inner-2-lipgloss.Width(unread))) + unread
+	limit := max(1, inner-2-lipgloss.Width(unread))
+	suffix := ""
+	if m.isHiddenAgent(row) {
+		suffix = mutedStyle.Render(" ◌")
+		limit = max(1, limit-2)
+	}
+	displayName := truncateCells(view.Name, limit) + suffix
+	nameLine := agentStatusDot(row) + " " + displayName + unread
 	metaLeft := provider + " · " + fallback(view.HostnameLabel, localHostname())
 	metaRight := view.StatusLabel
 	gap := max(1, inner-lipgloss.Width(metaLeft)-lipgloss.Width(metaRight))
@@ -367,9 +374,6 @@ func (m model) agentList(width, height int) string {
 	}, 0, len(m.rows))
 	localCount, remoteCount := 0, 0
 	for i, row := range m.rows {
-		if i == m.selected {
-			continue
-		}
 		if row.Scope == "remote" {
 			remoteCount++
 		} else {
@@ -381,7 +385,7 @@ func (m model) agentList(width, height int) string {
 		}{Index: i, Row: row})
 	}
 	if len(items) == 0 {
-		return mutedStyle.Render("no other agents")
+		return mutedStyle.Render("no agents")
 	}
 	visible := max(1, height/agentCardHeight)
 	offset := min(max(0, m.agentOffset), max(0, len(items)-visible))
@@ -404,7 +408,7 @@ func (m model) agentList(width, height int) string {
 			b.WriteString(sectionHeaderStyle.Render(truncateCells(heading, max(1, width-1))) + "\n")
 			lastGroup = heading
 		}
-		b.WriteString(m.agentCard(item.Row, false, width-2))
+		b.WriteString(m.agentCard(item.Row, item.Index == m.selected, width-2))
 		if pos < end-1 {
 			b.WriteString("\n")
 		}
@@ -624,7 +628,7 @@ func (m model) composerPlaceholder() string {
 	if m.inputMode == inputModeKeys {
 		return "type key tokens…"
 	}
-	return "type message…"
+	return ""
 }
 
 type inputModeButton struct {

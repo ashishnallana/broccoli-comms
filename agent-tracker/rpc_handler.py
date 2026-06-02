@@ -740,7 +740,7 @@ def _route_remote_send_input(params: dict, caller_pid: int = None) -> dict | Non
     if not registry_client.remote_pane_input_send_enabled():
         raise RuntimeError("remote direct pane input is disabled")
     mode, payload = _validate_send_input_payload(params)
-    sender_name = _identify_sender(params, caller_pid) or "cli-user"
+    sender_name = _identify_agent(_sender_identification_params(params), caller_pid) or "cli-user"
     sender_info = state.get_agent(params.get("sender_id") or sender_name) or {}
     sender_id = sender_info.get("agent_id") or params.get("sender_id")
     pane_input_id = params.get("pane_input_id") or params.get("request_id") or str(uuid.uuid4())
@@ -858,7 +858,7 @@ def _sender_metadata(sender_name: str, sender_info: dict, sender_id: str | None)
 
 def handle_send_message(params: dict, caller_pid: int = None) -> bool:
     """Sends a message locally or routes it remotely via the registry when target_address is hostname-qualified."""
-    sender_name = _identify_sender(params, caller_pid) or "cli-user"
+    sender_name = _identify_agent(_sender_identification_params(params), caller_pid) or "cli-user"
     msg = params.get("message")
     attachments = params.get("attachments")
     target_address = params.get("target_address")

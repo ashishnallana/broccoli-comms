@@ -41,7 +41,7 @@ type TerminalTheme struct {
 	AgentColors   []lipgloss.Color
 }
 
-var colors = defaultTerminalTheme()
+var colors = tokyoNightTerminalTheme()
 
 func defaultTerminalTheme() TerminalTheme {
 	c := func(index string) lipgloss.Color { return lipgloss.Color(index) }

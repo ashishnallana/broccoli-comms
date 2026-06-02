@@ -6,17 +6,17 @@ import (
 	"testing"
 )
 
-func TestAgentListExcludesCurrentAgentAndShowsCounts(t *testing.T) {
+func TestAgentListIncludesCurrentAgentAndShowsCounts(t *testing.T) {
 	m := model{width: 100, height: 20}
 	for i := 0; i < 4; i++ {
 		m.rows = append(m.rows, agentRow{Name: fmt.Sprintf("agent-%02d", i), Scope: "local"})
 	}
 	m.selected = 3
 	view := m.agentList(40, 12)
-	if strings.Contains(view, "agent-03") {
-		t.Fatalf("current agent should be owned by current panel, not list:\n%s", view)
+	if !strings.Contains(view, "agent-03") {
+		t.Fatalf("current agent should be listed in switcher list:\n%s", view)
 	}
-	if !strings.Contains(view, "LOCAL (3)") || !strings.Contains(view, "agent-00") {
+	if !strings.Contains(view, "LOCAL (4)") || !strings.Contains(view, "agent-00") {
 		t.Fatalf("list missing local count/rows:\n%s", view)
 	}
 }
@@ -29,8 +29,8 @@ func TestAgentListUsesLocalAndRemoteSectionHeadings(t *testing.T) {
 	}}
 	m.selected = 0
 	view := m.agentList(40, 12)
-	if !strings.Contains(view, "REMOTE (2)") || strings.Contains(view, "local-a") {
-		t.Fatalf("switcher list should show other agents with counts:\n%s", view)
+	if !strings.Contains(view, "LOCAL (1)") || !strings.Contains(view, "REMOTE (2)") || !strings.Contains(view, "local-a") {
+		t.Fatalf("switcher list should show all agents with counts:\n%s", view)
 	}
 }
 

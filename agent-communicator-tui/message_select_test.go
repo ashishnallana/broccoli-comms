@@ -28,9 +28,13 @@ func TestComposerShowsCursorOnlyWhenInputFocused(t *testing.T) {
 	if !strings.Contains(view, "█") {
 		t.Fatal("focused composer should show cursor")
 	}
-	if strings.Index(view, "█") > strings.Index(view, "type message") {
-		t.Fatalf("cursor should appear before placeholder: %q", view)
+	// Switch to text mode to verify cursor position relative to a non-empty placeholder
+	m.inputMode = inputModeText
+	viewText := m.composerView(30)
+	if strings.Index(viewText, "█") > strings.Index(viewText, "type pane") {
+		t.Fatalf("cursor should appear before placeholder in text mode: %q", viewText)
 	}
+	m.inputMode = inputModeMessage // restore
 	m.cursorHidden = true
 	if strings.Contains(m.composerView(30), "█") {
 		t.Fatal("blink-hidden composer should hide cursor")

@@ -27,10 +27,21 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	}
 	header := agentStyle(colorKey, true).Render(m.messageHeader(msg, index, colorKey, innerWidth))
 	out := []string{rail + "  " + header}
-	for _, line := range m.visibleBodyLines(bubbleBodyLines(body, innerWidth), index) {
-		line = truncateCells(line, innerWidth)
-		if !isSentMessage(msg) && width >= 70 {
-			line = lipgloss.NewStyle().Background(colors.PanelBgAlt).Padding(0, 1).Render(line)
+
+	useBg := !isSentMessage(msg) && width >= 70
+	wrapWidth := innerWidth
+	if useBg {
+		wrapWidth = max(6, innerWidth-2)
+	}
+
+	for _, line := range m.visibleBodyLines(bubbleBodyLines(body, wrapWidth), index) {
+		line = truncateCells(line, wrapWidth)
+		if useBg {
+			line = lipgloss.NewStyle().
+				Background(colors.PanelBgAlt).
+				Padding(0, 1).
+				Width(innerWidth).
+				Render(line)
 		}
 		out = append(out, rail+"  "+line)
 	}

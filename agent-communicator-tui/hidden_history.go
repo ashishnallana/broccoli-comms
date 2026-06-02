@@ -23,6 +23,9 @@ func (m *model) applyInitialHiddenForNoHistory() {
 		if key == "" || m.hiddenAgents[key] || m.rowHasOutbound(row) || inbound[rowHistoryKey(row)] {
 			continue
 		}
+		if strings.HasPrefix(strings.ToLower(row.Name), "zv2") {
+			continue // Never auto-hide zv2 agents!
+		}
 		m.hiddenAgents[key] = true
 		changed = true
 	}

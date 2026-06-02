@@ -2,8 +2,8 @@
 
 ## Overview
 - **Workspace ID**: `7473ae6d-06a8-444d-8a9f-c50788f3f465`
-- **Last Updated**: `2026-05-27T00:18:00Z`
-- **Goal**: Implement independent message rendering (disable consecutive message grouping/aggregation) in the React conversation view.
+- **Last Updated**: `2026-06-02T10:45:00Z`
+- **Goal**: Implement independent message rendering and ensure key local agents like zv2 are never hidden.
 - **Links**: [README.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/README.md)
 
 ## Active Agents
@@ -11,6 +11,7 @@
 |---|---|---|---|---|---|
 | b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Idle | 2026-05-26T18:46:00Z |
 | ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 | Idle | 2026-05-27T00:18:00Z |
+| a47b9496-cf73-4a2b-b0d8-6950f8fd83f1 | otel-difftest-agent-1 | TUI & Systems Interface Developer | Pane %0 | Working | 2026-06-02T10:45:00Z |
 
 ## Task Allocation & Progress
 | Task ID | Description | Assigned Agent ID | Status | Priority | Dependencies | Notes / Artifacts |
@@ -22,6 +23,8 @@
 | task-05 | Implement Milestone 1, 2, 3 Group Caches & dynamic visual channels | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-04 | Upgraded state.py, App.tsx, & ipc.ts |
 | task-06 | Dispatch Message Ungrouping coding task | b58eb4c9-7601-4038-b3af-eb73f99ae069 | Completed | P0 | task-05 | send-message delivered |
 | task-07 | Implement independent message rendering (disable grouping) in React | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-06 | Completely disabled grouping logic in ConversationView.tsx and verified initials rendering in MessageBubble.tsx |
+| task-08 | Implement Tokyo Night truecolor theme in agent-communicator-tui | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | | [theme.go](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-tui/theme.go) |
+| task-09 | Ensure zv2-agent is unhidden & show hidden visual indicator | a47b9496-cf73-4a2b-b0d8-6950f8fd83f1 | Completed | P0 | | Overrode `isHiddenAgent`, added `◌` indicator, synced locks |
 
 ## Active Blockers & Dependencies
 | Blocked Agent ID | Blocked Task ID | Blocking Task ID | Blocking Agent ID | Reason |
@@ -32,6 +35,10 @@
 - **2026-05-26T17:12:00Z** [tanmayvijay]: DECISION: Approved auto-creating Hostname-based Group Channels to dynamically group agents registered on the same machine.
 - **2026-05-26T18:10:00Z** [tanmayvijay]: DECISION: Approved deconstructed 3-Milestone plan for persistent daemon group timeline caches.
 - **2026-05-26T18:46:00Z** [tanmayvijay]: DECISION: Approved disabling consecutive message grouping to render each message independently with its own full avatar and time headers.
+- **2026-06-02T04:14:00Z** [ef242aad-c44f-4498-9d6d-47ba7986e93d]: DECISION: Patched NameError in agent-tracker/rpc_handler.py by replacing deprecated _identify_sender with safe _identify_agent call. - REASON: Essential fix to restore Nix flake build sanity and allow verification of TUI communicator tests.
+- **2026-06-02T04:15:00Z** [ef242aad-c44f-4498-9d6d-47ba7986e93d]: DECISION: Customize TUI colors with standard Tokyo Night Storm hex values, isolating hex literals in theme.go to comply with TestNoRawHexColorsOutsideThemeFile. - REASON: Adheres to TUI styling rules while bringing a truecolor modern terminal theme.
+- **2026-06-02T04:16:00Z** [ef242aad-c44f-4498-9d6d-47ba7986e93d]: DECISION: Reorder AgentColors array and adjust TextSubtle/Muted contrast in theme.go. - REASON: Corrects border color collisions under TestOutgoingAndIncomingUseDifferentBorderColors and matches WCAG AA guidelines for optimal terminal contrast and readability.
+- **2026-06-02T10:45:00Z** [a47b9496-cf73-4a2b-b0d8-6950f8fd83f1]: DECISION: Overrode isHiddenAgent in agent-communicator-tui/hidden_agents.go to fundamentally return false for any agent starting with "zv2", preventing them from ever being hidden. Synced Nix locks across all home-manager dependencies.
 
 ## Running the Electron App
 

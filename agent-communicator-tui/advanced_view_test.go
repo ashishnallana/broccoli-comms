@@ -32,11 +32,18 @@ func TestAdvancedComposerShowsMessageModeInline(t *testing.T) {
 	if !strings.Contains(view, "/msg") || strings.Contains(view, "@alpha") {
 		t.Fatalf("composer should show inline mode without repeating receiver: %q", view)
 	}
-	if !strings.Contains(view, "type message") {
-		t.Fatalf("composer = %q", view)
+	// In default message mode, placeholder is empty, so we just verify cursor exists
+	if !strings.Contains(view, "█") {
+		t.Fatalf("focused composer missing cursor: %q", view)
 	}
-	if strings.Index(view, "█") > strings.Index(view, "type message") {
-		t.Fatalf("cursor should appear before placeholder: %q", view)
+	// Switch to text mode to verify non-empty placeholder existence and cursor order
+	m.inputMode = inputModeText
+	viewText := m.composerView(80)
+	if !strings.Contains(viewText, "type pane") {
+		t.Fatalf("composer in text mode missing placeholder: %q", viewText)
+	}
+	if strings.Index(viewText, "█") > strings.Index(viewText, "type pane") {
+		t.Fatalf("cursor should appear before placeholder in text mode: %q", viewText)
 	}
 }
 

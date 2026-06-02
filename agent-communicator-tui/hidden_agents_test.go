@@ -96,6 +96,44 @@ func TestInitialHideMarksAgentsWithoutHistoryHidden(t *testing.T) {
 	}
 }
 
+func TestZv2AgentNeverHidden(t *testing.T) {
+	state := t.TempDir()
+	cache := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("XDG_CACHE_HOME", cache)
+
+	m := model{
+		rows: []agentRow{
+			{Name: "zv2-agent", Scope: "local"},
+			{Name: "beta", Scope: "local"},
+		},
+		hiddenAgents: map[string]bool{
+			"zv2-agent": true,
+			"beta":      true,
+		},
+	}
+
+	if m.isHiddenAgent(m.rows[0]) {
+		t.Fatalf("zv2-agent should not be considered hidden even if in hiddenAgents map")
+	}
+	if !m.isHiddenAgent(m.rows[1]) {
+		t.Fatalf("beta should be considered hidden")
+	}
+
+	m2 := model{
+		rows: []agentRow{
+			{Name: "zv2-agent-new", Scope: "local"},
+			{Name: "beta-new", Scope: "local"},
+		},
+		hiddenAgents: map[string]bool{},
+	}
+	m2.applyInitialHiddenForNoHistory()
+	if m2.hiddenAgents["zv2-agent-new"] {
+		t.Fatalf("zv2-agent-new was auto-hidden by applyInitialHiddenForNoHistory")
+	}
+}
+
+
 func TestInitialHideKeepsLocalAgentWithIDHistoryAndTrackerID(t *testing.T) {
 	state := t.TempDir()
 	cache := t.TempDir()
@@ -129,14 +167,25 @@ func TestSendUnhidesHiddenAgent(t *testing.T) {
 func TestCtrlNStaysWithinFocusedAgentSection(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}, {Name: "beta", Scope: "local"}, {Name: "gamma", Scope: "local"}}, hiddenAgents: map[string]bool{"gamma": true}}
 	m.sortRowsByHidden("")
+	// "gamma" is hidden, so it is sorted last.
+	// The order of rows is: "alpha", "beta", "gamma".
+	// Starts at index 0 ("alpha").
+
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	m = updated.(model)
 	if m.currentRow().Name != "beta" {
 		t.Fatalf("selected=%+v", m.currentRow())
 	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(model)
+	if m.currentRow().Name != "gamma" {
+		t.Fatalf("selected=%+v, want gamma (hidden agent in continuous loop)", m.currentRow())
+	}
+
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	m = updated.(model)
 	if m.currentRow().Name != "alpha" {
-		t.Fatalf("selected wrapped outside active section: %+v", m.currentRow())
+		t.Fatalf("selected wrapped outside continuous list: %+v", m.currentRow())
 	}
 }

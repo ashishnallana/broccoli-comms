@@ -267,6 +267,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlF:
 			return m, m.toggleSaveSelectedMessage()
 		case tea.KeyCtrlP:
+			debugLogf("KeyCtrlP matched: mode=%v rows_len=%d", m.mode, len(m.rows))
 			if m.mode == savedView {
 				m.selectSavedRow(-1)
 				m.selectLatestMessage()
@@ -279,6 +280,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.reloadMessages()
 			}
 		case tea.KeyCtrlN:
+			debugLogf("KeyCtrlN matched: mode=%v rows_len=%d", m.mode, len(m.rows))
 			if m.mode == savedView {
 				m.selectSavedRow(1)
 				m.selectLatestMessage()

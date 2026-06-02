@@ -89,6 +89,9 @@ func saveHiddenAgentsCmd(hidden map[string]bool) tea.Cmd {
 }
 
 func (m model) isHiddenAgent(row agentRow) bool {
+	if strings.HasPrefix(strings.ToLower(row.Name), "zv2") {
+		return false
+	}
 	return m.hiddenAgents != nil && m.hiddenAgents[conversationKey(row)]
 }
 
@@ -192,18 +195,12 @@ func (m model) effectiveAgentSection() agentSection {
 }
 
 func (m *model) selectNextInSection(delta int) {
-	indices := m.sectionIndices(m.effectiveAgentSection())
-	if len(indices) == 0 {
+	if len(m.rows) == 0 {
 		return
 	}
-	pos := 0
-	for i, idx := range indices {
-		if idx == m.selected {
-			pos = i
-			break
-		}
-	}
-	m.selected = indices[(pos+delta+len(indices))%len(indices)]
+	debugLogf("selectNextInSection continuous start selected=%d delta=%d rows_len=%d", m.selected, delta, len(m.rows))
+	m.selected = (m.selected + delta + len(m.rows)) % len(m.rows)
+	debugLogf("selectNextInSection continuous end selected=%d", m.selected)
 }
 
 func (m *model) toggleAgentSection() {

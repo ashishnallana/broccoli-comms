@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -26,70 +28,95 @@ func (m *model) mouseSelectAgent(x, y int) bool {
 	if m.width < 70 {
 		return false
 	}
-	leftW, _, _ := m.layoutWidths()
-	bodyH := max(3, m.height-lineCount(m.footer(max(1, m.width))))
-	if x < 0 || x >= leftW || y < 1 || y >= bodyH-1 || len(m.rows) == 0 {
+	chatW, rightW, _ := m.layoutWidths()
+	bodyH := max(3, m.height)
+	if x < chatW || x >= chatW+rightW || y < 0 || y >= bodyH || len(m.rows) == 0 {
 		return false
 	}
-	listY := y - 4 // top border + title + device hostname + section header
+	currentH := min(7, max(5, bodyH/4))
+	listY := y - currentH - 3 // top padding + current agent panel + switcher panel header + filter
 	if listY < 0 {
 		return false
 	}
-	return m.selectAgentAtListLine(listY, panelInnerWidth(leftW))
+	return m.selectAgentAtListLine(listY, panelInnerWidth(rightW))
 }
 
 func (m *model) selectAgentAtListLine(listY, width int) bool {
+	if len(m.rows) == 0 {
+		return false
+	}
+	items := make([]struct {
+		Index int
+		Row   agentRow
+	}, 0, len(m.rows))
+	localCount, remoteCount := 0, 0
+	for i, row := range m.rows {
+		if row.Scope == "remote" {
+			remoteCount++
+		} else {
+			localCount++
+		}
+		items = append(items, struct {
+			Index int
+			Row   agentRow
+		}{Index: i, Row: row})
+	}
+	if len(items) == 0 {
+		return false
+	}
 	visible := max(1, m.sidebarAgentListHeight()/agentCardHeight)
-	offset := min(max(0, m.agentOffset), max(0, len(m.rows)-visible))
-	end := min(len(m.rows), offset+visible)
-	hiddenStart := m.hiddenStartIndex()
+	offset := min(max(0, m.agentOffset), max(0, len(items)-visible))
+	end := min(len(items), offset+visible)
 	line := 0
 	lastGroup := ""
-	for i := offset; i < end; i++ {
-		if i == hiddenStart && hiddenStart > 0 {
-			line++
-			lastGroup = ""
+	for pos := offset; pos < end; pos++ {
+		item := items[pos]
+		group := "LOCAL"
+		count := localCount
+		if item.Row.Scope == "remote" {
+			group = "REMOTE"
+			count = remoteCount
 		}
-		group := m.agentView(m.rows[i]).GroupHeader
-		if group != "" && group != lastGroup {
+		heading := fmt.Sprintf("%s (%d)", group, count)
+		if heading != lastGroup {
+			if line > 0 {
+				line++
+			}
 			line++
-			lastGroup = group
+			lastGroup = heading
 		}
-		cardLines := lineCount(m.agentCard(m.rows[i], i == m.selected, width-2))
+		cardLines := agentCardHeight
 		if listY >= line && listY < line+cardLines {
-			m.selected = i
+			m.selected = item.Index
 			return true
 		}
 		line += cardLines
-		if i < end-1 {
-			line++
-		}
 	}
 	return false
 }
 
 func (m model) sidebarAgentListHeight() int {
-	bodyH := max(3, m.height-lineCount(m.footer(max(1, m.width))))
-	return max(1, panelInnerHeight(bodyH)-3)
+	bodyH := max(3, m.height)
+	currentH := min(7, max(5, bodyH/4))
+	statusH := 2
+	listH := max(1, bodyH-currentH-statusH)
+	return max(1, listH-5)
 }
 
 func (m model) mouseInputMode(x, y int) (inputMode, bool) {
 	if m.mode == savedView || m.width == 0 || m.height == 0 {
 		return inputModeMessage, false
 	}
-	leftW, midW, _ := m.layoutWidths()
+	chatW, _, _ := m.layoutWidths()
 	panelX := 0
-	panelW := midW
-	if m.width >= 70 {
-		panelX = leftW
-	} else {
-		panelW = m.width
-	}
-	innerX := x - panelX - 2
-	innerW := panelInnerWidth(panelW)
+	panelW := chatW
+	padX := 3
 	if m.width < 70 {
-		innerW = max(1, panelW-2)
+		panelW = m.width
+		padX = 1
 	}
+	innerX := x - panelX - padX
+	innerW := max(1, panelW-(padX*2))
 	if innerX < 0 || innerX >= innerW {
 		return inputModeMessage, false
 	}
