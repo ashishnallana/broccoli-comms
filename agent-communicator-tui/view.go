@@ -316,20 +316,20 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 
 	unread := ""
 	if view.UnreadCount > 0 {
-		unread = lipgloss.NewStyle().Background(bg).Render(" ") + unreadCountBadge(view.UnreadCount)
+		unread = " " + unreadCountBadge(view.UnreadCount)
 	}
 
 	limit := max(1, inner-2-lipgloss.Width(unread))
 	suffix := ""
 	if m.isHiddenAgent(row) {
-		suffix = mutedStyle.Background(bg).Render(" ◌")
+		suffix = mutedStyle.Render(" ◌")
 		limit = max(1, limit-2)
 	}
 
-	dot := agentStatusDotStyle(row).Background(bg).Render("●")
-	space := lipgloss.NewStyle().Background(bg).Render(" ")
+	dot := agentStatusDotStyle(row).Render("●")
+	space := " "
 
-	nameStyle := lipgloss.NewStyle().Background(bg)
+	nameStyle := lipgloss.NewStyle()
 	if selected {
 		nameStyle = nameStyle.Foreground(colors.SelectedFg).Bold(true)
 	} else if m.hasUnread(row) {
@@ -344,7 +344,7 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	metaLeft := provider + " · " + fallback(view.HostnameLabel, localHostname())
 	metaRight := view.StatusLabel
 	gap := max(1, inner-lipgloss.Width(metaLeft)-lipgloss.Width(metaRight))
-	metaStyle := mutedStyle.Background(bg)
+	metaStyle := mutedStyle
 	metaLine := metaStyle.Render(truncateCells(metaLeft+strings.Repeat(" ", gap)+metaRight, inner))
 
 	body := nameLine + "\n" + metaLine
