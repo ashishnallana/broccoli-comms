@@ -2,7 +2,7 @@
 
 ## Overview
 - **Workspace ID**: `7473ae6d-06a8-444d-8a9f-c50788f3f465`
-- **Last Updated**: `2026-06-02T10:45:00Z`
+- **Last Updated**: `2026-06-02T14:20:00Z`
 - **Goal**: Implement independent message rendering and ensure key local agents like zv2 are never hidden.
 - **Links**: [README.md](file:///usr/local/google/home/tanmayvijay/broccoli-comms/README.md)
 
@@ -11,7 +11,7 @@
 |---|---|---|---|---|---|
 | b58eb4c9-7601-4038-b3af-eb73f99ae069 | home-manager-core-agent-1 | Systems & Events Developer | Pane %1 | Idle | 2026-05-26T18:46:00Z |
 | ef242aad-c44f-4498-9d6d-47ba7986e93d | coding-agent | Expert Software Coding Engineer | Pane %4 | Idle | 2026-05-27T00:18:00Z |
-| a47b9496-cf73-4a2b-b0d8-6950f8fd83f1 | otel-difftest-agent-1 | TUI & Systems Interface Developer | Pane %0 | Working | 2026-06-02T10:45:00Z |
+| a47b9496-cf73-4a2b-b0d8-6950f8fd83f1 | otel-difftest-agent-1 | TUI & Systems Interface Developer | Pane %0 | Working | 2026-06-02T14:20:00Z |
 
 ## Task Allocation & Progress
 | Task ID | Description | Assigned Agent ID | Status | Priority | Dependencies | Notes / Artifacts |
@@ -25,6 +25,7 @@
 | task-07 | Implement independent message rendering (disable grouping) in React | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | task-06 | Completely disabled grouping logic in ConversationView.tsx and verified initials rendering in MessageBubble.tsx |
 | task-08 | Implement Tokyo Night truecolor theme in agent-communicator-tui | ef242aad-c44f-4498-9d6d-47ba7986e93d | Completed | P0 | | [theme.go](file:///usr/local/google/home/tanmayvijay/broccoli-comms/agent-communicator-tui/theme.go) |
 | task-09 | Ensure zv2-agent is unhidden & show hidden visual indicator | a47b9496-cf73-4a2b-b0d8-6950f8fd83f1 | Completed | P0 | | Overrode `isHiddenAgent`, added `◌` indicator, synced locks |
+| task-10 | Debug registry multi-device agent discovery issues | a47b9496-cf73-4a2b-b0d8-6950f8fd83f1 | Completed | P0 | | Replaced bash parameter expansion with safe `if` wrapper in HM module, rebuilt and pushed |
 
 ## Active Blockers & Dependencies
 | Blocked Agent ID | Blocked Task ID | Blocking Task ID | Blocking Agent ID | Reason |
