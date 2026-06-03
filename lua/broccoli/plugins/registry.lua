@@ -41,8 +41,11 @@ function Registry:find_spec(name)
   return nil
 end
 
-function Registry:mark_error(spec, message)
+function Registry:mark_error(spec, message, phase)
   self.statuses[spec.name] = { name = spec.name, status = "error", error = message }
+  if self.api.storage then
+    self.api.storage:record_plugin_error(spec.name, phase or "load", message)
+  end
 end
 
 function Registry:can_load(spec, pending)

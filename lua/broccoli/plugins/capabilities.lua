@@ -22,7 +22,7 @@ local function denied(name)
   return nil, {
     kind = "permission",
     code = 0,
-    message = "plugin is not permitted to call tracker." .. name,
+    message = "plugin is not permitted to call " .. name,
   }
 end
 
@@ -32,6 +32,7 @@ function M.scoped_api(base, plugin_name, permissions)
   local scoped = {
     plugin_name = plugin_name,
     tracker = {},
+    state = {},
     log = base.log or {},
   }
 
@@ -42,6 +43,35 @@ function M.scoped_api(base, plugin_name, permissions)
       end
       return base.tracker[name](...)
     end
+  end
+
+  local state_permissions = permissions.state or {}
+  scoped.state.get = function(key)
+    if not allows(state_permissions, "read") then
+      return denied("state.get")
+    end
+    if not base.storage then
+      return nil, { kind = "config", message = "plugin storage is not configured" }
+    end
+    return base.storage:get_plugin_state(plugin_name, key)
+  end
+  scoped.state.set = function(key, value)
+    if not allows(state_permissions, "write") then
+      return denied("state.set")
+    end
+    if not base.storage then
+      return nil, { kind = "config", message = "plugin storage is not configured" }
+    end
+    return base.storage:set_plugin_state(plugin_name, key, value)
+  end
+  scoped.state.clear = function(key)
+    if not allows(state_permissions, "write") then
+      return denied("state.clear")
+    end
+    if not base.storage then
+      return nil, { kind = "config", message = "plugin storage is not configured" }
+    end
+    return base.storage:clear_plugin_state(plugin_name, key)
   end
 
   return scoped

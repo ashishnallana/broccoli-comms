@@ -1,13 +1,16 @@
 local tracker_module = require("broccoli.tracker")
 local config_loader = require("broccoli.config_loader")
 local plugin_registry = require("broccoli.plugins.registry")
+local storage = require("broccoli.storage")
 
 local M = {}
 
 M.tracker = {}
 M.config_loader = config_loader
+M.storage_module = storage
 M._generation = 0
 M._config = { tracker = {} }
+M.storage = nil
 M.plugins = plugin_registry.new(M)
 
 local function merge(base, override)
@@ -25,7 +28,9 @@ function M.setup(opts)
   opts = opts or {}
   M._config = {
     tracker = merge({}, opts.tracker or {}),
+    storage = merge({}, opts.storage or {}),
   }
+  M.storage = opts.storage and storage.new(opts.storage) or nil
   M._generation = M._generation + 1
   return true
 end
