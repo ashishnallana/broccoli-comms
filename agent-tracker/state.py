@@ -10,9 +10,10 @@ import re
 import tmux_util
 import config
 
-CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "agent-tracker")
-SOCKET_PATH = config.get("paths", "agent_tracker_socket") or os.path.join(CACHE_DIR, "agent-tracker.sock")
-LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
+CACHE_DIR = str(config.get_base_cache_dir() / "agent-tracker")
+RUNTIME_DIR = str(config.get_base_runtime_dir())
+SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET") or config.get("paths", "agent_tracker_socket") or os.path.join(RUNTIME_DIR, "agent-tracker.sock")
+LOCK_PATH = os.path.join(RUNTIME_DIR, "agent-tracker.lock")
 INBOX_DIR = os.path.join(CACHE_DIR, "inboxes")
 GROUP_TIMELINE_DIR = os.path.join(CACHE_DIR, "group_timelines")
 PANE_INPUT_DEDUPE_PATH = os.path.join(CACHE_DIR, "pane-input-dedupe.json")

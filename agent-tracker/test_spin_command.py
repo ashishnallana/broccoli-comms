@@ -30,8 +30,9 @@ class TestSpinCommand(unittest.TestCase):
         method, params = call_rpc.call_args.args
         self.assertEqual(method, "spin_agent")
         self.assertEqual(params["directory"], tmp)
-        self.assertEqual(params["session"], os.path.basename(tmp))
-        self.assertEqual(params["name"], os.path.basename(tmp))
+        expected_name = ctl.spin_session_name(tmp)
+        self.assertEqual(params["session"], expected_name)
+        self.assertEqual(params["name"], expected_name)
         self.assertEqual(params["command"], "bash -c 'export PATH=/mock/path; /mock/agent-wrapper gemini --model flash; zsh'")
 
     def test_spin_subcommand_with_no_fallback_still_wraps_raw_command(self):

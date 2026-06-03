@@ -13,16 +13,17 @@ import uuid
 
 import config
 
-CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "agent-tracker")
-SOCKET_PATH = config.get("paths", "agent_tracker_socket", os.path.join(CACHE_DIR, "agent-tracker.sock"))
-LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
+CACHE_DIR = str(config.get_base_cache_dir() / "agent-tracker")
+RUNTIME_DIR = str(config.get_base_runtime_dir())
+SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET") or config.get("paths", "agent_tracker_socket") or os.path.join(RUNTIME_DIR, "agent-tracker.sock")
+LOCK_PATH = os.path.join(RUNTIME_DIR, "agent-tracker.lock")
 REGISTRY_STATUS_PATH = os.path.join(CACHE_DIR, "registry-status.json")
 DEFAULT_STARTUP_TIMEOUT = 5.0
 DEFAULT_CAPTURE_PANE_LINES = 20
 
 
 def default_capture_pane_lines() -> int:
-    raw = config.get("ui", "capture_pane_default_lines", str(DEFAULT_CAPTURE_PANE_LINES))
+    raw = os.environ.get("AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES") or config.get("ui", "capture_pane_default_lines", str(DEFAULT_CAPTURE_PANE_LINES))
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -43,6 +44,7 @@ def _can_connect() -> bool:
 
 def ensure_tracker_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> bool:
     os.makedirs(CACHE_DIR, exist_ok=True)
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
     if _can_connect():
         return True
 
@@ -120,6 +122,9 @@ def call_rpc(method, params={}):
 
 def default_tmux_socket() -> str | None:
     """Returns the app-private tmux socket configured for this CLI, if any."""
+    env_sock = os.environ.get("AGENT_TRACKER_TMUX_SOCKET") or os.environ.get("BROCCOLI_COMMS_TMUX_SOCKET")
+    if env_sock:
+        return env_sock
     if config.get("core", "tmux_mode") == "private":
         return str(config.get("paths", "tmux_socket"))
     return None
@@ -182,10 +187,10 @@ def parse_target_params(target: str) -> dict:
     return {"agent_name": target}
 
 
-def _read_token_config(config: dict) -> str:
-    if config.get("token"):
-        return str(config.get("token"))
-    token_file = config.get("token-file") or config.get("tokenFile")
+def _read_token_config(reg_config: dict) -> str:
+    if reg_config.get("token"):
+        return str(reg_config.get("token"))
+    token_file = reg_config.get("token-file") or reg_config.get("tokenFile")
     if token_file:
         try:
             with open(token_file, "r") as f:
@@ -215,7 +220,7 @@ def _normalize_registries_json(raw: str) -> str:
 
 
 def registry_configs() -> list[dict]:
-    raw = config.get("registry", "endpoints", [])
+    raw = os.environ.get("AGENT_REGISTRIES_JSON") or config.get("registry", "endpoints", [])
     if isinstance(raw, str):
         raw = _normalize_registries_json(raw)
     elif not isinstance(raw, list):
@@ -304,8 +309,8 @@ def registry_connection_states(status: dict | None = None, now: float | None = N
     max_age = max(heartbeat_interval * 2 + 5, 15)
     entries = status.get("registries") or {}
     states = []
-    for config in configs:
-        name = config.get("name") or "default"
+    for cfg in configs:
+        name = cfg.get("name") or "default"
         entry = entries.get(name)
         if entry is None and name == "default":
             entry = status

@@ -1,12 +1,13 @@
 import json
 import os
+from pathlib import Path
 import subprocess
 import unittest
 
 
 class TestNixEval(unittest.TestCase):
     def test_agent_tracker_enable_default_registry_settings_evaluates(self):
-        repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        repo = Path(__file__).resolve().parents[1]
         expr = f'''
 let
   flake = builtins.getFlake "path:{repo}";
@@ -19,7 +20,7 @@ let
       ({{ lib, ... }}: {{
         options.programs.tmux.statusBar.extraLines = lib.mkOption {{ type = lib.types.listOf lib.types.anything; default = []; }};
       }})
-      {repo}/modules/agent-tracker/default.nix
+      {repo}/agent-tracker/default.nix
       {{ services.agent-tracker.enable = true; home.username = "u"; home.homeDirectory = "/tmp/u"; home.stateVersion = "24.05"; }}
     ];
     extraSpecialArgs = {{ userSettings = {{ }}; }};
@@ -30,7 +31,7 @@ in builtins.toJSON cfg.config.services.agent-tracker.registryAuth
         self.assertEqual(out, "false")
 
     def test_agent_tracker_user_settings_single_registry_list_evaluates(self):
-        repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        repo = Path(__file__).resolve().parents[1]
         expr = f'''
 let
   flake = builtins.getFlake "path:{repo}";
@@ -43,7 +44,7 @@ let
       ({{ lib, ... }}: {{
         options.programs.tmux.statusBar.extraLines = lib.mkOption {{ type = lib.types.listOf lib.types.anything; default = []; }};
       }})
-      {repo}/modules/agent-tracker/default.nix
+      {repo}/agent-tracker/default.nix
       {{ home.username = "u"; home.homeDirectory = "/tmp/u"; home.stateVersion = "24.05"; }}
     ];
     extraSpecialArgs = {{
@@ -79,7 +80,7 @@ in builtins.toJSON {{
         self.assertEqual(data["registryHeartbeatSeconds"], 45)
 
     def test_agent_tracker_user_settings_multiple_registries_evaluate(self):
-        repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        repo = Path(__file__).resolve().parents[1]
         expr = f'''
 let
   flake = builtins.getFlake "path:{repo}";
@@ -92,7 +93,7 @@ let
       ({{ lib, ... }}: {{
         options.programs.tmux.statusBar.extraLines = lib.mkOption {{ type = lib.types.listOf lib.types.anything; default = []; }};
       }})
-      {repo}/modules/agent-tracker/default.nix
+      {repo}/agent-tracker/default.nix
       {{ home.username = "u"; home.homeDirectory = "/tmp/u"; home.stateVersion = "24.05"; }}
     ];
     extraSpecialArgs = {{
@@ -119,7 +120,7 @@ in builtins.toJSON {{
         ])
 
     def test_agent_tracker_capture_pane_default_lines_user_setting_evaluates(self):
-        repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        repo = Path(__file__).resolve().parents[1]
         expr = f'''
 let
   flake = builtins.getFlake "path:{repo}";
@@ -132,7 +133,7 @@ let
       ({{ lib, ... }}: {{
         options.programs.tmux.statusBar.extraLines = lib.mkOption {{ type = lib.types.listOf lib.types.anything; default = []; }};
       }})
-      {repo}/modules/agent-tracker/default.nix
+      {repo}/agent-tracker/default.nix
       {{ home.username = "u"; home.homeDirectory = "/tmp/u"; home.stateVersion = "24.05"; }}
     ];
     extraSpecialArgs = {{
@@ -150,7 +151,7 @@ in builtins.toJSON cfg.config.services.agent-tracker.capturePaneDefaultLines
         self.assertEqual(out, "42")
 
     def test_darwin_launchd_agent_is_run_at_load_without_keepalive_loop(self):
-        repo = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        repo = Path(__file__).resolve().parents[1]
         expr = f'''
 let
   flake = builtins.getFlake "path:{repo}";
@@ -162,7 +163,7 @@ let
       ({{ lib, ... }}: {{
         options.programs.tmux.statusBar.extraLines = lib.mkOption {{ type = lib.types.listOf lib.types.anything; default = []; }};
       }})
-      {repo}/modules/agent-tracker/default.nix
+      {repo}/agent-tracker/default.nix
       {{ services.agent-tracker.enable = true; home.username = "u"; home.homeDirectory = "/Users/u"; home.stateVersion = "24.05"; }}
     ];
     extraSpecialArgs = {{ userSettings = {{ }}; }};

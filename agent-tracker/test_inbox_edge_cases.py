@@ -6,7 +6,7 @@ import sys
 import time
 import uuid
 
-SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET", os.path.join(os.path.expanduser("~/.cache"), "agent-tracker", "agent-tracker.sock"))
+SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET", os.path.join(os.path.expanduser("~/.cache"), "broccoli-comms", "runtime", "agent-tracker.sock"))
 
 def call_rpc(method, params={}):
     try:

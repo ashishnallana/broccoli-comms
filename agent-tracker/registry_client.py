@@ -147,7 +147,7 @@ def _normalize_registries_json(raw: str) -> str:
 
 
 def load_registry_clients():
-    raw = config.get("registry", "endpoints", [])
+    raw = os.environ.get("AGENT_REGISTRIES_JSON") or config.get("registry", "endpoints", [])
     if isinstance(raw, str):
         raw = _normalize_registries_json(raw)
     elif not isinstance(raw, list):

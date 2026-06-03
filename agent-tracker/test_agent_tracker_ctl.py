@@ -12,6 +12,13 @@ _spec.loader.exec_module(ctl)
 
 
 class TestAgentTrackerCtl(unittest.TestCase):
+    def setUp(self):
+        self.load_config_patcher = mock.patch("config.load_config", return_value={})
+        self.mock_load_config = self.load_config_patcher.start()
+
+    def tearDown(self):
+        self.load_config_patcher.stop()
+
     @mock.patch.dict(os.environ, {}, clear=True)
     def test_format_status_bar_shows_green_registry_indicator_when_connected(self):
         bar = ctl.format_status_bar(

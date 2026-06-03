@@ -1786,6 +1786,39 @@ class TestRpcHandler(unittest.TestCase):
             state.GROUP_TIMELINE_DIR = orig_dir
             shutil.rmtree(temp_cache)
 
+    def test_generate_unique_agent_name_no_conflict(self):
+        # Case 1: name-N format, no conflict
+        name = rpc_handler._generate_unique_agent_name("test-agent-3")
+        self.assertEqual(name, "test-agent-3")
+
+        # Case 2: plain name, no conflict
+        name = rpc_handler._generate_unique_agent_name("test-agent")
+        self.assertEqual(name, "test-agent")
+
+    def test_generate_unique_agent_name_with_conflict(self):
+        # Setup conflicting agent
+        state.set_agent("test-agent-3", {"agent_id": "id-3", "status": "working"})
+        
+        # Case 3: name-N format, conflict, is_register=False
+        name = rpc_handler._generate_unique_agent_name("test-agent-3", is_register=False)
+        self.assertEqual(name, "test-agent-4")
+
+        # Case 4: name-N format, conflict, is_register=True (status working)
+        name = rpc_handler._generate_unique_agent_name("test-agent-3", is_register=True)
+        self.assertEqual(name, "test-agent-4")
+
+        # Setup spawning agent
+        state.set_agent("test-agent-5", {"agent_id": "id-5", "status": "spawning"})
+        # Case 5: name-N format, conflict with spawning, is_register=True -> should keep name
+        name = rpc_handler._generate_unique_agent_name("test-agent-5", is_register=True)
+        self.assertEqual(name, "test-agent-5")
+
+        # Case 6: plain name, conflict
+        state.set_agent("test-agent", {"agent_id": "id-plain", "status": "working"})
+        name = rpc_handler._generate_unique_agent_name("test-agent")
+        self.assertEqual(name, "test-agent-1")
+
+
 
 if __name__ == "__main__":
     unittest.main()

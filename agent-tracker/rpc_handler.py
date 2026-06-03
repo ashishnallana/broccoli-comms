@@ -27,7 +27,7 @@ DEFAULT_CAPTURE_PANE_LINES = 20
 
 
 def _default_capture_pane_lines() -> int:
-    raw = config.get("ui", "capture_pane_default_lines", str(DEFAULT_CAPTURE_PANE_LINES))
+    raw = os.environ.get("AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES") or config.get("ui", "capture_pane_default_lines", str(DEFAULT_CAPTURE_PANE_LINES))
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -87,35 +87,38 @@ def _is_uuid(value: str) -> bool:
 
 
 def _generate_unique_agent_name(name: str, session: str = None, is_register: bool = False) -> str:
-    agents = state.get_all_agents()
-    if name:
-        agent_name = name
-        base_name = name
+    if not name:
         num = 1
-        m = re.match(r'^(.*)-(\d+)$', name)
-        if m:
-            base_name = m.group(1)
-            num = int(m.group(2))
-            has_conflict = state.get_agent_id_by_name(agent_name)
-            if has_conflict:
-                is_spawning = (state.get_agent(agent_name) or {}).get("status") == "spawning"
-                if is_spawning and is_register:
-                    return agent_name
-            num += 1
-            agent_name = f"{base_name}-{num}"
-
-        while state.get_agent_id_by_name(agent_name):
-            is_spawning = (state.get_agent(agent_name) or {}).get("status") == "spawning"
-            if is_spawning and is_register:
-                break
-            agent_name = f"{base_name}-{num}"
-            num += 1
-        return agent_name
-    else:
-        num = 1
-        while f"{session}-agent-{num}" in agents:
+        while f"{session}-agent-{num}" in state.get_all_agents():
             num += 1
         return f"{session}-agent-{num}"
+
+    agent_name = name
+    base_name = name
+    num = 1
+    m = re.match(r'^(.*)-(\d+)$', name)
+    if m:
+        base_name = m.group(1)
+        num = int(m.group(2))
+
+    has_suffix = bool(m)
+    while True:
+        has_conflict = state.get_agent_id_by_name(agent_name)
+        if not has_conflict:
+            break
+        
+        is_spawning = (state.get_agent(agent_name) or {}).get("status") == "spawning"
+        if is_spawning and is_register:
+            break
+        
+        if not has_suffix:
+            num = 1
+            has_suffix = True
+        else:
+            num += 1
+        agent_name = f"{base_name}-{num}"
+            
+    return agent_name
 
 
 def _best_effort_update_tmux_metadata(tmux_pane, agent_name, agent_id, agent_type, agent_cmd, tmux_socket, no_notify_with_send_keys=False, no_registry=False):
@@ -535,6 +538,9 @@ def remote_message_focus_enabled() -> bool:
 
     Conservative Broccoli default: disabled unless explicitly enabled.
     """
+    val = os.environ.get("BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES")
+    if val is not None:
+        return val in ("1", "true", "yes")
     return config.get("ui", "focus_remote_messages", False)
 
 

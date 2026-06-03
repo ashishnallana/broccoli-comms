@@ -17,7 +17,7 @@ let
   ];
 
   trackerSocketFor = spec:
-    if spec.trackerSocketPath != null then spec.trackerSocketPath else "${cacheHome}/agent-tracker/agent-tracker.sock";
+    if spec.trackerSocketPath != null then spec.trackerSocketPath else "${cacheHome}/broccoli-comms/runtime/agent-tracker.sock";
 
   tmuxSocketFor = spec: spec.tmuxSocketPath;
 
@@ -150,7 +150,7 @@ in {
           trackerSocketPath = mkOption {
             type = types.nullOr types.str;
             default = null;
-            description = "Optional AGENT_TRACKER_SOCKET override. Defaults to ~/.cache/agent-tracker/agent-tracker.sock for the Home Manager user.";
+            description = "Optional AGENT_TRACKER_SOCKET override. Defaults to ~/.cache/broccoli-comms/runtime/agent-tracker.sock for the Home Manager user.";
           };
           tmuxSocketPath = mkOption {
             type = types.nullOr types.str;

@@ -21,6 +21,10 @@ import config
 
 def resolve_agent_wrapper_path() -> str:
     """Find the standalone agent-wrapper in package, PATH, or source checkout."""
+    env_val = os.environ.get("BROCCOLI_COMMS_AGENT_WRAPPER")
+    if env_val:
+        return env_val
+
     configured = config.get("executables", "agent_wrapper")
     if configured:
         return configured

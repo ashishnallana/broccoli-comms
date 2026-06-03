@@ -71,12 +71,15 @@ def xdg_config() -> Path:
 
 def get_active_tracker_socket() -> Path:
     candidates = []
+    env_sock = os.environ.get("AGENT_TRACKER_SOCKET")
+    if env_sock:
+        candidates.append(Path(env_sock))
     configured_sock = get_toml_config("paths", "agent_tracker_socket", None)
     if configured_sock:
         candidates.append(Path(configured_sock))
-    candidates.append(xdg_cache() / "agent-tracker.sock")
-    candidates.append(xdg_cache() / "agent-tracker" / "agent-tracker.sock")
     candidates.append(xdg_runtime() / "agent-tracker.sock")
+    candidates.append(xdg_cache() / "agent-tracker" / "agent-tracker.sock")
+    candidates.append(xdg_cache() / "agent-tracker.sock")
     legacy_cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     candidates.append(legacy_cache / "agent-tracker" / "agent-tracker.sock")
     
@@ -146,6 +149,7 @@ def base_env(preserve_agent_identity: bool = False) -> dict[str, str]:
     env.update({
         "BROCCOLI_COMMS_APP_RUNTIME": "1",
         "XDG_CACHE_HOME": str(p["cache"]),
+        "AGENT_TRACKER_SOCKET": str(p["tracker_socket"]),
     })
     # NOTE: The daemon/CLI components now natively read config.toml, so we don't strictly need to pass
     # AGENT_TRACKER_SOCKET, BROCCOLI_COMMS_CACHE_DIR, etc., unless for legacy backwards compatibility.
@@ -208,14 +212,17 @@ def tracker_script() -> str:
     return get_toml_config("executables", "agent_tracker", str(repo_root() / "agent-tracker" / "agent-tracker.py"))
 
 def tracker_ctl_script() -> str:
-    path = Path(get_toml_config("executables", "agent_tracker_ctl_py", ""))
-    if path.exists() and not os.environ.get("BROCCOLI_COMMS_LOCAL_DEV"):
-        return str(path)
+    cfg_val = get_toml_config("executables", "agent_tracker_ctl_py", None)
+    if cfg_val:
+        path = Path(cfg_val)
+        if path.exists() and not os.environ.get("BROCCOLI_COMMS_LOCAL_DEV"):
+            return str(path)
     
-    # Fallback for old configs before agent_tracker_ctl_py was added
-    path = Path(get_toml_config("executables", "agent_tracker_ctl", ""))
-    if path.exists() and not os.environ.get("BROCCOLI_COMMS_LOCAL_DEV"):
-        return str(path)
+    cfg_val = get_toml_config("executables", "agent_tracker_ctl", None)
+    if cfg_val:
+        path = Path(cfg_val)
+        if path.exists() and not os.environ.get("BROCCOLI_COMMS_LOCAL_DEV"):
+            return str(path)
     return str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py")
 
 def wrapper_path() -> str:

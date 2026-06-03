@@ -21,7 +21,7 @@ let
   in if value == "" then null else value;
   palette = import ../palette.nix { userSettings = tmuxUserSettings; };
   cacheHome = config.xdg.cacheHome or "${config.home.homeDirectory}/.cache";
-  socketPath = "${cacheHome}/agent-tracker/agent-tracker.sock";
+  socketPath = "${cacheHome}/broccoli-comms/runtime/agent-tracker.sock";
   logDir = "${cacheHome}/agent-tracker";
   launchdStdoutPath = "${logDir}/launchd.stdout.log";
   launchdStderrPath = "${logDir}/launchd.stderr.log";

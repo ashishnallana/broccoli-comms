@@ -19,3 +19,24 @@ def load_config() -> dict:
 def get(section: str, key: str, default=None):
     config = load_config()
     return config.get(section, {}).get(key, default)
+
+def get_base_cache_dir() -> Path:
+    configured = get("paths", "cache_dir")
+    if configured:
+        return Path(configured)
+    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+
+def get_base_runtime_dir() -> Path:
+    configured = get("paths", "runtime_dir")
+    if configured:
+        return Path(configured)
+    xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg_runtime:
+        return Path(xdg_runtime)
+    try:
+        uid = os.getuid()
+        return Path(f"/tmp/{uid}/broccoli-comms")
+    except AttributeError:
+        import tempfile
+        return Path(tempfile.gettempdir()) / "broccoli-comms"
+
