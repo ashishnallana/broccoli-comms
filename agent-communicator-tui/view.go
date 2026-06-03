@@ -88,14 +88,14 @@ func (m model) currentAgentPanel(width, height int) string {
 	heroW := max(1, width-4)
 	heroInnerW := max(1, heroW-2)
 	statusBadge := lipgloss.NewStyle().Background(colors.RightColumnBg).Foreground(colors.Accent).Padding(0, 1).Render(status)
-	namePrefix := statusDot(status) + " "
+	namePrefix := statusDotStyle(status).Background(colors.SelectedBg).Render("●") + bgSpaces(1, colors.SelectedBg)
 	nameBudget := max(1, heroInnerW-lipgloss.Width(namePrefix)-lipgloss.Width(statusBadge)-1)
-	nameText := truncateCells(name, nameBudget)
+	nameText := fgOnBg(colors.SelectedFg, colors.SelectedBg).Render(truncateCells(name, nameBudget))
 	gap := max(1, heroInnerW-lipgloss.Width(namePrefix)-lipgloss.Width(nameText)-lipgloss.Width(statusBadge))
-	line1 := namePrefix + nameText + strings.Repeat(" ", gap) + statusBadge
-	line2 := lipgloss.NewStyle().Foreground(colors.SelectedFg).Faint(true).Render(truncateCells("  "+host+" · "+provider, heroInnerW))
+	line1 := namePrefix + nameText + bgSpaces(gap, colors.SelectedBg) + statusBadge
+	line2 := lipgloss.NewStyle().Foreground(colors.SelectedFg).Background(colors.SelectedBg).Faint(true).Render(truncateCells("  "+host+" · "+provider, heroInnerW))
 	hero := lipgloss.NewStyle().Width(heroW).Background(colors.SelectedBg).Foreground(colors.SelectedFg).Bold(true).Padding(1, 1).Render(line1 + "\n" + line2)
-	body := shellTitleStyle.Render("Agent Communicator") + "\n" + mutedStyle.Render(host) + "\n" + hero
+	body := shellTitleStyle.Render("Agent Communicator") + "\n" + hero
 	return lipgloss.NewStyle().Width(width).Height(height).Padding(1, 1).Background(colors.RightColumnBg).Render(truncateLines(body, max(1, height-1)))
 }
 
@@ -106,11 +106,10 @@ func (m model) switcherPanel(width, height int) string {
 	if hidden > 0 {
 		headerRight = fmt.Sprintf("%d shown · %d hidden", shown, hidden)
 	}
-	header := lipgloss.JoinHorizontal(lipgloss.Top,
-		titleStyle.Render("Switch agent"),
-		strings.Repeat(" ", max(1, width-4-lipgloss.Width("Switch agent")-lipgloss.Width(headerRight))),
-		mutedStyle.Render(headerRight),
-	)
+	headerTitle := fgOnBg(colors.Accent, colors.RightColumnBg).Bold(true).Render("Switch agent")
+	headerCount := fgOnBg(colors.Muted, colors.RightColumnBg).Render(headerRight)
+	headerGap := bgSpaces(max(1, width-4-lipgloss.Width("Switch agent")-lipgloss.Width(headerRight)), colors.RightColumnBg)
+	header := headerTitle + headerGap + headerCount
 	filter := lipgloss.NewStyle().Width(max(1, width-4)).Background(colors.PanelBg).Foreground(colors.Muted).Padding(0, 1).Render("⌕ filter agents…")
 	list := m.agentList(width-2, max(1, height-lineCount(header)-lineCount(filter)-3))
 	body := header + "\n" + filter + "\n" + list
@@ -147,7 +146,7 @@ func (m model) conversationPanel(width, height int) string {
 	}
 	messageH := max(1, height-lineCount(title)-lineCount(composer)-3)
 	messages := m.messageViewWithHeight(innerW, messageH)
-	body := title + "\n\n" + messages + "\n" + composer
+	body := title + "\n" + composer + "\n" + bgSpaces(innerW, colors.BaseBg) + "\n" + messages
 	return lipgloss.NewStyle().
 		Width(width).
 		Height(height).
@@ -352,12 +351,11 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	gap := max(1, inner-lipgloss.Width(metaLeft)-lipgloss.Width(metaRight))
 	metaLine := fgOnBg(colors.Muted, bg).Render(truncateCells(metaLeft+strings.Repeat(" ", gap)+metaRight, inner))
 
-	body := nameLine + "\n" + metaLine
-	style := lipgloss.NewStyle().Width(cardWidth).Padding(0, 1).Background(bg)
-	if selected {
-		style = style.Foreground(colors.SelectedFg).Bold(true)
-	}
-	return style.Render(body)
+	contentW := max(1, cardWidth-2)
+	return strings.Join([]string{
+		bgSpaces(1, bg) + padStyledLine(nameLine, contentW, bg) + bgSpaces(1, bg),
+		bgSpaces(1, bg) + padStyledLine(metaLine, contentW, bg) + bgSpaces(1, bg),
+	}, "\n")
 }
 
 func (m model) hiddenSeparator(width int) string {
@@ -490,12 +488,12 @@ func (m model) messageViewWithHeight(width, visible int) string {
 	}
 	offset := clampMessageOffset(m.messageOffset, len(lines), visible)
 	end := min(len(lines), offset+visible)
-	return lipgloss.NewStyle().Width(max(1, width)).Height(visible).MaxHeight(visible).Render(strings.Join(lines[offset:end], "\n"))
+	return lipgloss.NewStyle().Width(max(1, width)).Height(visible).MaxHeight(visible).Background(colors.BaseBg).Render(strings.Join(lines[offset:end], "\n"))
 }
 
 func (m model) messageLinesForWidth(width int) []string {
 	start := time.Now()
-	wrapWidth := max(10, width-1)
+	wrapWidth := max(10, width)
 	messages := m.displayOrderedMessages()
 	defer func() {
 		debugLogf("message_lines duration=%s messages=%d width=%d", time.Since(start), len(messages), width)
@@ -503,9 +501,9 @@ func (m model) messageLinesForWidth(width int) []string {
 	systemEvents := m.displayOrderedSystemEvents()
 	if len(messages) == 0 && len(systemEvents) == 0 {
 		if len(m.rows) > 0 && m.rows[m.selected].Scope == "remote" {
-			return wrapLine(mutedStyle.Render("No messages. Remote history is in-memory for sent messages only."), wrapWidth)
+			return wrapBackgroundStyledText("No messages. Remote history is in-memory for sent messages only.", wrapWidth, colors.Muted, colors.BaseBg)
 		}
-		return wrapLine(mutedStyle.Render("No messages. Inbox history loads for local agents."), wrapWidth)
+		return wrapBackgroundStyledText("No messages. Inbox history loads for local agents.", wrapWidth, colors.Muted, colors.BaseBg)
 	}
 	cacheKey := messageRenderCacheKey(m, messages, systemEvents, wrapWidth)
 	if lines, ok := cachedMessageLines(cacheKey); ok {
@@ -516,13 +514,13 @@ func (m model) messageLinesForWidth(width int) []string {
 	lines := []string{}
 	for i, msg := range messages {
 		if len(lines) > 0 {
-			lines = append(lines, "")
+			lines = append(lines, bgSpaces(wrapWidth, colors.BaseBg))
 		}
 		lines = append(lines, m.messageBubbleLines(msg, i, wrapWidth)...)
 	}
 	for _, event := range systemEvents {
 		if len(lines) > 0 {
-			lines = append(lines, "")
+			lines = append(lines, bgSpaces(wrapWidth, colors.BaseBg))
 		}
 		lines = append(lines, m.systemEventLine(event, wrapWidth))
 	}
@@ -757,10 +755,10 @@ func (m model) activeComposerModeName() string {
 }
 
 func (m model) composerModeControls(width int) string {
-	left := mutedStyle.Render("/msg sends an inbox message")
-	right := mutedStyle.Render("Enter send")
+	left := fgOnBg(colors.Muted, colors.BaseBg).Render("/msg sends an inbox message")
+	right := fgOnBg(colors.Muted, colors.BaseBg).Render("Enter send")
 	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
-	return left + strings.Repeat(" ", gap) + right
+	return left + bgSpaces(gap, colors.BaseBg) + right
 }
 
 func (m model) composerModeButtons(width int) string {

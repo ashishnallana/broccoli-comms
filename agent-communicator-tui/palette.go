@@ -9,73 +9,75 @@ import (
 )
 
 type TerminalTheme struct {
-	BaseBg        lipgloss.Color
-	PanelBg       lipgloss.Color
-	PanelBgAlt    lipgloss.Color
-	RightColumnBg lipgloss.Color
-	Text          lipgloss.Color
-	TextStrong    lipgloss.Color
-	TextSubtle    lipgloss.Color
-	Muted         lipgloss.Color
-	Accent        lipgloss.Color
-	AccentStrong  lipgloss.Color
-	AccentAlt     lipgloss.Color
-	Success       lipgloss.Color
-	Warning       lipgloss.Color
-	Error         lipgloss.Color
-	Info          lipgloss.Color
-	Border        lipgloss.Color
-	SelectedBg    lipgloss.Color
-	SelectedFg    lipgloss.Color
-	InputBg       lipgloss.Color
-	PopupBg       lipgloss.Color
-	PopupBorder   lipgloss.Color
-	BadgeBg       lipgloss.Color
-	BadgeFg       lipgloss.Color
-	RemoteBadgeBg lipgloss.Color
-	RemoteBadgeFg lipgloss.Color
-	ReadTick      lipgloss.Color
-	DeliveredTick lipgloss.Color
-	SentTick      lipgloss.Color
-	Saved         lipgloss.Color
-	AgentColors   []lipgloss.Color
+	BaseBg           lipgloss.Color
+	PanelBg          lipgloss.Color
+	PanelBgAlt       lipgloss.Color
+	IncomingBubbleBg lipgloss.Color
+	RightColumnBg    lipgloss.Color
+	Text             lipgloss.Color
+	TextStrong       lipgloss.Color
+	TextSubtle       lipgloss.Color
+	Muted            lipgloss.Color
+	Accent           lipgloss.Color
+	AccentStrong     lipgloss.Color
+	AccentAlt        lipgloss.Color
+	Success          lipgloss.Color
+	Warning          lipgloss.Color
+	Error            lipgloss.Color
+	Info             lipgloss.Color
+	Border           lipgloss.Color
+	SelectedBg       lipgloss.Color
+	SelectedFg       lipgloss.Color
+	InputBg          lipgloss.Color
+	PopupBg          lipgloss.Color
+	PopupBorder      lipgloss.Color
+	BadgeBg          lipgloss.Color
+	BadgeFg          lipgloss.Color
+	RemoteBadgeBg    lipgloss.Color
+	RemoteBadgeFg    lipgloss.Color
+	ReadTick         lipgloss.Color
+	DeliveredTick    lipgloss.Color
+	SentTick         lipgloss.Color
+	Saved            lipgloss.Color
+	AgentColors      []lipgloss.Color
 }
 
-var colors = tokyoNightTerminalTheme()
+var colors = everforestTerminalTheme()
 
 func defaultTerminalTheme() TerminalTheme {
 	c := func(index string) lipgloss.Color { return lipgloss.Color(index) }
 	return TerminalTheme{
-		BaseBg:        c("0"),
-		PanelBg:       c("0"),
-		PanelBgAlt:    c("8"),
-		RightColumnBg: c("8"),
-		Text:          c("7"),
-		TextStrong:    c("15"),
-		TextSubtle:    c("8"),
-		Muted:         c("8"),
-		Accent:        c("6"),
-		AccentStrong:  c("14"),
-		AccentAlt:     c("5"),
-		Success:       c("2"),
-		Warning:       c("3"),
-		Error:         c("1"),
-		Info:          c("4"),
-		Border:        c("8"),
-		SelectedBg:    c("14"),
-		SelectedFg:    c("0"),
-		InputBg:       c("8"),
-		PopupBg:       c("0"),
-		PopupBorder:   c("8"),
-		BadgeBg:       c("4"),
-		BadgeFg:       c("0"),
-		RemoteBadgeBg: c("5"),
-		RemoteBadgeFg: c("0"),
-		ReadTick:      c("10"),
-		DeliveredTick: c("14"),
-		SentTick:      c("8"),
-		Saved:         c("3"),
-		AgentColors:   []lipgloss.Color{c("2"), c("6"), c("5"), c("3"), c("4"), c("1"), c("10"), c("13"), c("11"), c("14")},
+		BaseBg:           c("0"),
+		PanelBg:          c("0"),
+		PanelBgAlt:       c("8"),
+		IncomingBubbleBg: c("8"),
+		RightColumnBg:    c("8"),
+		Text:             c("7"),
+		TextStrong:       c("15"),
+		TextSubtle:       c("8"),
+		Muted:            c("8"),
+		Accent:           c("6"),
+		AccentStrong:     c("14"),
+		AccentAlt:        c("5"),
+		Success:          c("2"),
+		Warning:          c("3"),
+		Error:            c("1"),
+		Info:             c("4"),
+		Border:           c("8"),
+		SelectedBg:       c("14"),
+		SelectedFg:       c("0"),
+		InputBg:          c("8"),
+		PopupBg:          c("0"),
+		PopupBorder:      c("8"),
+		BadgeBg:          c("4"),
+		BadgeFg:          c("0"),
+		RemoteBadgeBg:    c("5"),
+		RemoteBadgeFg:    c("0"),
+		ReadTick:         c("10"),
+		DeliveredTick:    c("14"),
+		SentTick:         c("8"),
+		Saved:            c("3"),
+		AgentColors:      []lipgloss.Color{c("2"), c("6"), c("5"), c("3"), c("4"), c("1"), c("10"), c("13"), c("11"), c("14")},
 	}
 }
 
@@ -301,8 +303,9 @@ func (m model) commandPaletteView(width, height int) string {
 		query = "type to filter commands…"
 	}
 	titleGap := max(1, contentW-lipgloss.Width("Command palette")-lipgloss.Width("esc close"))
+	paletteMuted := fgOnBg(colors.Muted, panelBG)
 	lines := []string{
-		panelLine(lipgloss.NewStyle().Foreground(colors.Muted).Render("Command palette") + strings.Repeat(" ", titleGap) + lipgloss.NewStyle().Foreground(colors.Muted).Render("esc close")),
+		padStyledLine(paletteMuted.Render("Command palette")+bgSpaces(titleGap, panelBG)+paletteMuted.Render("esc close"), contentW, panelBG),
 		lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(colors.InputBg).Foreground(colors.Text).Padding(0, 1).Render(truncateCells(query, max(1, contentW-2))),
 	}
 	lastCategory := ""

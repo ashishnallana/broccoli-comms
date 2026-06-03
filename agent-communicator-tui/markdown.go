@@ -80,7 +80,7 @@ func renderMarkdown(s string, width int, bgOpt ...lipgloss.Color) string {
 		case strings.HasPrefix(line, "#"):
 			out = append(out, markdownTitleStyle(bgOpt...).Render(strings.TrimSpace(strings.TrimLeft(line, "#"))))
 		case isMarkdownTableStart(lines, i):
-			table, next := renderMarkdownTable(lines, i)
+			table, next := renderMarkdownTable(lines, i, bgOpt...)
 			out = append(out, table...)
 			i = next - 1
 		case strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* "):
@@ -113,7 +113,7 @@ func isMarkdownSeparator(line string) bool {
 	return true
 }
 
-func renderMarkdownTable(lines []string, start int) ([]string, int) {
+func renderMarkdownTable(lines []string, start int, bgOpt ...lipgloss.Color) ([]string, int) {
 	var rows [][]string
 	i := start
 	for ; i < len(lines) && strings.Contains(lines[i], "|"); i++ {
@@ -125,9 +125,9 @@ func renderMarkdownTable(lines []string, start int) ([]string, int) {
 	widths := tableWidths(rows)
 	out := make([]string, 0, len(rows)+1)
 	for idx, row := range rows {
-		out = append(out, formatTableRow(row, widths))
+		out = append(out, formatTableRow(row, widths, bgOpt...))
 		if idx == 0 {
-			out = append(out, formatTableSeparator(widths))
+			out = append(out, formatTableSeparator(widths, bgOpt...))
 		}
 	}
 	return out, i
@@ -155,7 +155,7 @@ func tableWidths(rows [][]string) []int {
 	return widths
 }
 
-func formatTableRow(row []string, widths []int) string {
+func formatTableRow(row []string, widths []int, bgOpt ...lipgloss.Color) string {
 	cells := make([]string, len(widths))
 	for i := range widths {
 		cell := ""
@@ -164,15 +164,23 @@ func formatTableRow(row []string, widths []int) string {
 		}
 		cells[i] = lipgloss.PlaceHorizontal(widths[i], lipgloss.Left, cell)
 	}
-	return "│ " + strings.Join(cells, " │ ") + " │"
+	line := "│ " + strings.Join(cells, " │ ") + " │"
+	if len(bgOpt) > 0 {
+		return markdownTextStyle(bgOpt...).Render(line)
+	}
+	return line
 }
 
-func formatTableSeparator(widths []int) string {
+func formatTableSeparator(widths []int, bgOpt ...lipgloss.Color) string {
 	parts := make([]string, len(widths))
 	for i, w := range widths {
 		parts[i] = strings.Repeat("─", w+2)
 	}
-	return "├" + strings.Join(parts, "┼") + "┤"
+	line := "├" + strings.Join(parts, "┼") + "┤"
+	if len(bgOpt) > 0 {
+		return markdownMutedStyle(bgOpt...).Render(line)
+	}
+	return line
 }
 
 func renderInlineMarkdown(line string, bgOpt ...lipgloss.Color) string {

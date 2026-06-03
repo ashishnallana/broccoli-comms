@@ -37,8 +37,8 @@ func TestMessageLinesWrapLongMessageBody(t *testing.T) {
 		t.Fatalf("expected wrapped lines, got:\n%s", joined)
 	}
 	for _, line := range lines {
-		if lipgloss.Width(line) > 15 {
-			t.Fatalf("line width %d > 15: %q", lipgloss.Width(line), line)
+		if lipgloss.Width(line) > 16 {
+			t.Fatalf("line width %d > 16: %q", lipgloss.Width(line), line)
 		}
 	}
 }
@@ -115,13 +115,22 @@ func TestViewWideAndNarrowIncludeCoreRegions(t *testing.T) {
 	}
 }
 
-func TestWideComposerSitsNearBottom(t *testing.T) {
+func TestCurrentAgentPanelDoesNotRepeatStandaloneHostLine(t *testing.T) {
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", Status: "idle", Hostname: "host-a", ModelType: "pi"}}}
+	view := m.currentAgentPanel(80, 8)
+	if strings.Count(view, "host-a") != 1 {
+		t.Fatalf("current agent panel should show host only inside hero metadata, got %d occurrences:\n%s", strings.Count(view, "host-a"), view)
+	}
+}
+
+func TestWideComposerSitsBelowConversationHeader(t *testing.T) {
 	m := model{width: 120, height: 30, rows: []agentRow{{Name: "alpha", Scope: "local"}}, messages: []tracker.Message{{Sender: "agent", Body: "hello"}}}
 	view := m.View()
-	composerIndex := strings.LastIndex(view, "/msg")
+	titleIndex := strings.Index(view, "Conversation")
+	composerIndex := strings.Index(view, "/msg")
 	messageIndex := strings.Index(view, "hello")
-	if composerIndex < 0 || messageIndex < 0 || composerIndex < messageIndex {
-		t.Fatalf("composer should render below timeline near bottom:\n%s", view)
+	if titleIndex < 0 || composerIndex < 0 || messageIndex < 0 || composerIndex < titleIndex || messageIndex < composerIndex {
+		t.Fatalf("composer should render directly below conversation header and above timeline:\n%s", view)
 	}
 }
 

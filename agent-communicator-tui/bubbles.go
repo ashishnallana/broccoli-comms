@@ -19,43 +19,72 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	body := msg.Body
 	innerWidth := max(8, width-8)
 	useBg := !isSentMessage(msg) && width >= 70
+	displayBody, isPaneCapture := paneCaptureDisplayBody(body)
 	bodyBg := colors.BaseBg
 	if useBg {
-		bodyBg = colors.PanelBgAlt
+		bodyBg = colors.IncomingBubbleBg
 	}
-	if msg.ContentType == "" || msg.ContentType == "text/markdown" {
+	if isPaneCapture {
+		body = displayBody
+	} else if msg.ContentType == "" || msg.ContentType == "text/markdown" {
 		body = renderMarkdown(body, innerWidth, bodyBg)
 	}
-	railStyle := fgOnBg(colors.Muted, colors.BaseBg)
+	rowBg := colors.BaseBg
+	if useBg {
+		rowBg = bodyBg
+	}
+	railStyle := fgOnBg(colors.Muted, rowBg)
 	if index == m.messageSelected {
-		railStyle = fgOnBg(colors.Accent, colors.BaseBg).Bold(true)
+		railStyle = fgOnBg(colors.Accent, rowBg).Bold(true)
 	}
 	rail := railStyle.Render("┃")
-	indent := bgSpaces(2, colors.BaseBg)
-	header := m.messageHeader(msg, index, colorKey, innerWidth, colors.BaseBg)
-	out := []string{padStyledLine(rail+indent+header, width, colors.BaseBg)}
-
+	indent := bgSpaces(2, rowBg)
 	wrapWidth := innerWidth
+	bubblePadX := 2
 	if useBg {
-		wrapWidth = max(6, innerWidth-2)
+		wrapWidth = max(6, innerWidth-(bubblePadX*2))
 	}
+
+	renderIncomingBubbleLine := func(content string) string {
+		if content == "" {
+			return bgSpaces(innerWidth, bodyBg)
+		}
+		if !strings.Contains(content, "\x1b[") {
+			content = fgOnBg(colors.Text, bodyBg).Render(content)
+		}
+		return bgSpaces(bubblePadX, bodyBg) + padStyledLine(content, wrapWidth, bodyBg) + bgSpaces(bubblePadX, bodyBg)
+	}
+
+	headerBg := colors.BaseBg
+	headerWidth := innerWidth
+	if useBg {
+		headerBg = bodyBg
+		headerWidth = wrapWidth
+	}
+	header := m.messageHeader(msg, index, colorKey, headerWidth, headerBg)
+	out := []string{}
+	if useBg {
+		blank := renderIncomingBubbleLine("")
+		out = append(out, padStyledLine(rail+indent+blank, width, rowBg))
+		header = renderIncomingBubbleLine(header)
+	}
+	out = append(out, padStyledLine(rail+indent+header, width, rowBg))
 
 	for _, line := range m.visibleBodyLines(bubbleBodyLines(body, wrapWidth), index) {
 		line = truncateCells(line, wrapWidth)
 		if useBg {
-			line = lipgloss.NewStyle().
-				Background(colors.PanelBgAlt).
-				Foreground(colors.Text).
-				Padding(0, 1).
-				Width(innerWidth).
-				Render(line)
+			line = renderIncomingBubbleLine(line)
 		} else {
 			line = fgOnBg(colors.Text, colors.BaseBg).Render(line)
 		}
-		out = append(out, padStyledLine(rail+indent+line, width, colors.BaseBg))
+		out = append(out, padStyledLine(rail+indent+line, width, rowBg))
 	}
 	if receipt := sentReceiptLine(msg, colors.BaseBg); receipt != "" {
 		out = append(out, padStyledLine(rail+indent+receipt, width, colors.BaseBg))
+	}
+	if useBg {
+		blank := renderIncomingBubbleLine("")
+		out = append(out, padStyledLine(rail+indent+blank, width, rowBg))
 	}
 	return out
 }

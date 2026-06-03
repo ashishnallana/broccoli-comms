@@ -45,6 +45,15 @@ func padStyledLine(line string, width int, bg lipgloss.Color) string {
 	return line + bgSpaces(width-lipgloss.Width(line), bg)
 }
 
+func wrapBackgroundStyledText(text string, width int, fg, bg lipgloss.Color) []string {
+	plainLines := wrapLine(text, width)
+	styled := make([]string, len(plainLines))
+	for i, line := range plainLines {
+		styled[i] = padStyledLine(fgOnBg(fg, bg).Render(line), width, bg)
+	}
+	return styled
+}
+
 func statusDot(status string) string {
 	return statusDotStyle(status).Render("●")
 }
