@@ -20,6 +20,31 @@ var statusBarStyle = lipgloss.NewStyle().Foreground(colors.Accent)
 var errorBarStyle = lipgloss.NewStyle().Foreground(colors.Error).Bold(true)
 var unreadCountStyle = lipgloss.NewStyle().Foreground(colors.SelectedFg).Background(colors.Warning).Bold(true).Padding(0, 1)
 
+func fgOnBg(fg, bg lipgloss.Color) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(fg).Background(bg)
+}
+
+func bgOnly(bg lipgloss.Color) lipgloss.Style {
+	return lipgloss.NewStyle().Background(bg)
+}
+
+func bgSpaces(count int, bg lipgloss.Color) string {
+	if count <= 0 {
+		return ""
+	}
+	return bgOnly(bg).Render(strings.Repeat(" ", count))
+}
+
+func padStyledLine(line string, width int, bg lipgloss.Color) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(line) >= width {
+		return truncateCells(line, width)
+	}
+	return line + bgSpaces(width-lipgloss.Width(line), bg)
+}
+
 func statusDot(status string) string {
 	return statusDotStyle(status).Render("●")
 }

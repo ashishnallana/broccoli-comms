@@ -20,26 +20,77 @@ var urlRE = regexp.MustCompile(`https?://[^\s)]+`)
 var mdLinkRE = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^\s)]+)\)`)
 var numberRE = regexp.MustCompile(`\b(0x[0-9a-fA-F]+|\d+(\.\d+)?)\b`)
 
-func renderMarkdown(s string, width int) string {
+func withMarkdownBg(style lipgloss.Style, bgOpt ...lipgloss.Color) lipgloss.Style {
+	if len(bgOpt) == 0 {
+		return style
+	}
+	return style.Background(bgOpt[0])
+}
+
+func markdownTitleStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(titleStyle, bgOpt...)
+}
+
+func markdownLinkStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(linkStyle, bgOpt...)
+}
+
+func markdownMutedStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(mutedStyle, bgOpt...)
+}
+
+func markdownTextStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(lipgloss.NewStyle().Foreground(colors.Text), bgOpt...)
+}
+
+func markdownCodeStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(codeStyle, bgOpt...)
+}
+
+func markdownCommentStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(commentStyle, bgOpt...)
+}
+
+func markdownKeywordStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(keywordStyle, bgOpt...)
+}
+
+func markdownStringStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(stringStyle, bgOpt...)
+}
+
+func markdownNumberStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(numberStyle, bgOpt...)
+}
+
+func markdownTypeStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(typeStyle, bgOpt...)
+}
+
+func markdownBoolStyle(bgOpt ...lipgloss.Color) lipgloss.Style {
+	return withMarkdownBg(boolStyle, bgOpt...)
+}
+
+func renderMarkdown(s string, width int, bgOpt ...lipgloss.Color) string {
 	lines := strings.Split(strings.ReplaceAll(s, "**", ""), "\n")
 	var out []string
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
 		switch {
 		case strings.HasPrefix(line, "#"):
-			out = append(out, titleStyle.Render(strings.TrimSpace(strings.TrimLeft(line, "#"))))
+			out = append(out, markdownTitleStyle(bgOpt...).Render(strings.TrimSpace(strings.TrimLeft(line, "#"))))
 		case isMarkdownTableStart(lines, i):
 			table, next := renderMarkdownTable(lines, i)
 			out = append(out, table...)
 			i = next - 1
 		case strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* "):
-			out = append(out, "• "+renderInlineMarkdown(strings.TrimSpace(line[2:])))
+			out = append(out, markdownTextStyle(bgOpt...).Render("• ")+renderInlineMarkdown(strings.TrimSpace(line[2:]), bgOpt...))
 		case strings.HasPrefix(line, "```"):
-			block, next := renderCodeBlock(lines, i)
+			block, next := renderCodeBlock(lines, i, bgOpt...)
 			out = append(out, block...)
 			i = next
 		default:
-			out = append(out, renderInlineMarkdown(lines[i]))
+			out = append(out, renderInlineMarkdown(lines[i], bgOpt...))
 		}
 	}
 	return strings.Join(out, "\n")
@@ -124,35 +175,67 @@ func formatTableSeparator(widths []int) string {
 	return "├" + strings.Join(parts, "┼") + "┤"
 }
 
-func renderInlineMarkdown(line string) string {
-	line = mdLinkRE.ReplaceAllStringFunc(line, func(match string) string {
-		parts := mdLinkRE.FindStringSubmatch(match)
-		if len(parts) != 3 {
-			return match
-		}
-		return linkStyle.Render(parts[1]) + mutedStyle.Render(" <"+parts[2]+">")
-	})
-	return urlRE.ReplaceAllStringFunc(line, func(url string) string {
-		return linkStyle.Render(url)
-	})
+func renderInlineMarkdown(line string, bgOpt ...lipgloss.Color) string {
+	var b strings.Builder
+	last := 0
+	for _, loc := range mdLinkRE.FindAllStringSubmatchIndex(line, -1) {
+		b.WriteString(renderBareURLs(line[last:loc[0]], bgOpt...))
+		label := line[loc[2]:loc[3]]
+		url := line[loc[4]:loc[5]]
+		b.WriteString(markdownLinkStyle(bgOpt...).Render(label))
+		b.WriteString(markdownMutedStyle(bgOpt...).Render(" <" + url + ">"))
+		last = loc[1]
+	}
+	b.WriteString(renderBareURLs(line[last:], bgOpt...))
+	return b.String()
 }
 
-func renderCodeBlock(lines []string, start int) ([]string, int) {
+func renderBareURLs(line string, bgOpt ...lipgloss.Color) string {
+	if line == "" {
+		return ""
+	}
+	var b strings.Builder
+	last := 0
+	for _, loc := range urlRE.FindAllStringIndex(line, -1) {
+		b.WriteString(renderMarkdownPlain(line[last:loc[0]], bgOpt...))
+		b.WriteString(markdownLinkStyle(bgOpt...).Render(line[loc[0]:loc[1]]))
+		last = loc[1]
+	}
+	b.WriteString(renderMarkdownPlain(line[last:], bgOpt...))
+	return b.String()
+}
+
+func renderMarkdownPlain(s string, bgOpt ...lipgloss.Color) string {
+	if s == "" || len(bgOpt) == 0 {
+		return s
+	}
+	return markdownTextStyle(bgOpt...).Render(s)
+}
+
+func renderCodeBlock(lines []string, start int, bgOpt ...lipgloss.Color) ([]string, int) {
 	lang := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[start]), "```"))
 	var out []string
 	for i := start + 1; i < len(lines); i++ {
 		if strings.HasPrefix(strings.TrimSpace(lines[i]), "```") {
 			return out, i
 		}
-		out = append(out, "  "+highlightCodeLine(lines[i], lang))
+		out = append(out, renderMarkdownPlain("  ", bgOpt...)+highlightCodeLine(lines[i], lang, bgOpt...))
 	}
 	return out, len(lines) - 1
 }
 
-func highlightCodeLine(line, lang string) string {
+func highlightCodeLine(line, lang string, bgOpt ...lipgloss.Color) string {
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
-		return commentStyle.Render(line)
+		return markdownCommentStyle(bgOpt...).Render(line)
+	}
+	if len(bgOpt) > 0 {
+		code, comment := splitInlineComment(line, lang)
+		out := highlightCodeLineWithBackground(code, lang, bgOpt[0])
+		if comment != "" {
+			out += markdownCommentStyle(bgOpt...).Render(comment)
+		}
+		return out
 	}
 	code, comment := splitInlineComment(line, lang)
 	code = highlightWords(code, languageKeywords(lang), keywordStyle)
@@ -164,6 +247,98 @@ func highlightCodeLine(line, lang string) string {
 		return codeStyle.Render(code) + commentStyle.Render(comment)
 	}
 	return codeStyle.Render(code)
+}
+
+func highlightCodeLineWithBackground(line, lang string, bg lipgloss.Color) string {
+	keywords := wordSet(languageKeywords(lang))
+	types := wordSet(languageTypes(lang))
+	bools := wordSet([]string{"true", "false", "nil", "null", "None"})
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		ch := line[i]
+		if ch == '"' || ch == '\'' {
+			end := i + 1
+			for end < len(line) {
+				if line[end] == '\\' && end+1 < len(line) {
+					end += 2
+					continue
+				}
+				if line[end] == ch {
+					end++
+					break
+				}
+				end++
+			}
+			b.WriteString(markdownStringStyle(bg).Render(line[i:end]))
+			i = end
+			continue
+		}
+		if isASCIIIdentStart(ch) {
+			end := i + 1
+			for end < len(line) && isASCIIIdentContinue(line[end]) {
+				end++
+			}
+			word := line[i:end]
+			switch {
+			case keywords[word]:
+				b.WriteString(markdownKeywordStyle(bg).Render(word))
+			case types[word]:
+				b.WriteString(markdownTypeStyle(bg).Render(word))
+			case bools[word]:
+				b.WriteString(markdownBoolStyle(bg).Render(word))
+			default:
+				b.WriteString(markdownCodeStyle(bg).Render(word))
+			}
+			i = end
+			continue
+		}
+		if isASCIIDigit(ch) {
+			end := i + 1
+			if ch == '0' && end < len(line) && (line[end] == 'x' || line[end] == 'X') {
+				end++
+				for end < len(line) && isASCIIHexDigit(line[end]) {
+					end++
+				}
+			} else {
+				for end < len(line) && (isASCIIDigit(line[end]) || line[end] == '.') {
+					end++
+				}
+			}
+			b.WriteString(markdownNumberStyle(bg).Render(line[i:end]))
+			i = end
+			continue
+		}
+		start := i
+		for i < len(line) && line[i] != '"' && line[i] != '\'' && !isASCIIIdentStart(line[i]) && !isASCIIDigit(line[i]) {
+			i++
+		}
+		b.WriteString(markdownCodeStyle(bg).Render(line[start:i]))
+	}
+	return b.String()
+}
+
+func wordSet(words []string) map[string]bool {
+	set := make(map[string]bool, len(words))
+	for _, word := range words {
+		set[word] = true
+	}
+	return set
+}
+
+func isASCIIIdentStart(ch byte) bool {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_'
+}
+
+func isASCIIIdentContinue(ch byte) bool {
+	return isASCIIIdentStart(ch) || isASCIIDigit(ch)
+}
+
+func isASCIIDigit(ch byte) bool {
+	return ch >= '0' && ch <= '9'
+}
+
+func isASCIIHexDigit(ch byte) bool {
+	return isASCIIDigit(ch) || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f')
 }
 
 func highlightWords(line string, words []string, style lipgloss.Style) string {

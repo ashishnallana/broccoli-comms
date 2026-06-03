@@ -18,17 +18,23 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	colorKey := m.messageColorKey(msg)
 	body := msg.Body
 	innerWidth := max(8, width-8)
-	if msg.ContentType == "" || msg.ContentType == "text/markdown" {
-		body = renderMarkdown(body, innerWidth)
-	}
-	rail := mutedStyle.Render("┃")
-	if index == m.messageSelected {
-		rail = lipgloss.NewStyle().Foreground(colors.Accent).Bold(true).Render("┃")
-	}
-	header := agentStyle(colorKey, true).Render(m.messageHeader(msg, index, colorKey, innerWidth))
-	out := []string{rail + "  " + header}
-
 	useBg := !isSentMessage(msg) && width >= 70
+	bodyBg := colors.BaseBg
+	if useBg {
+		bodyBg = colors.PanelBgAlt
+	}
+	if msg.ContentType == "" || msg.ContentType == "text/markdown" {
+		body = renderMarkdown(body, innerWidth, bodyBg)
+	}
+	railStyle := fgOnBg(colors.Muted, colors.BaseBg)
+	if index == m.messageSelected {
+		railStyle = fgOnBg(colors.Accent, colors.BaseBg).Bold(true)
+	}
+	rail := railStyle.Render("┃")
+	indent := bgSpaces(2, colors.BaseBg)
+	header := m.messageHeader(msg, index, colorKey, innerWidth, colors.BaseBg)
+	out := []string{padStyledLine(rail+indent+header, width, colors.BaseBg)}
+
 	wrapWidth := innerWidth
 	if useBg {
 		wrapWidth = max(6, innerWidth-2)
@@ -39,34 +45,38 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 		if useBg {
 			line = lipgloss.NewStyle().
 				Background(colors.PanelBgAlt).
+				Foreground(colors.Text).
 				Padding(0, 1).
 				Width(innerWidth).
 				Render(line)
+		} else {
+			line = fgOnBg(colors.Text, colors.BaseBg).Render(line)
 		}
-		out = append(out, rail+"  "+line)
+		out = append(out, padStyledLine(rail+indent+line, width, colors.BaseBg))
 	}
-	if receipt := sentReceiptLine(msg); receipt != "" {
-		out = append(out, rail+"  "+receipt)
+	if receipt := sentReceiptLine(msg, colors.BaseBg); receipt != "" {
+		out = append(out, padStyledLine(rail+indent+receipt, width, colors.BaseBg))
 	}
 	return out
 }
 
-func (m model) messageHeader(msg tracker.Message, index int, colorKey string, width int) string {
+func (m model) messageHeader(msg tracker.Message, index int, colorKey string, width int, bg lipgloss.Color) string {
 	sender := fallback(msg.Sender, "unknown")
 	if m.mode == advancedView && !strings.Contains(sender, "→") && !strings.HasPrefix(sender, "to ") {
 		sender += " → " + fallback(m.ownName, "agent-communicator")
 	}
 	saved := ""
 	if m.isSavedMessage(msg) {
-		saved = lipgloss.NewStyle().Foreground(colors.Saved).Render("★ ")
+		saved = "★ "
 	}
 	label := messageSenderLabel(msg, sender)
-	header := saved + truncateCells(label, max(1, width-25))
+	headerStyle := fgOnBg(colors.AgentColors[agentColorIndex(colorKey)], bg).Bold(true)
+	header := headerStyle.Render(truncateCells(saved+label, max(1, width-25)))
 	if ts := formatDisplayTime(msg.Timestamp); ts != "" && lipgloss.Width(header)+1 < width {
 		if m.isSavedMessage(msg) {
 			ts += " ★"
 		}
-		header += " " + mutedStyle.Render(truncateCells(ts, width-lipgloss.Width(header)-1))
+		header += bgSpaces(1, bg) + fgOnBg(colors.Muted, bg).Render(truncateCells(ts, width-lipgloss.Width(header)-1))
 	}
 	return header
 }

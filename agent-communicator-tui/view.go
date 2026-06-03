@@ -178,10 +178,18 @@ func (m model) composerBox(width int) string {
 }
 
 func (m model) composerInputBox(width int) string {
+	padX := 2
 	if m.width < 70 {
-		return mobileComposerBoxStyle.Width(width).MaxWidth(width).Render(m.composerView(max(1, width-2)))
+		padX = 1
 	}
-	return composerBoxStyle.Width(width).MaxWidth(width).Render(m.composerView(max(1, width-4)))
+	inner := max(1, width-(padX*2))
+	blank := bgSpaces(width, colors.InputBg)
+	lines := []string{blank}
+	for _, line := range m.composerLines(inner) {
+		lines = append(lines, bgSpaces(padX, colors.InputBg)+padStyledLine(line, inner, colors.InputBg)+bgSpaces(padX, colors.InputBg))
+	}
+	lines = append(lines, blank)
+	return strings.Join(lines, "\n")
 }
 
 func (m model) footer(width int) string {
@@ -316,26 +324,24 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 
 	unread := ""
 	if view.UnreadCount > 0 {
-		unread = " " + unreadCountBadge(view.UnreadCount)
+		unread = bgSpaces(1, bg) + unreadCountBadge(view.UnreadCount)
 	}
 
 	limit := max(1, inner-2-lipgloss.Width(unread))
 	suffix := ""
 	if m.isHiddenAgent(row) {
-		suffix = mutedStyle.Render(" ◌")
+		suffix = fgOnBg(colors.Muted, bg).Render(" ◌")
 		limit = max(1, limit-2)
 	}
 
-	dot := agentStatusDotStyle(row).Render("●")
-	space := " "
+	dot := agentStatusDotStyle(row).Background(bg).Render("●")
+	space := bgSpaces(1, bg)
 
-	nameStyle := lipgloss.NewStyle()
+	nameStyle := fgOnBg(colors.Text, bg)
 	if selected {
-		nameStyle = nameStyle.Foreground(colors.SelectedFg).Bold(true)
+		nameStyle = fgOnBg(colors.SelectedFg, bg).Bold(true)
 	} else if m.hasUnread(row) {
-		nameStyle = nameStyle.Foreground(colors.TextStrong).Bold(true)
-	} else {
-		nameStyle = nameStyle.Foreground(colors.Text)
+		nameStyle = fgOnBg(colors.TextStrong, bg).Bold(true)
 	}
 	nameStr := nameStyle.Render(truncateCells(view.Name, limit)) + suffix
 
@@ -344,8 +350,7 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 	metaLeft := provider + " · " + fallback(view.HostnameLabel, localHostname())
 	metaRight := view.StatusLabel
 	gap := max(1, inner-lipgloss.Width(metaLeft)-lipgloss.Width(metaRight))
-	metaStyle := mutedStyle
-	metaLine := metaStyle.Render(truncateCells(metaLeft+strings.Repeat(" ", gap)+metaRight, inner))
+	metaLine := fgOnBg(colors.Muted, bg).Render(truncateCells(metaLeft+strings.Repeat(" ", gap)+metaRight, inner))
 
 	body := nameLine + "\n" + metaLine
 	style := lipgloss.NewStyle().Width(cardWidth).Padding(0, 1).Background(bg)
@@ -525,23 +530,27 @@ func (m model) messageLinesForWidth(width int) []string {
 	return lines
 }
 
-func sentReadMarker(msg tracker.Message) string {
+func sentReadMarker(msg tracker.Message, bgOpt ...lipgloss.Color) string {
 	if !isSentMessage(msg) {
 		return ""
 	}
+	bg := colors.BaseBg
+	if len(bgOpt) > 0 {
+		bg = bgOpt[0]
+	}
 	if msg.Read {
-		return readStatusStyle.Render("✓✓")
+		return fgOnBg(colors.ReadTick, bg).Render("✓✓")
 	}
 	if msg.Notified {
-		return lipgloss.NewStyle().Foreground(colors.DeliveredTick).Render("✓✓")
+		return fgOnBg(colors.DeliveredTick, bg).Render("✓✓")
 	}
 	if msg.Delivered {
-		return lipgloss.NewStyle().Foreground(colors.DeliveredTick).Render("✓✓")
+		return fgOnBg(colors.DeliveredTick, bg).Render("✓✓")
 	}
-	return lipgloss.NewStyle().Foreground(colors.SentTick).Render("✓")
+	return fgOnBg(colors.SentTick, bg).Render("✓")
 }
 
-func sentReceiptLine(msg tracker.Message) string {
+func sentReceiptLine(msg tracker.Message, bg lipgloss.Color) string {
 	if !isSentMessage(msg) {
 		return ""
 	}
@@ -552,11 +561,12 @@ func sentReceiptLine(msg tracker.Message) string {
 	if msg.Read {
 		state = "read"
 	}
-	parts := []string{sentReadMarker(msg), state}
+	marker := sentReadMarker(msg, bg)
+	text := state
 	if ts := formatDisplayTime(msg.Timestamp); ts != "" {
-		parts = append(parts, ts)
+		text += " · " + ts
 	}
-	return mutedStyle.Render(strings.Join(parts, " · "))
+	return marker + bgSpaces(1, bg) + fgOnBg(colors.Muted, bg).Render(text)
 }
 
 func messageBodyLines(body string, wrapWidth int) []string {
@@ -571,7 +581,7 @@ func (m model) visibleBodyLines(lines []string, index int) []string {
 	if m.mode != advancedView || index == m.messageSelected || index == 0 || len(lines) <= 3 {
 		return lines
 	}
-	return append(append([]string{}, lines[:3]...), mutedStyle.Render("    …"))
+	return append(append([]string{}, lines[:3]...), "    …")
 }
 
 func (m model) messageContentWidth() int {
@@ -611,29 +621,61 @@ func (m model) composerView(width int) string {
 }
 
 func (m model) composerLines(width int) []string {
-	focused := !m.messageFocused
-	cursor := ""
-	if focused && !m.cursorHidden {
-		cursor = selectedStyle.Render("█")
-	}
+	lineWidth := max(1, width-1)
 	prefix := m.composerPrefix()
-	prompt := prefix + string(m.composer) + cursor
+	prefixW := lipgloss.Width(prefix)
+	textStyle := fgOnBg(colors.Text, colors.InputBg)
+	placeholderStyle := fgOnBg(colors.Muted, colors.InputBg)
+	cursorStyle := fgOnBg(colors.Success, colors.InputBg).Bold(true)
+	cursor := ""
+	cursorW := 0
+	if !m.messageFocused && !m.cursorHidden {
+		cursor = cursorStyle.Render("█")
+		cursorW = 1
+	}
+
 	if len(m.composer) == 0 {
 		placeholder := m.composerPlaceholder()
 		if m.agentListStale {
 			placeholder = "agent tracker unavailable; sending disabled"
 		}
-		prompt = prefix + cursor + mutedStyle.Render(placeholder)
+		available := max(1, lineWidth-prefixW-cursorW)
+		line := prefix + cursor + placeholderStyle.Render(truncateCells(placeholder, available))
+		return []string{padStyledLine(line, lineWidth, colors.InputBg)}
 	}
-	wrapped := wrapLine(prompt, max(1, width-1))
+
+	chunks := wrapCells(string(m.composer), max(1, lineWidth-prefixW), lineWidth)
+	if len(chunks) == 0 {
+		chunks = []string{""}
+	}
+	if cursor != "" {
+		last := len(chunks) - 1
+		limit := lineWidth
+		if last == 0 {
+			limit = max(1, lineWidth-prefixW)
+		}
+		if lipgloss.Width(chunks[last])+cursorW > limit {
+			chunks = append(chunks, "")
+		}
+	}
+
+	lines := make([]string, 0, len(chunks))
+	for i, chunk := range chunks {
+		content := textStyle.Render(chunk)
+		if i == len(chunks)-1 {
+			content += cursor
+		}
+		line := content
+		if i == 0 {
+			line = prefix + content
+		}
+		lines = append(lines, padStyledLine(line, lineWidth, colors.InputBg))
+	}
 	bodyMaxLines := max(1, composerMaxLines)
-	if len(wrapped) > bodyMaxLines {
-		wrapped = wrapped[len(wrapped)-bodyMaxLines:]
+	if len(lines) > bodyMaxLines {
+		lines = lines[len(lines)-bodyMaxLines:]
 	}
-	for i := range wrapped {
-		wrapped[i] = truncateCells(wrapped[i], max(1, width-1))
-	}
-	return wrapped
+	return lines
 }
 
 func (m model) composerPrefix() string {
@@ -641,7 +683,33 @@ func (m model) composerPrefix() string {
 	if label == "/key" {
 		label = "/keys"
 	}
-	return lipgloss.NewStyle().Background(colors.InputBg).Foreground(colors.Accent).Bold(true).Padding(0, 1).Render(label) + " "
+	return lipgloss.NewStyle().Background(colors.InputBg).Foreground(colors.Accent).Bold(true).Padding(0, 1).Render(label) + bgSpaces(1, colors.InputBg)
+}
+
+func wrapCells(s string, firstWidth, nextWidth int) []string {
+	if s == "" {
+		return nil
+	}
+	widths := []int{max(1, firstWidth)}
+	var chunks []string
+	var b strings.Builder
+	currentWidth := 0
+	limit := widths[0]
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if currentWidth > 0 && currentWidth+rw > limit {
+			chunks = append(chunks, b.String())
+			b.Reset()
+			currentWidth = 0
+			limit = max(1, nextWidth)
+		}
+		b.WriteRune(r)
+		currentWidth += rw
+	}
+	if b.Len() > 0 {
+		chunks = append(chunks, b.String())
+	}
+	return chunks
 }
 
 func (m model) composerPlaceholder() string {
