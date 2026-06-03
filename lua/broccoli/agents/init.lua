@@ -1,4 +1,5 @@
 local metadata = require("broccoli.agents.metadata")
+local query = require("broccoli.agents.query")
 
 local M = {}
 local Agents = {}
@@ -207,15 +208,18 @@ function Agents:clear_metadata(agent_ref, namespace, key, opts)
   return true, nil
 end
 
-function Agents:list_metadata(agent_ref, opts)
+function Agents:collect_metadata(agent_ref, opts)
   opts = opts or {}
   local agent_key, err = self:agent_key(agent_ref)
   if not agent_key then
     return nil, err
   end
   local current_ms = self.now_ms()
+  local rows = {}
+
   if self.api.storage and opts.persist ~= false then
-    local stored, err = self.api.storage:list_agent_metadata(agent_key, {
+    local stored
+    stored, err = self.api.storage:list_agent_metadata(agent_key, {
       namespace = opts.namespace,
       now = iso_from_ms(current_ms),
       include_expired_metadata = opts.include_expired_metadata,
@@ -223,34 +227,110 @@ function Agents:list_metadata(agent_ref, opts)
     if err then
       return nil, err
     end
-    local filtered = {}
     for _, row in ipairs(stored or {}) do
       if include_row(row, opts, current_ms) then
-        filtered[#filtered + 1] = row
-      end
-    end
-    return filtered, nil
-  end
-  local rows = {}
-  for _, namespace_rows in pairs(self.memory[agent_key] or {}) do
-    for _, row in pairs(namespace_rows) do
-      if include_row(row, opts, current_ms) then
-        rows[#rows + 1] = {
-          agent_key = row.agent_key,
-          namespace = row.namespace,
-          key = row.key,
-          value = row.value,
-          owner_plugin = row.owner_plugin,
-          persist = row.persist,
-          visibility = row.visibility,
-          expires_at_ms = row.expires_at_ms,
-        }
+        rows[#rows + 1] = row
       end
     end
   end
+
+  if opts.persist ~= true then
+    for _, namespace_rows in pairs(self.memory[agent_key] or {}) do
+      for _, row in pairs(namespace_rows) do
+        if include_row(row, opts, current_ms) then
+          rows[#rows + 1] = {
+            agent_key = row.agent_key,
+            namespace = row.namespace,
+            key = row.key,
+            value = row.value,
+            owner_plugin = row.owner_plugin,
+            persist = row.persist,
+            visibility = row.visibility,
+            expires_at_ms = row.expires_at_ms,
+          }
+        end
+      end
+    end
+  end
+
   return rows, nil
 end
 
+function Agents:list_metadata(agent_ref, opts)
+  return self:collect_metadata(agent_ref, opts)
+end
+
+function Agents:collect_metadata_for_refs(refs, opts)
+  local out = {}
+  local seen = {}
+  local err
+  for _, ref in ipairs(refs or {}) do
+    local rows
+    rows, err = self:collect_metadata(ref, opts)
+    if err then
+      return nil, err
+    end
+    for _, row in ipairs(rows or {}) do
+      local key = tostring(row.agent_key) .. "\0" .. tostring(row.namespace) .. "\0" .. tostring(row.key)
+      if not seen[key] then
+        seen[key] = true
+        out[#out + 1] = row
+      end
+    end
+  end
+  return out, nil
+end
+
+function Agents:list(opts)
+  opts = opts or {}
+  local rows, err = self.api.tracker.list(opts)
+  if err then
+    return nil, err
+  end
+  if not opts.include_metadata then
+    return query.snapshot(rows), nil
+  end
+
+  local out = {}
+  for name, row in pairs(rows or {}) do
+    local metadata_rows
+    metadata_rows, err = self:collect_metadata_for_refs(query.agent_refs(row, name), opts)
+    if err then
+      return nil, err
+    end
+    out[name] = query.with_metadata(row, metadata_rows)
+  end
+  return out, nil
+end
+
+function Agents:get(agent_ref, opts)
+  opts = opts or {}
+  local agent_key, err = self:agent_key(agent_ref)
+  if not agent_key then
+    return nil, err
+  end
+  local rows
+  rows, err = self.api.tracker.list(opts)
+  if err then
+    return nil, err
+  end
+  for name, row in pairs(rows or {}) do
+    if query.matches_ref(row, name, agent_key) then
+      if not opts.include_metadata then
+        return query.snapshot(row), nil
+      end
+      local metadata_rows
+      metadata_rows, err = self:collect_metadata_for_refs(query.agent_refs(row, name), opts)
+      if err then
+        return nil, err
+      end
+      return query.with_metadata(row, metadata_rows), nil
+    end
+  end
+  return nil, nil
+end
+
 M.metadata = metadata
+M.query = query
 
 return M

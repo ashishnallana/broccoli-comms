@@ -18,6 +18,8 @@ M.agents = {
   get_metadata = function(...) return M._agents:get_metadata(...) end,
   clear_metadata = function(...) return M._agents:clear_metadata(...) end,
   list_metadata = function(...) return M._agents:list_metadata(...) end,
+  get = function(...) return M._agents:get(...) end,
+  list = function(...) return M._agents:list(...) end,
   agent_key = function(...) return M._agents:agent_key(...) end,
   reset_memory = function() M._agents.memory = {} end,
 }

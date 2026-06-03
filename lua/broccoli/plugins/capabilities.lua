@@ -114,6 +114,34 @@ function M.scoped_api(base, plugin_name, permissions)
     opts.trusted = false
     return base.agents.list_metadata(agent_ref, opts)
   end
+  local function restrict_metadata_opts(opts)
+    opts = opts or {}
+    opts.metadata_namespaces = { plugin_namespace }
+    opts.metadata_prefix = nil
+    opts.namespace = nil
+    opts.trusted = false
+    return opts
+  end
+  scoped.agents.list = function(opts)
+    opts = opts or {}
+    if opts.include_metadata and not allows(metadata_permissions, "read") then
+      return denied("agents.list")
+    end
+    if opts.include_metadata then
+      opts = restrict_metadata_opts(opts)
+    end
+    return base.agents.list(opts)
+  end
+  scoped.agents.get = function(agent_ref, opts)
+    opts = opts or {}
+    if opts.include_metadata and not allows(metadata_permissions, "read") then
+      return denied("agents.get")
+    end
+    if opts.include_metadata then
+      opts = restrict_metadata_opts(opts)
+    end
+    return base.agents.get(agent_ref, opts)
+  end
 
   local state_permissions = permissions.state or {}
   scoped.state.get = function(key)
