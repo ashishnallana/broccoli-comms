@@ -36,18 +36,11 @@ let
   envList = attrs: lib.mapAttrsToList (name: value: "${name}=\"${builtins.replaceStrings ["\""] ["\\\""] (toString value)}\"") attrs;
   optionalEnv = name: value: lib.optionalAttrs (value != null) { ${name} = value; };
 
-  broccoliEnv = optionalEnv "BROCCOLI_COMMS_RUNTIME_DIR" broccoliRuntimeDir
-    // optionalEnv "BROCCOLI_COMMS_CACHE_DIR" broccoliCacheDir
-    // optionalEnv "BROCCOLI_COMMS_CONFIG_DIR" broccoliConfigDir;
+  broccoliEnv = {};
 
   broccoliSessionEnv = broccoliEnv // optionalEnv "AGENT_TRACKER_SOCKET" trackerSocket;
 
   trackerEnv = broccoliEnv // {
-    AGENT_TRACKER_HTTP_PORT = toString cfg.tracker.httpPort;
-    AGENT_REGISTRY_HEARTBEAT_SECONDS = toString cfg.tracker.registryHeartbeatSeconds;
-    AGENT_REGISTRY_AUTH = if cfg.tracker.registryAuth then "true" else "false";
-    ENABLE_RELIABLE_SEND_KEYS = if cfg.tracker.enableReliableSendKeys then "true" else "false";
-    AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES = toString cfg.tracker.capturePaneDefaultLines;
     PATH = lib.concatStringsSep ":" [
       "${config.home.homeDirectory}/.nix-profile/bin"
       "/etc/profiles/per-user/${config.home.username}/bin"
@@ -128,8 +121,6 @@ PY
     name = "broccoli-comms";
     runtimeInputs = [ pcfg.package ];
     text = ''
-      export BROCCOLI_COMMS_CACHE_DIR="''${BROCCOLI_COMMS_CACHE_DIR:-${broccoliCacheDir}}"
-      export BROCCOLI_COMMS_CONFIG_DIR="''${BROCCOLI_COMMS_CONFIG_DIR:-${broccoliConfigDir}}"
       ${lib.optionalString (cfg.tracker.registries != []) ''
         if [ -z "''${AGENT_REGISTRIES_JSON:-}" ]; then
           export AGENT_REGISTRIES_JSON="${escapedRegistries}"
@@ -235,6 +226,32 @@ in {
 
     (lib.mkIf pcfg.enable {
       home.packages = installedPackages;
+      xdg.configFile."broccoli-comms/config.toml".text = ''
+        [paths]
+        ${lib.optionalString (broccoliRuntimeDir != null) ''runtime_dir = "${broccoliRuntimeDir}"''}
+        cache_dir = "${broccoliCacheDir}"
+        config_dir = "${broccoliConfigDir}"
+
+        [tracker]
+        http_port = ${toString cfg.tracker.httpPort}
+
+        [registry]
+        heartbeat_seconds = ${toString cfg.tracker.registryHeartbeatSeconds}
+        auth_enabled = ${if cfg.tracker.registryAuth then "true" else "false"}
+
+        [ui]
+        capture_pane_default_lines = ${toString cfg.tracker.capturePaneDefaultLines}
+
+        [core]
+        enable_reliable_send_keys = ${if cfg.tracker.enableReliableSendKeys then "true" else "false"}
+
+        [executables]
+        agent_tracker = "${packages.agentTracker}/bin/agent-tracker"
+        agent_tracker_ctl = "${packages.agentTrackerCtl}/bin/agent-tracker-ctl"
+        agent_wrapper = "${packages.agentWrapper}/bin/agent-wrapper"
+        agent_communicator_tui = "${packages.agentCommunicator}/bin/agent-communicator"
+        agent_registry = "${packages.agentRegistry}/bin/agent-registry"
+      '';
     })
 
     (lib.mkIf cfg.tracker.enable {

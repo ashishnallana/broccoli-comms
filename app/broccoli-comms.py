@@ -225,7 +225,9 @@ def ensure_tracker() -> None:
     if p["tracker_socket"].exists():
         p["tracker_socket"].unlink()
     log = open(p["tracker_log"], "ab", buffering=0)
-    proc = subprocess.Popen([sys.executable, tracker_script()], env=base_env(), stdout=log, stderr=log, start_new_session=True)
+    tracker = tracker_script()
+    cmd = [sys.executable, tracker] if tracker.endswith(".py") else [tracker]
+    proc = subprocess.Popen(cmd, env=base_env(), stdout=log, stderr=log, start_new_session=True)
     p["tracker_pid"].write_text(str(proc.pid))
     for _ in range(50):
         if can_connect(p["tracker_socket"]):
@@ -1589,10 +1591,14 @@ def registry_start(args: argparse.Namespace) -> None:
 
     if args.foreground:
         pid_file.write_text(str(os.getpid()))
-        os.execvpe(sys.executable, [sys.executable, registry_script()], env)
+        registry = registry_script()
+        cmd = [sys.executable, registry] if registry.endswith(".py") else [registry]
+        os.execvpe(cmd[0], cmd, env)
 
     log = open(paths()["registry_log"], "ab", buffering=0)
-    proc = subprocess.Popen([sys.executable, registry_script()], env=env, stdout=log, stderr=log, start_new_session=True)
+    registry = registry_script()
+    cmd = [sys.executable, registry] if registry.endswith(".py") else [registry]
+    proc = subprocess.Popen(cmd, env=env, stdout=log, stderr=log, start_new_session=True)
     pid_file.write_text(str(proc.pid))
     if not _wait_registry_ready(config):
         if proc.poll() is not None:
@@ -1711,7 +1717,9 @@ def agent_tracker(args: argparse.Namespace) -> None:
     for key in ("AGENT_ID", "AGENT_NAME", "AGENT_UUID"):
         if os.environ.get(key):
             env[key] = os.environ[key]
-    os.execvpe(sys.executable, [sys.executable, ctl, *tracker_args], env)
+    cmd = [sys.executable, ctl] if ctl.endswith(".py") else [ctl]
+    cmd.extend(tracker_args)
+    os.execvpe(cmd[0], cmd, env)
 
 
 def doctor(args: argparse.Namespace) -> None:

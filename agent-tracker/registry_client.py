@@ -5,10 +5,10 @@ import config
 
 LOG = logging.getLogger("agent-tracker.registry")
 
-TOKEN = config.get("registry", "token", "")
-HOSTNAME = config.get("tracker", "hostname", socket.gethostname())
+TOKEN = os.environ.get("AGENT_REGISTRY_TOKEN") or config.get("registry", "token", "")
+HOSTNAME = os.environ.get("AGENT_TRACKER_HOSTNAME") or config.get("tracker", "hostname", socket.gethostname())
 TRACKER_ID = config.get("tracker", "tracker_id", str(uuid.uuid5(uuid.NAMESPACE_DNS, HOSTNAME)))
-HTTP_PORT = config.get("tracker", "http_port", 19876)
+HTTP_PORT = int(os.environ.get("AGENT_TRACKER_HTTP_PORT") or config.get("tracker", "http_port", 19876))
 HEARTBEAT_INTERVAL = config.get("registry", "heartbeat_seconds", 30)
 DELIVERY_WAIT_SECONDS = config.get("registry", "delivery_wait_seconds", 25)
 DELIVERY_TARGET_GRACE_SECONDS = config.get("registry", "delivery_target_grace_seconds", 60)
@@ -161,10 +161,10 @@ def load_registry_clients():
             LOG.warning("invalid AGENT_REGISTRIES_JSON; registry sync disabled")
             configs = []
     clients = []
-    for config in configs or []:
-        if not isinstance(config, dict) or not config.get("url"):
+    for cfg in configs or []:
+        if not isinstance(cfg, dict) or not cfg.get("url"):
             continue
-        clients.append(RegistryClient(config.get("name") or "default", config.get("url"), _read_token_config(config)))
+        clients.append(RegistryClient(cfg.get("name") or "default", cfg.get("url"), _read_token_config(cfg)))
     return clients
 
 
