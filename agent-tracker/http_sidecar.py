@@ -2,12 +2,13 @@ import json, os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import rpc_handler
 import state
+import config
 
-AUTH_REQUIRED = os.environ.get("AGENT_REGISTRY_AUTH", "true").lower() not in ("0", "false", "no")
-MAX_BODY_BYTES = int(os.environ.get("AGENT_MAX_DELIVERY_BYTES", "5242880"))
+AUTH_REQUIRED = config.get("registry", "auth_enabled", True)
+MAX_BODY_BYTES = config.get("tracker", "max_delivery_bytes", 5242880)
 
 def make_handler(snapshot_fn=state.get_agents_for_registry, token=None, auth_required=None):
-    token = os.environ.get("AGENT_REGISTRY_TOKEN", "") if token is None else token
+    token = config.get("registry", "token", "") if token is None else token
     auth_required = AUTH_REQUIRED if auth_required is None else auth_required
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args): return
@@ -52,4 +53,4 @@ def make_handler(snapshot_fn=state.get_agents_for_registry, token=None, auth_req
     return Handler
 
 def serve_forever():
-    ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("AGENT_TRACKER_HTTP_PORT", "19876"))), make_handler()).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", config.get("tracker", "http_port", 19876)), make_handler()).serve_forever()

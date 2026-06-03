@@ -25,6 +25,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+sys.path.insert(0, str(repo_root() / "agent-tracker"))
+import config
+
 APP = "broccoli-comms"
 VERSION = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
 SESSION = "broccoli-comms-agents"
@@ -37,32 +43,21 @@ AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def xdg_runtime() -> Path:
-    override = os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR")
-    if override:
-        return Path(override)
-    return Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}") / APP
-
+    return Path(config.get("paths", "runtime_dir", os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}/broccoli-comms"))
 
 def xdg_cache() -> Path:
-    return Path(os.environ.get("BROCCOLI_COMMS_CACHE_DIR") or Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / APP)
-
+    return Path(config.get("paths", "cache_dir", Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / APP))
 
 def xdg_config() -> Path:
-    return Path(os.environ.get("BROCCOLI_COMMS_CONFIG_DIR") or Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP)
-
-
-def repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
+    return Path(config.get("paths", "config_dir", Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP))
 
 def get_active_tracker_socket() -> Path:
     candidates = []
-    if os.environ.get("AGENT_TRACKER_SOCKET"):
-        candidates.append(Path(os.environ.get("AGENT_TRACKER_SOCKET")))
-    if os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR"):
-        candidates.append(Path(os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR")) / "agent-tracker.sock")
-    candidates.append(Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / APP / "runtime" / "agent-tracker.sock")
-    candidates.append(Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}") / APP / "agent-tracker.sock")
+    configured_sock = config.get("paths", "agent_tracker_socket")
+    if configured_sock:
+        candidates.append(Path(configured_sock))
+    candidates.append(xdg_cache() / "agent-tracker.sock")
+    candidates.append(xdg_runtime() / "agent-tracker.sock")
     
     for sock in candidates:
         if sock.exists():
@@ -105,9 +100,9 @@ def ensure_dirs() -> None:
 
 
 def tmux_mode() -> str:
-    mode = os.environ.get("BROCCOLI_COMMS_TMUX_MODE", "default").lower()
+    mode = config.get("core", "tmux_mode", "default").lower()
     if mode not in {"default", "private"}:
-        raise SystemExit("BROCCOLI_COMMS_TMUX_MODE must be 'default' or 'private'")
+        raise SystemExit("core.tmux_mode must be 'default' or 'private'")
     return mode
 
 
@@ -129,13 +124,10 @@ def base_env(preserve_agent_identity: bool = False) -> dict[str, str]:
         env.pop(key, None)
     env.update({
         "BROCCOLI_COMMS_APP_RUNTIME": "1",
-        "BROCCOLI_COMMS_RUNTIME_DIR": str(p["runtime"]),
-        "BROCCOLI_COMMS_CACHE_DIR": str(p["cache"]),
-        "BROCCOLI_COMMS_CONFIG_DIR": str(p["config"]),
-        "AGENT_TRACKER_SOCKET": str(p["tracker_socket"]),
         "XDG_CACHE_HOME": str(p["cache"]),
-        "AGENT_TRACKER_HTTP_PORT": env.get("AGENT_TRACKER_HTTP_PORT", "19876"),
     })
+    # NOTE: The daemon/CLI components now natively read config.toml, so we don't strictly need to pass
+    # AGENT_TRACKER_SOCKET, BROCCOLI_COMMS_CACHE_DIR, etc., unless for legacy backwards compatibility.
     if use_private_tmux():
         env["BROCCOLI_COMMS_TMUX_SOCKET"] = str(p["tmux_socket"])
         env["AGENT_TRACKER_TMUX_SOCKET"] = str(p["tmux_socket"])
@@ -192,23 +184,23 @@ def tracker_rpc(method: str, params: dict | None = None) -> object | None:
 
 
 def tracker_script() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER") or str(repo_root() / "agent-tracker" / "agent-tracker.py")
+    return config.get("executables", "agent_tracker", str(repo_root() / "agent-tracker" / "agent-tracker.py"))
 
 
 def tracker_ctl_script() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER_CTL") or str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py")
+    return config.get("executables", "agent_tracker_ctl", str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py"))
 
 
 def wrapper_path() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_WRAPPER") or str(repo_root() / "wrapper" / "agent-wrapper.sh")
+    return config.get("executables", "agent_wrapper", str(repo_root() / "wrapper" / "agent-wrapper.sh"))
 
 
 def registry_script() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_REGISTRY") or str(repo_root() / "agent-registry" / "server.py")
+    return config.get("executables", "agent_registry", str(repo_root() / "agent-registry" / "server.py"))
 
 
 def tui_path() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_COMMUNICATOR_TUI") or "agent-communicator"
+    return config.get("executables", "agent_communicator_tui", "agent-communicator")
 
 
 def ensure_tracker() -> None:
@@ -1091,8 +1083,8 @@ def remote_pane_input_doctor_checks() -> list[dict]:
     enabled_roles = ",".join(role for role, enabled in (("send", send_enabled), ("receive", receive_enabled), ("registry", registry_enabled)) if enabled)
     _doctor_check(checks, "remote pane input", "warning", "remote direct pane input is enabled; this bypasses inboxes and controls panes directly", enabled_roles=enabled_roles)
 
-    registry_auth_disabled = os.environ.get("AGENT_REGISTRY_AUTH", "true").lower() in {"0", "false", "no"}
-    registry_token = os.environ.get("AGENT_REGISTRY_TOKEN")
+    registry_auth_disabled = not config.get("registry", "auth_enabled", True)
+    registry_token = config.get("registry", "token", "")
     if registry_auth_disabled:
         _doctor_check(checks, "remote pane input auth", "warning", "remote direct pane input is enabled while registry auth is disabled")
     elif not registry_token:

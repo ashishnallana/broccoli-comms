@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+
 	"fmt"
 	"os"
 	"sync"
@@ -10,7 +12,10 @@ import (
 var debugLogMu sync.Mutex
 
 func debugLogf(format string, args ...any) {
-	path := os.Getenv("AGENT_COMMUNICATOR_DEBUG_LOG")
+	path := config.GetString("", "ui", "debug_log")
+	if path == "" {
+		path = os.Getenv("AGENT_COMMUNICATOR_DEBUG_LOG")
+	}
 	if path == "" {
 		return
 	}

@@ -6,9 +6,11 @@ import subprocess
 import state
 import tmux_util
 
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", 5))
-HEARTBEAT_STALE_SECONDS = int(os.environ.get("HEARTBEAT_STALE_SECONDS", 20))
-HEARTBEAT_GRACE_SECONDS = int(os.environ.get("HEARTBEAT_GRACE_SECONDS", 30))
+import config
+
+POLL_INTERVAL = config.get("tracker", "poll_interval", 5)
+HEARTBEAT_STALE_SECONDS = config.get("tracker", "heartbeat_stale_seconds", 20)
+HEARTBEAT_GRACE_SECONDS = config.get("tracker", "heartbeat_grace_seconds", 30)
 
 def is_process_alive(pid):
     """Checks if a process is alive. Note: This is Linux-specific due to /proc usage."""
@@ -252,7 +254,7 @@ def check_unread_messages_and_remind():
 def background_inbox_reminder():
     """Periodically checks for unread inbox messages to remind active agents or resolve gone ones."""
     logging.info("Starting background inbox reminder...")
-    interval = int(os.environ.get("REMINDER_INTERVAL_SECONDS", 900))
+    interval = config.get("ui", "unseen_inbox_reminder_seconds", 900)
     while True:
         time.sleep(interval)
         try:

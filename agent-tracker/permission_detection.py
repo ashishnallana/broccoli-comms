@@ -72,11 +72,13 @@ _status_by_agent: dict[str, dict[str, Any]] = {}
 
 
 def detection_config_path() -> str:
+    import config
     override = os.environ.get(CONFIG_ENV)
     if override:
         return os.path.abspath(os.path.expanduser(override))
-    config_home = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(config_home, "agent-tracker", "detection.json")
+    
+    default_path = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"), "agent-tracker", "detection.json")
+    return config.get("paths", "permission_detection_config", default_path)
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:

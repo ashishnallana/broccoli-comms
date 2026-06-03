@@ -1,6 +1,8 @@
 package tracker
 
 import (
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+
 	"context"
 	"encoding/json"
 	"net"
@@ -33,22 +35,32 @@ func fakeClient(t *testing.T, handler func(r rpcRequest) any) *Client {
 }
 
 func TestDefaultSocketPathUsesBroccoliRuntimeDir(t *testing.T) {
+	config.ResetForTest()
+	t.Setenv("XDG_CONFIG_HOME", "/dev/null")
 	t.Setenv("AGENT_TRACKER_SOCKET", "")
 	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "/tmp/broccoli-runtime")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("XDG_CACHE_HOME", "")
 	if got, want := DefaultSocketPath(), filepath.Join("/tmp/broccoli-runtime", "agent-tracker.sock"); got != want {
 		t.Fatalf("DefaultSocketPath() = %q, want %q", got, want)
 	}
 }
 
 func TestDefaultSocketPathPrefersExplicitAgentTrackerSocket(t *testing.T) {
+	config.ResetForTest()
+	t.Setenv("XDG_CONFIG_HOME", "/dev/null")
 	t.Setenv("AGENT_TRACKER_SOCKET", "/tmp/private/tracker.sock")
 	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "/tmp/broccoli-runtime")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("XDG_CACHE_HOME", "")
 	if got := DefaultSocketPath(); got != "/tmp/private/tracker.sock" {
 		t.Fatalf("DefaultSocketPath() = %q, want explicit socket", got)
 	}
 }
 
 func TestDefaultSocketPathUsesCanonicalRuntimeDefault(t *testing.T) {
+	config.ResetForTest()
+	t.Setenv("XDG_CONFIG_HOME", "/dev/null")
 	t.Setenv("AGENT_TRACKER_SOCKET", "")
 	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "")
 	t.Setenv("XDG_RUNTIME_DIR", "/tmp/xdg-runtime")

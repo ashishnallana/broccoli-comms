@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+
 	"context"
 	"errors"
 	"fmt"
@@ -541,8 +543,14 @@ func loadConfigItemsCmd(local localClient) tea.Cmd {
 			defer cancel()
 			trackers, err := local.ListTrackers(ctx)
 			if err == nil {
-				ownTrackerID := os.Getenv("AGENT_TRACKER_ID")
-				ownHostname := os.Getenv("AGENT_TRACKER_HOSTNAME")
+				ownTrackerID := config.GetString("", "tracker", "tracker_id")
+				if ownTrackerID == "" {
+					ownTrackerID = os.Getenv("AGENT_TRACKER_ID")
+				}
+				ownHostname := config.GetString("", "tracker", "hostname")
+				if ownHostname == "" {
+					ownHostname = os.Getenv("AGENT_TRACKER_HOSTNAME")
+				}
 				if ownHostname == "" {
 					ownHostname, _ = os.Hostname()
 				}

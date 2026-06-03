@@ -1,6 +1,8 @@
 package tracker
 
 import (
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+
 	"bufio"
 	"context"
 	"encoding/json"
@@ -58,8 +60,15 @@ func (e *RPCError) Error() string {
 
 func DefaultSocketPath() string {
 	candidates := []string{}
+	if path := config.GetString("", "paths", "agent_tracker_socket"); path != "" {
+		return path
+	}
 	if path := os.Getenv("AGENT_TRACKER_SOCKET"); path != "" {
 		candidates = append(candidates, path)
+	}
+	if runtimeDir := config.GetString("", "paths", "runtime_dir"); runtimeDir != "" {
+		path := filepath.Join(runtimeDir, "agent-tracker.sock")
+		return path
 	}
 	if runtimeDir := os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR"); runtimeDir != "" {
 		candidates = append(candidates, filepath.Join(runtimeDir, "agent-tracker.sock"))

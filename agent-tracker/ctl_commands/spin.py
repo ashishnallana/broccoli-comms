@@ -17,9 +17,11 @@ def register(subparsers):
     parser.set_defaults(handler=handle)
 
 
+import config
+
 def resolve_agent_wrapper_path() -> str:
     """Find the standalone agent-wrapper in package, PATH, or source checkout."""
-    configured = os.environ.get("BROCCOLI_COMMS_AGENT_WRAPPER")
+    configured = config.get("executables", "agent_wrapper")
     if configured:
         return configured
 

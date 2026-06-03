@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,7 +15,7 @@ import (
 type paneSwitched struct{ Err error }
 
 func privateTmuxSocket() string {
-	return firstNonEmpty(os.Getenv("AGENT_TRACKER_TMUX_SOCKET"), os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET"))
+	return firstNonEmpty(config.GetString("", "paths", "tmux_socket"), os.Getenv("AGENT_TRACKER_TMUX_SOCKET"), os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET"))
 }
 
 func tmuxCommandArgs(args ...string) []string {

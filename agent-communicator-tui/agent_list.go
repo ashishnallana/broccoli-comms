@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,7 +23,10 @@ func broccoliAgentTrackerCommand(args ...string) *exec.Cmd {
 }
 
 func broccoliAgentTrackerCommandContext(ctx context.Context, args ...string) *exec.Cmd {
-	cli := os.Getenv("BROCCOLI_COMMS_CLI")
+	cli := config.GetString("", "executables", "agent_tracker_ctl")
+	if cli == "" {
+		cli = os.Getenv("BROCCOLI_COMMS_CLI")
+	}
 	if cli == "" {
 		cli = "broccoli-comms"
 	}

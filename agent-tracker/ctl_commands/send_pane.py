@@ -13,7 +13,8 @@ def _local_tracker_hostname():
             return info["hostname"]
     except Exception:
         pass
-    return os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
+    import config
+    return config.get("tracker", "hostname", socket.gethostname())
 
 def register(subparsers):
     parser = subparsers.add_parser("send-pane", help="Send a tmux pane snapshot to a target agent")

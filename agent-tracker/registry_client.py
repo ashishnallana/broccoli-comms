@@ -1,18 +1,19 @@
 import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error, urllib.request, uuid, shlex
 import state
 import rpc_handler
+import config
 
 LOG = logging.getLogger("agent-tracker.registry")
 
-TOKEN = os.environ.get("AGENT_REGISTRY_TOKEN", "")
-HOSTNAME = os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
-TRACKER_ID = os.environ.get("AGENT_TRACKER_ID", str(uuid.uuid5(uuid.NAMESPACE_DNS, HOSTNAME)))
-HTTP_PORT = int(os.environ.get("AGENT_TRACKER_HTTP_PORT", "19876"))
-HEARTBEAT_INTERVAL = int(os.environ.get("AGENT_REGISTRY_HEARTBEAT_SECONDS", "30"))
-DELIVERY_WAIT_SECONDS = int(os.environ.get("AGENT_REGISTRY_DELIVERY_WAIT_SECONDS", "25"))
-DELIVERY_TARGET_GRACE_SECONDS = int(os.environ.get("AGENT_REGISTRY_DELIVERY_TARGET_GRACE_SECONDS", "60"))
-REMOTE_PANE_INPUT_MAX_TEXT_BYTES = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES", "4096"))
-REMOTE_PANE_INPUT_MAX_KEYS = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_KEYS", "16"))
+TOKEN = config.get("registry", "token", "")
+HOSTNAME = config.get("tracker", "hostname", socket.gethostname())
+TRACKER_ID = config.get("tracker", "tracker_id", str(uuid.uuid5(uuid.NAMESPACE_DNS, HOSTNAME)))
+HTTP_PORT = config.get("tracker", "http_port", 19876)
+HEARTBEAT_INTERVAL = config.get("registry", "heartbeat_seconds", 30)
+DELIVERY_WAIT_SECONDS = config.get("registry", "delivery_wait_seconds", 25)
+DELIVERY_TARGET_GRACE_SECONDS = config.get("registry", "delivery_target_grace_seconds", 60)
+REMOTE_PANE_INPUT_MAX_TEXT_BYTES = config.get("registry", "remote_pane_input_max_text_bytes", 4096)
+REMOTE_PANE_INPUT_MAX_KEYS = config.get("registry", "remote_pane_input_max_keys", 16)
 STATUS_PATH = os.path.join(state.CACHE_DIR, "registry-status.json")
 
 
@@ -53,7 +54,7 @@ class RegistryClient:
         return self.request("POST", "/trackers", {
             "tracker_id": self.tracker_id,
             "hostname": self.hostname,
-            "address": os.environ.get("AGENT_TRACKER_ADDRESS", self.hostname),
+            "address": config.get("tracker", "address", self.hostname),
             "http_port": self.http_port,
             "agents": state.get_agents_for_registry(),
             "agent_configs": state.get_local_configs_for_registry(),
@@ -146,7 +147,11 @@ def _normalize_registries_json(raw: str) -> str:
 
 
 def load_registry_clients():
-    raw = _normalize_registries_json(os.environ.get("AGENT_REGISTRIES_JSON", ""))
+    raw = config.get("registry", "endpoints", [])
+    if isinstance(raw, str):
+        raw = _normalize_registries_json(raw)
+    elif not isinstance(raw, list):
+        raw = []
     configs = []
     if raw:
         try:
@@ -636,7 +641,7 @@ def _handle_remote_pane_capture(payload: dict):
     source = payload.get("source")
     target = payload.get("target")
     try:
-        default_capture_lines = int(os.environ.get("AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES", "20"))
+        default_capture_lines = config.get("ui", "capture_pane_default_lines", 20)
     except (TypeError, ValueError):
         default_capture_lines = 20
     if default_capture_lines <= 0:
@@ -757,7 +762,7 @@ def _event_loop(client=None):
                     "read": False
                 }
                 try:
-                    mailbox_name = os.environ.get("BROCCOLI_COMMS_ELECTRON_AGENT_NAME", "agent-communicator")
+                    mailbox_name = config.get("ui", "default_mailbox_name", "agent-communicator")
                     rpc_handler.deliver_local_message(mailbox_name, inbound_payload)
                     LOG.info("persisted remote watched message into mailbox inbox %s", mailbox_name)
                 except Exception as e:

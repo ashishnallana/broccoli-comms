@@ -11,8 +11,10 @@ import urllib.error
 import urllib.request
 import uuid
 
-CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "agent-tracker")
-SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET", os.path.join(CACHE_DIR, "agent-tracker.sock"))
+import config
+
+CACHE_DIR = config.get("paths", "cache_dir", os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "agent-tracker"))
+SOCKET_PATH = config.get("paths", "agent_tracker_socket", os.path.join(CACHE_DIR, "agent-tracker.sock"))
 LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
 REGISTRY_STATUS_PATH = os.path.join(CACHE_DIR, "registry-status.json")
 DEFAULT_STARTUP_TIMEOUT = 5.0
@@ -20,7 +22,7 @@ DEFAULT_CAPTURE_PANE_LINES = 20
 
 
 def default_capture_pane_lines() -> int:
-    raw = os.environ.get("AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES", str(DEFAULT_CAPTURE_PANE_LINES))
+    raw = config.get("ui", "capture_pane_default_lines", str(DEFAULT_CAPTURE_PANE_LINES))
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -44,7 +46,7 @@ def ensure_tracker_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> bool:
     if _can_connect():
         return True
 
-    daemon_cmd = os.environ.get("AGENT_TRACKER_DAEMON")
+    daemon_cmd = config.get("executables", "agent_tracker")
     if not daemon_cmd:
         return False
 
@@ -118,7 +120,9 @@ def call_rpc(method, params={}):
 
 def default_tmux_socket() -> str | None:
     """Returns the app-private tmux socket configured for this CLI, if any."""
-    return os.environ.get("AGENT_TRACKER_TMUX_SOCKET") or os.environ.get("BROCCOLI_COMMS_TMUX_SOCKET") or None
+    if config.get("core", "tmux_mode") == "private":
+        return str(config.get("paths", "tmux_socket"))
+    return None
 
 
 def tmux_command(args: list[str], socket_path: str | None = None) -> list[str]:
@@ -188,7 +192,7 @@ def _read_token_config(config: dict) -> str:
                 return f.read().strip()
         except Exception:
             return ""
-    return os.environ.get("AGENT_REGISTRY_TOKEN", "")
+    return config.get("registry", "token", "")
 
 
 def _normalize_registries_json(raw: str) -> str:
@@ -211,7 +215,11 @@ def _normalize_registries_json(raw: str) -> str:
 
 
 def registry_configs() -> list[dict]:
-    raw = _normalize_registries_json(os.environ.get("AGENT_REGISTRIES_JSON", ""))
+    raw = config.get("registry", "endpoints", [])
+    if isinstance(raw, str):
+        raw = _normalize_registries_json(raw)
+    elif not isinstance(raw, list):
+        raw = []
     if not raw:
         return []
     try:
@@ -292,7 +300,7 @@ def registry_connection_states(status: dict | None = None, now: float | None = N
         return []
     status = load_registry_status() if status is None else status
     now = time.time() if now is None else now
-    heartbeat_interval = int(os.environ.get("AGENT_REGISTRY_HEARTBEAT_SECONDS", "30"))
+    heartbeat_interval = config.get("registry", "heartbeat_seconds", 30)
     max_age = max(heartbeat_interval * 2 + 5, 15)
     entries = status.get("registries") or {}
     states = []
@@ -341,12 +349,12 @@ def format_status_bar(agents: dict, current_pane: str, registry_connected: bool 
     if not agents:
         return ""
 
-    color8 = os.environ.get("PALETTE_COLOR8", "#414868")
-    color1 = os.environ.get("PALETTE_COLOR1", "#db4b4b")
-    color3 = os.environ.get("PALETTE_COLOR3", "#e0af68")
-    color6 = os.environ.get("PALETTE_COLOR6", "#7dcfff")
-    color2 = os.environ.get("PALETTE_COLOR2", "#9ece6a")
-    color4 = os.environ.get("PALETTE_COLOR4", "#2ac3de")
+    color8 = config.get("ui", "palette_color8", "#414868")
+    color1 = config.get("ui", "palette_color1", "#db4b4b")
+    color3 = config.get("ui", "palette_color3", "#e0af68")
+    color6 = config.get("ui", "palette_color6", "#7dcfff")
+    color2 = config.get("ui", "palette_color2", "#9ece6a")
+    color4 = config.get("ui", "palette_color4", "#2ac3de")
 
     formatted = []
     for name, info in agents.items():

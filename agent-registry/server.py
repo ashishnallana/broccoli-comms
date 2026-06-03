@@ -11,23 +11,26 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+import sys
+from pathlib import Path
 
+# Provide access to agent-tracker config parser
+_repo_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_repo_root / "agent-tracker"))
+import config
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 LOG = logging.getLogger("agent-registry")
 
-TOKEN = os.environ.get("AGENT_REGISTRY_TOKEN", "")
-AUTH_REQUIRED = os.environ.get("AGENT_REGISTRY_AUTH", "true").lower() not in ("0", "false", "no")
-AGENT_REGISTRY_BROAD_WATCH_ALLOWED = os.environ.get("AGENT_REGISTRY_BROAD_WATCH_ALLOWED", "false").lower() in {"1", "true", "yes", "on"}
-MAX_BODY_BYTES = int(os.environ.get("AGENT_MAX_DELIVERY_BYTES", "5242880"))
-STALE = int(os.environ.get("TRACKER_STALE_SECONDS", "60"))
-GONE = int(os.environ.get("TRACKER_GONE_SECONDS", "180"))
-DELIVERY_WAIT_SECONDS = int(os.environ.get("AGENT_REGISTRY_DELIVERY_WAIT_SECONDS", "25"))
-REMOTE_PANE_INPUT_MAX_TEXT_BYTES = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES", "4096"))
-REMOTE_PANE_INPUT_MAX_KEYS = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_KEYS", "16"))
-STATE_PATH = os.environ.get(
-    "AGENT_REGISTRY_STATE_PATH",
-    os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "agent-registry", "state.json"),
-)
+TOKEN = config.get("registry", "token", "")
+AUTH_REQUIRED = config.get("registry", "auth_enabled", True)
+AGENT_REGISTRY_BROAD_WATCH_ALLOWED = config.get("registry", "broad_watch_allowed", False)
+MAX_BODY_BYTES = config.get("tracker", "max_delivery_bytes", 5242880)
+STALE = config.get("tracker", "heartbeat_stale_seconds", 60)
+GONE = config.get("tracker", "heartbeat_gone_seconds", 180)
+DELIVERY_WAIT_SECONDS = config.get("registry", "delivery_wait_seconds", 25)
+REMOTE_PANE_INPUT_MAX_TEXT_BYTES = config.get("registry", "remote_pane_input_max_text_bytes", 4096)
+REMOTE_PANE_INPUT_MAX_KEYS = config.get("registry", "remote_pane_input_max_keys", 16)
+STATE_PATH = config.get("paths", "registry_state", os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "agent-registry", "state.json"))
 
 
 class Store:
@@ -462,12 +465,8 @@ _MODIFIER_ALIASES = {"c": "C", "ctrl": "C", "control": "C", "m": "M", "meta": "M
 _SHELL_LIKE_KEY_CHARS = set("|&;<>$`(){}[]*?~!#\"'\\\n\r")
 
 
-def _env_truthy(name):
-    return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
-
-
 def _remote_pane_input_registry_enabled():
-    return _env_truthy("AGENT_REGISTRY_REMOTE_PANE_INPUT_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_REGISTRY_ENABLED")
+    return config.get("registry", "remote_pane_input_enabled", False)
 
 
 def _normalize_key_token(key):
@@ -885,8 +884,8 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
 
 
 def serve_forever():
-    host = os.environ.get("AGENT_REGISTRY_HOST", "0.0.0.0")
-    port = int(os.environ.get("AGENT_REGISTRY_PORT", "8080"))
+    host = config.get("tracker", "registry_host", "0.0.0.0")
+    port = config.get("tracker", "registry_port", 8080)
     LOG.info("starting agent-registry bind=%s port=%s state_path=%s auth_required=%s", host, port, STATE_PATH, AUTH_REQUIRED)
     ThreadingHTTPServer((host, port), make_handler()).serve_forever()
 

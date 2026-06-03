@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+
 	"fmt"
 	"os"
 	"sort"
@@ -91,12 +93,12 @@ type model struct {
 
 func runtimeInfoFromEnv() runtimeInfo {
 	info := runtimeInfo{
-		RuntimeDir:    os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR"),
-		TrackerSocket: os.Getenv("AGENT_TRACKER_SOCKET"),
-		TmuxSocket:    firstNonEmpty(os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET"), os.Getenv("AGENT_TRACKER_TMUX_SOCKET")),
+		RuntimeDir:    firstNonEmpty(config.GetString("", "paths", "runtime_dir"), os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR")),
+		TrackerSocket: firstNonEmpty(config.GetString("", "paths", "agent_tracker_socket"), os.Getenv("AGENT_TRACKER_SOCKET")),
+		TmuxSocket:    firstNonEmpty(config.GetString("", "paths", "tmux_socket"), os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET"), os.Getenv("AGENT_TRACKER_TMUX_SOCKET")),
 	}
-	info.AppRuntime = os.Getenv("BROCCOLI_COMMS_APP_RUNTIME") == "1" || info.RuntimeDir != "" || os.Getenv("BROCCOLI_COMMS_TMUX_SOCKET") != ""
-	info.RemoteDirectInputEnabled = envEnabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED") || envEnabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED") || envEnabled("AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED")
+	info.AppRuntime = os.Getenv("BROCCOLI_COMMS_APP_RUNTIME") == "1" || info.RuntimeDir != "" || info.TmuxSocket != ""
+	info.RemoteDirectInputEnabled = config.GetBool(false, "ui", "remote_pane_input_enabled") || envEnabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED") || envEnabled("BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED") || envEnabled("AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED")
 	if info.TrackerSocket == "" && info.RuntimeDir != "" {
 		info.TrackerSocket = info.RuntimeDir + "/agent-tracker.sock"
 	}

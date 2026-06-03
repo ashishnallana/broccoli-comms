@@ -16,17 +16,17 @@ const appName = "agent-communicator"
 var version = "dev"
 var refreshInterval = 30 * time.Second
 
-type config struct {
+type cliConfig struct {
 	Version bool
 }
 
-func parseArgs(args []string) (config, error) {
+func parseArgs(args []string) (cliConfig, error) {
 	fs := flag.NewFlagSet(appName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	cfg := config{}
+	cfg := cliConfig{}
 	fs.BoolVar(&cfg.Version, "version", false, "print version and exit")
 	if err := fs.Parse(args); err != nil {
-		return config{}, err
+		return cliConfig{}, err
 	}
 	return cfg, nil
 }

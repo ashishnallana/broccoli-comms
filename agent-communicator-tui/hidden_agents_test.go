@@ -133,7 +133,6 @@ func TestZv2AgentNeverHidden(t *testing.T) {
 	}
 }
 
-
 func TestInitialHideKeepsLocalAgentWithIDHistoryAndTrackerID(t *testing.T) {
 	state := t.TempDir()
 	cache := t.TempDir()

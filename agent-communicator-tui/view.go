@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+
 	"fmt"
 	"os"
 	"path/filepath"
@@ -880,7 +882,9 @@ func max(a, b int) int {
 }
 
 func localHostname() string {
-	if h := os.Getenv("AGENT_TRACKER_HOSTNAME"); h != "" {
+	if h := config.GetString("", "tracker", "hostname"); h != "" {
+		return h
+	} else if h := os.Getenv("AGENT_TRACKER_HOSTNAME"); h != "" {
 		return h
 	}
 	if h, err := os.Hostname(); err == nil {

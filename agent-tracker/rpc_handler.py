@@ -18,14 +18,16 @@ import re
 import fcntl
 from contextlib import contextmanager
 
+import config
+
 BUFFER_SIZE = 4096
-LOCAL_HOSTNAME = os.environ.get("AGENT_TRACKER_HOSTNAME", socket.gethostname())
-REMOTE_BROAD_WATCH_ENABLED = os.environ.get("AGENT_TRACKER_BROAD_WATCH_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+LOCAL_HOSTNAME = config.get("tracker", "hostname", socket.gethostname())
+REMOTE_BROAD_WATCH_ENABLED = config.get("tracker", "broad_watch_enabled", False)
 DEFAULT_CAPTURE_PANE_LINES = 20
 
 
 def _default_capture_pane_lines() -> int:
-    raw = os.environ.get("AGENT_TRACKER_CAPTURE_PANE_DEFAULT_LINES", str(DEFAULT_CAPTURE_PANE_LINES))
+    raw = config.get("ui", "capture_pane_default_lines", str(DEFAULT_CAPTURE_PANE_LINES))
     try:
         value = int(raw)
     except (TypeError, ValueError):
@@ -533,7 +535,7 @@ def remote_message_focus_enabled() -> bool:
 
     Conservative Broccoli default: disabled unless explicitly enabled.
     """
-    return os.environ.get("BROCCOLI_COMMS_FOCUS_REMOTE_MESSAGES", "").lower() in {"1", "true", "yes", "on"}
+    return config.get("ui", "focus_remote_messages", False)
 
 
 def _maybe_focus_remote_delivery(info: dict, current_name: str, msg_obj: dict) -> None:
@@ -647,7 +649,7 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
             logging.info(f"Skipping tmux send-keys notification for {current_name} from {notify_sender}")
         else:
             notify_msg = f"New message in inbox from {notify_sender}"
-            enable_reliable = os.environ.get("ENABLE_RELIABLE_SEND_KEYS", "true").lower() == "true"
+            enable_reliable = config.get("core", "enable_reliable_send_keys", True)
             delivered = False
             if enable_reliable or verify:
                 try:
@@ -710,7 +712,7 @@ def _validate_send_input_payload(params: dict) -> tuple[str, dict]:
         text = params.get("text")
         if not isinstance(text, str) or text == "":
             raise ValueError("text must be a non-empty string")
-        max_bytes = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_TEXT_BYTES", "4096"))
+        max_bytes = config.get("registry", "remote_pane_input_max_text_bytes", 4096)
         if len(text.encode("utf-8")) > max_bytes:
             raise ValueError(f"text exceeds max bytes ({max_bytes})")
         submit = params.get("submit", True)
@@ -720,7 +722,7 @@ def _validate_send_input_payload(params: dict) -> tuple[str, dict]:
     keys = params.get("keys")
     if keys is None and params.get("key") is not None:
         keys = [params.get("key")]
-    max_keys = int(os.environ.get("AGENT_REMOTE_PANE_INPUT_MAX_KEYS", "16"))
+    max_keys = config.get("registry", "remote_pane_input_max_keys", 16)
     if isinstance(keys, (list, tuple)) and len(keys) > max_keys:
         raise ValueError(f"keys exceed max count ({max_keys})")
     normalized = tmux_util.normalize_key_tokens(keys)

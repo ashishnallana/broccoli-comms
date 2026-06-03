@@ -9,8 +9,9 @@ def register(subparsers):
 
 
 def handle(_args):
-    daemon_cmd = os.environ.get("AGENT_TRACKER_DAEMON")
+    import config
+    daemon_cmd = config.get("executables", "agent_tracker")
     if not daemon_cmd:
-        print("Error: AGENT_TRACKER_DAEMON is not configured.", file=sys.stderr)
+        print("Error: executables.agent_tracker is not configured.", file=sys.stderr)
         sys.exit(1)
     os.execvp(shlex.split(daemon_cmd)[0], shlex.split(daemon_cmd))
