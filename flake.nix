@@ -50,7 +50,7 @@
             pname = "agent-communicator-tui";
             version = "0.1.0";
             src = ./agent-communicator-tui;
-            vendorHash = "sha256-TUbaUoqDZoQTkcOMtoE/FlAiqkWN+x49JeGkDguh2UU=";
+            vendorHash = null;
             ldflags = [ "-X main.version=0.1.0" ];
             postInstall = ''
               ln -sf $out/bin/agent-communicator-tui $out/bin/agent-communicator
@@ -167,7 +167,7 @@
           pname = "broccoli-comms-communicator-tests";
           version = "0.1.0";
           src = ./agent-communicator-tui;
-          vendorHash = "sha256-TUbaUoqDZoQTkcOMtoE/FlAiqkWN+x49JeGkDguh2UU=";
+          vendorHash = null;
           doCheck = true;
           installPhase = ''
             mkdir -p $out
