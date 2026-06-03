@@ -3,7 +3,6 @@ package main
 import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
 
-	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -162,443 +161,59 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
-		keyStart := time.Now()
-		debugLogf("key start type=%v runes=%d", msg.Type, len(msg.Runes))
-		defer func() {
-			debugLogf("key end type=%v duration=%s composer_len=%d", msg.Type, time.Since(keyStart), len(m.composer))
-		}()
-		if m.commandPalette.Open {
-			return m.updateCommandPalette(msg)
-		}
-		if m.showingSaveForm {
-			return m.updateSaveForm(msg)
-		}
-		if m.showingPromptMenu {
-			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyCtrlQ:
-				return m, tea.Quit
-			case tea.KeyCtrlO, tea.KeyEsc:
-				m.showingPromptMenu = false
-				return m, nil
-			case tea.KeyUp, tea.KeyCtrlP:
-				if m.promptSelected > 0 {
-					m.promptSelected--
-				}
-				return m, nil
-			case tea.KeyDown, tea.KeyCtrlN:
-				if m.promptSelected < len(m.prompts)-1 {
-					m.promptSelected++
-				}
-				return m, nil
-			case tea.KeyEnter:
-				m.showingPromptMenu = false
-				if len(m.prompts) > 0 && m.canSendCurrent() {
-					return m, editPromptTemplate(m.prompts[m.promptSelected].Path)
-				}
-				return m, nil
-			}
-			return m, nil
-		}
-		if m.showingConfigMenu {
-			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyCtrlQ:
-				return m, tea.Quit
-			case tea.KeyCtrlR, tea.KeyEsc:
-				m.showingConfigMenu = false
-				return m, nil
-			case tea.KeyUp, tea.KeyCtrlP:
-				if m.configSelected > 0 {
-					m.configSelected--
-				}
-				return m, nil
-			case tea.KeyDown, tea.KeyCtrlN:
-				if m.configSelected < len(m.configItems)-1 {
-					m.configSelected++
-				}
-				return m, nil
-			case tea.KeyEnter:
-				m.showingConfigMenu = false
-				if len(m.configItems) > 0 {
-					item := m.configItems[m.configSelected]
-					if item.IsRemote {
-						return m, spinRemoteAgentCmd(m.local, item.TrackerID, item.Name)
-					} else {
-						localConfigs, _, err := LoadAgentConfigs()
-						if err == nil {
-							if cfg, exists := localConfigs[item.Name]; exists {
-								return m, spinAgentCmd(cfg)
-							}
-						}
-					}
-				}
-				return m, nil
-			}
-			return m, nil
-		}
-		if isCommandPaletteOpenKey(msg) {
-			m.commandPalette.Open = true
-			m.commandPalette.Query = nil
-			m.commandPalette.Selected = 0
-			return m, nil
-		}
-		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyCtrlQ:
-			return m, tea.Quit
-		case tea.KeyCtrlR:
-			m.showingConfigMenu = true
-			m.configSelected = 0
-			return m, loadConfigItemsCmd(m.local)
-		case tea.KeyCtrlO:
-			m.showingPromptMenu = true
-			m.promptSelected = 0
-			return m, loadPromptsCmd()
-		case tea.KeyCtrlS:
-			m.initSaveForm()
-			return m, nil
-		case tea.KeyCtrlT:
-			m.toggleMode()
-			m.selectLatestMessage()
-			return m, m.reloadMessages()
-		case tea.KeyCtrlX:
-			if len(m.rows) > 0 && m.selected >= 0 && m.selected < len(m.rows) {
-				row := m.rows[m.selected]
-				targetAddress := rowTarget(row)
-				m.paneCaptureStatus = fmt.Sprintf("Capturing pane snapshot for %s...", row.Name)
-				return m, requestPaneCaptureCmd(targetAddress)
-			}
-		case tea.KeyCtrlF:
-			return m, m.toggleSaveSelectedMessage()
-		case tea.KeyCtrlP:
-			debugLogf("KeyCtrlP matched: mode=%v rows_len=%d", m.mode, len(m.rows))
-			if m.mode == savedView {
-				m.selectSavedRow(-1)
-				m.selectLatestMessage()
-				return m, nil
-			}
-			if len(m.rows) > 0 {
-				m.selectNextInSection(-1)
-				m.scrollSelectedAgentIntoView()
-				m.selectLatestMessage()
-				return m, m.reloadMessages()
-			}
-		case tea.KeyCtrlN:
-			debugLogf("KeyCtrlN matched: mode=%v rows_len=%d", m.mode, len(m.rows))
-			if m.mode == savedView {
-				m.selectSavedRow(1)
-				m.selectLatestMessage()
-				return m, nil
-			}
-			if len(m.rows) > 0 {
-				m.selectNextInSection(1)
-				m.scrollSelectedAgentIntoView()
-				m.selectLatestMessage()
-				return m, m.reloadMessages()
-			}
-		case tea.KeyTab, tea.KeyShiftTab:
-			if len(m.rows) > 0 {
-				m.toggleAgentSection()
-				m.scrollSelectedAgentIntoView()
-				m.selectLatestMessage()
-				return m, m.reloadMessages()
-			}
-		case tea.KeyCtrlH:
-			if len(m.rows) > 0 {
-				cmd := m.toggleHiddenCurrentAgent()
-				m.selectLatestMessage()
-				return m, tea.Batch(cmd, m.reloadMessages())
-			}
-		case tea.KeyCtrlA:
-			if m.mode != savedView && len(m.rows) > 0 {
-				m.clearUnread(m.rows[m.selected])
-				return m, nil
-			}
-		case tea.KeyUp:
-			m.messageFocused = true
-			if m.messageSelected > 0 {
-				m.messageSelected--
-				m.scrollSelectedMessageIntoView()
-			}
-		case tea.KeyDown:
-			m.messageFocused = true
-			if m.messageSelected < len(m.displayOrderedMessages())-1 {
-				m.messageSelected++
-				m.scrollSelectedMessageIntoView()
-			}
-		case tea.KeyPgUp, tea.KeyCtrlU:
-			m.messageOffset = clampMessageOffset(m.messageOffset-messagePageSize(m.height), len(m.messageLinesForWidth(m.messageContentWidth())), m.messageVisibleLines())
-		case tea.KeyPgDown, tea.KeyCtrlD:
-			m.messageOffset = clampMessageOffset(m.messageOffset+messagePageSize(m.height), len(m.messageLinesForWidth(m.messageContentWidth())), m.messageVisibleLines())
-		case tea.KeyF1:
-			m.inputMode = inputModeMessage
-			return m, nil
-		case tea.KeyF2:
-			m.inputMode = inputModeText
-			return m, nil
-		case tea.KeyF3:
-			m.inputMode = inputModeKeys
-			return m, nil
-		case tea.KeyF4:
-			return m, nil
-		case tea.KeyEnter:
-			if m.mode != savedView && m.canSendCurrent() && strings.TrimSpace(string(m.composer)) != "" {
-				input := string(m.composer)
-				row := m.rows[m.selected]
-				action := composerActionForMode(input, m.inputMode)
-				if action.Kind == "broadcast" {
-					m.directInputStatus = "Broadcast mode is disabled in this milestone; no message was sent"
-					m.directInputStatusErr = true
-					return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return clearDirectInputStatusTick{} })
-				}
-				if action.Kind == "direct_text" || action.Kind == "direct_keys" {
-					m.composer = nil
-					m.directInputStatus = fmt.Sprintf("Sending pane control to %s...", row.Name)
-					return m, sendDirectInput(m.local, row, action, m.runtime.RemoteDirectInputEnabled)
-				}
-				if strings.TrimSpace(action.Body) == "" {
-					return m, nil
-				}
-				record := makeOutboxRecord(m.ownName, row, action.Body)
-				m.composer = nil
-				unhideCmd := m.unhideAgent(row)
-				m.clearUnread(row)
-				m.appendSentMessage(row, record)
-				m.refreshMergedMessages()
-				m.selectLatestMessage()
-				return m, tea.Batch(unhideCmd, sendOutboxRecord(m.local, m.ownName, row, record))
-			}
-		case tea.KeyBackspace:
-			m.messageFocused = false
-			if len(m.composer) > 0 {
-				m.composer = m.composer[:len(m.composer)-1]
-			}
-		case tea.KeyCtrlW:
-			m.messageFocused = false
-			m.composer = deletePreviousWord(m.composer)
-		case tea.KeyCtrlE:
-			messages := m.displayOrderedMessages()
-			if len(messages) > 0 {
-				return m, openMessageInEditor(messages[m.messageSelected])
-			}
-		case tea.KeyRunes:
-			if len(msg.Runes) == 1 && msg.Runes[0] == 'r' && len(m.composer) == 0 && m.err != nil && m.retryOperation != "" {
-				return m, m.retryCurrentOperation()
-			}
-			if len(msg.Runes) == 1 && msg.Runes[0] == 'n' && len(m.composer) == 0 && m.mode != savedView && m.selectNextUnread() {
-				m.scrollSelectedAgentIntoView()
-				m.selectLatestMessage()
-				return m, m.reloadMessages()
-			}
-			m.messageFocused = false
-			m.composer = append(m.composer, msg.Runes...)
-			m.messageOffset = 0
-		case tea.KeySpace:
-			m.messageFocused = false
-			m.composer = append(m.composer, ' ')
-			m.messageOffset = 0
-		}
+		return m.handleKeyMsg(msg)
 	case directInputSent:
-		if msg.Err != nil {
-			m.composer = []rune(msg.Original)
-			m.directInputStatus = fmt.Sprintf("Pane control failed for %s: %s", msg.Row.Name, msg.Err.Error())
-			m.directInputStatusErr = true
-		} else {
-			m.directInputStatusErr = false
-			if msg.Mode == "direct_text" {
-				m.directInputStatus = fmt.Sprintf("Pane text sent to %s", msg.Row.Name)
-			} else {
-				m.directInputStatus = fmt.Sprintf("Pane key(s) sent to %s", msg.Row.Name)
-			}
-		}
-		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return clearDirectInputStatusTick{} })
+		return m.handleDirectInputSent(msg)
 	case clearDirectInputStatusTick:
-		m.directInputStatus = ""
-		m.directInputStatusErr = false
-		return m, nil
+		return m.handleClearDirectInputStatus()
 	case paneCaptured:
-		if msg.Err != nil {
-			m.paneCaptureStatus = fmt.Sprintf("Failed to capture %s: %s", msg.Target, msg.Err.Error())
-		} else {
-			m.paneCaptureStatus = fmt.Sprintf("Pane snapshot for %s delivered successfully!", msg.Target)
-		}
-		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg {
-			return clearPaneCaptureStatusTick{}
-		})
+		return m.handlePaneCaptured(msg)
 	case clearPaneCaptureStatusTick:
-		m.paneCaptureStatus = ""
-		return m, nil
+		return m.handleClearPaneCaptureStatus()
 	case refreshTick:
-		m.agentListLoading = true
-		return m, tea.Batch(loadHealth(m.local), loadAgents(m.local), loadOutboxCmd(), loadUnreadCounts(m.local, m.ownName), tickRefresh(), tickAgentListSpinner())
+		return m.handleRefreshTick()
 	case cursorBlinkTick:
-		m.cursorHidden = !m.cursorHidden
-		return m, tickCursorBlink()
+		return m.handleCursorBlinkTick()
 	case agentListSpinnerTick:
-		if m.agentListLoading {
-			m.agentListFrame++
-			return m, tickAgentListSpinner()
-		}
+		return m.handleAgentListSpinnerTick()
 	case retryEvents:
 		return m, waitEvents(m.local, m.eventSeq)
 	case mailboxEnsured:
-		m.err = msg.Err
-		if msg.Err != nil {
-			m.retryOperation = "mailbox"
-			break
-		}
-		m.retryOperation = ""
-		return m, initialLoadCmds(m)
+		return m.handleMailboxEnsured(msg)
 	case healthLoaded:
-		m.healthErr = msg.Err
-		if msg.Err == nil {
-			m.health = msg.Info
-		}
+		return m.handleHealthLoaded(msg)
 	case agentsLoaded:
-		m.agentListLoading = false
-		m.err = msg.Err
-		if msg.Err != nil {
-			m.retryOperation = "agents"
-			m.agentListStale = true
-			break
-		}
-		m.retryOperation = ""
-		m.agentListStale = false
-		preserveKey := conversationKey(m.currentRow())
-		m.allRows = filterOwnAgent(msg.Rows, m.ownName)
-		m.applyAgentVisibility(preserveKey)
-		if m.selected >= len(m.rows) {
-			m.selected = max(0, len(m.rows)-1)
-		}
-		m.applyInitialHiddenForNoHistory()
-		m.applyAgentVisibility(preserveKey)
-		m.scrollSelectedAgentIntoView()
-		if len(m.rows) > 0 {
-			m.selectLatestMessage()
-			return m, m.reloadMessages()
-		}
-		m.messages = nil
+		return m.handleAgentsLoaded(msg)
 	case inboxLoaded:
-		if msg.Err != nil {
-			m.err = msg.Err
-			m.retryOperation = "inbox"
-		} else {
-			m.err = nil
-			m.retryOperation = ""
-			m.messages = m.mergeSentMessages(m.currentRow(), msg.Messages)
-			m.clearUnread(m.currentRow())
-			m.selectLatestMessage()
-			return m, loadUnreadCounts(m.local, m.ownName)
-		}
+		return m.handleInboxLoaded(msg)
 	case allInboxLoaded:
-		if msg.Err != nil {
-			m.err = msg.Err
-			m.retryOperation = "all_inbox"
-		} else {
-			m.err = nil
-			m.retryOperation = ""
-			m.allMessages = m.mergeAllMessages(msg.Messages)
-			m.selectLatestMessage()
-			return m, loadUnreadCounts(m.local, m.ownName)
-		}
+		return m.handleAllInboxLoaded(msg)
 	case messageSent:
-		m.err = msg.Err
-		if msg.Err != nil {
-			m.composer = []rune(msg.Body)
-			m.removeSentMessage(msg.Row, msg.Record.ID)
-			m.refreshMergedMessages()
-		} else {
-			m.outbox = appendOrReplaceOutbox(m.outbox, msg.Record)
-			unhideCmd := m.unhideAgent(msg.Row)
-			m.clearUnread(msg.Row)
-			m.appendSentMessage(msg.Row, msg.Record)
-			m.refreshMergedMessages()
-			m.selectLatestMessage()
-			if len(m.rows) > 0 {
-				return m, tea.Batch(unhideCmd, m.reloadMessages())
-			}
-			return m, unhideCmd
-		}
+		return m.handleMessageSent(msg)
 	case eventsLoaded:
-		if msg.Err == nil {
-			m.eventSeq = msg.Result.LastSeq
-			m.markUnreadFromEvents(msg.Result)
-			m.applyStatusEvents(msg.Result)
-			m.appendSystemEvents(msg.Result)
-			cmds := []tea.Cmd{waitEvents(m.local, m.eventSeq), loadUnreadCounts(m.local, m.ownName)}
-			if len(m.rows) > 0 && shouldReloadForEvents(m.ownName, m.rows[m.selected], msg.Result) {
-				cmds = append(cmds, m.reloadMessages())
-			}
-			return m, tea.Batch(cmds...)
-		}
-		return m, retryWaitEvents()
+		return m.handleEventsLoaded(msg)
 	case unreadCountsLoaded:
-		if msg.Err != nil {
-			m.err = msg.Err
-		} else {
-			m.unreadCounts = msg.Counts
-			if m.unreadCounts == nil {
-				m.unreadCounts = map[string]int{}
-			}
-		}
+		return m.handleUnreadCountsLoaded(msg)
 	case promptsLoaded:
-		m.err = msg.Err
-		if msg.Err == nil {
-			m.prompts = msg.Prompts
-			if m.promptSelected >= len(m.prompts) {
-				m.promptSelected = max(0, len(m.prompts)-1)
-			}
-		}
+		return m.handlePromptsLoaded(msg)
 	case hiddenAgentsLoaded:
-		if msg.Err != nil {
-			m.err = msg.Err
-		} else {
-			m.hiddenAgents = msg.Hidden
-			m.applyAgentVisibility("")
-			m.scrollSelectedAgentIntoView()
-		}
+		return m.handleHiddenAgentsLoaded(msg)
 	case hiddenAgentsSaved:
 		m.err = msg.Err
 	case savedMessagesLoaded:
-		if msg.Err != nil {
-			m.err = msg.Err
-		} else {
-			m.savedMessages = msg.Records
-			m.clampSavedSelected()
-		}
+		return m.handleSavedMessagesLoaded(msg)
 	case savedMessagesSaved:
 		m.err = msg.Err
 	case outboxLoaded:
-		if msg.Err != nil {
-			m.err = msg.Err
-		} else {
-			m.outbox = msg.Records
-			m.applyInitialHiddenForNoHistory()
-			m.applyAgentVisibility(conversationKey(m.currentRow()))
-			m.refreshMergedMessages()
-		}
+		return m.handleOutboxLoaded(msg)
 	case paneSwitched:
 		m.err = msg.Err
 	case configItemsLoaded:
-		m.err = msg.Err
-		if msg.Err == nil {
-			m.configItems = msg.Items
-			if m.configSelected >= len(m.configItems) {
-				m.configSelected = max(0, len(m.configItems)-1)
-			}
-		}
+		return m.handleConfigItemsLoaded(msg)
 	case editorClosed:
 		m.err = msg.Err
 	case promptEdited:
-		m.err = msg.Err
-		if msg.Err == nil && msg.Saved && m.canSendCurrent() && strings.TrimSpace(msg.Body) != "" {
-			row := m.rows[m.selected]
-			record := makeOutboxRecord(m.ownName, row, msg.Body)
-			unhideCmd := m.unhideAgent(row)
-			m.clearUnread(row)
-			m.appendSentMessage(row, record)
-			m.refreshMergedMessages()
-			m.selectLatestMessage()
-			return m, tea.Batch(unhideCmd, sendOutboxRecord(m.local, m.ownName, row, record))
-		}
+		return m.handlePromptEdited(msg)
 	case agentSaved:
 		m.err = msg.Err
 	case agentConfigSpun:
