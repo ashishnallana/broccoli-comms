@@ -482,6 +482,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			m.retryOperation = ""
 			m.messages = m.mergeSentMessages(m.currentRow(), msg.Messages)
+			m.clearUnread(m.currentRow())
 			m.selectLatestMessage()
 			return m, loadUnreadCounts(m.local, m.ownName)
 		}

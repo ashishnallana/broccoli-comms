@@ -76,3 +76,21 @@ func TestNextUnreadSelectsNextCountBadgeWithoutChangingCtrlN(t *testing.T) {
 		t.Fatalf("ctrl-n selected row %d, want 1", got)
 	}
 }
+
+func TestInboxLoadedClearsUnread(t *testing.T) {
+	row := agentRow{Name: "alice", Scope: "local", AgentID: "alice-id"}
+	m := model{
+		ownName: "coding-agent",
+		selected: 0,
+		rows: []agentRow{row},
+		unreadRows: map[string]bool{conversationKey(row): true},
+	}
+	updated, cmd := m.Update(inboxLoaded{Messages: []tracker.Message{}})
+	if cmd == nil {
+		t.Fatal("inboxLoaded should return loadUnreadCounts command")
+	}
+	if updated.(model).hasUnread(row) {
+		t.Fatal("inboxLoaded should clear unread status for selected row")
+	}
+}
+
