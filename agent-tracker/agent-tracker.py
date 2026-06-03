@@ -46,8 +46,21 @@ def setup_signals():
     signal.signal(signal.SIGINT, handle_exit)
 
 
+_global_lock_file = None
+
 def main():
     setup_signals()
+
+    # Process Guard using a global lock file in /tmp to prevent duplicate trackers globally for this user.
+    # We use /tmp because it is guaranteed to be consistent across divergent environments (unlike XDG dirs).
+    global _global_lock_file
+    _global_lock_file = open(f"/tmp/broccoli-comms-agent-tracker-{os.getuid()}.lock", "a+")
+    try:
+        fcntl.flock(_global_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logging.warning("Another instance of agent-tracker is already running globally for this user. Exiting.")
+        sys.exit(0)
+
     os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
     os.makedirs(CACHE_DIR, exist_ok=True)
 

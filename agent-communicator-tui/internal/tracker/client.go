@@ -57,14 +57,38 @@ func (e *RPCError) Error() string {
 }
 
 func DefaultSocketPath() string {
+	candidates := []string{}
 	if path := os.Getenv("AGENT_TRACKER_SOCKET"); path != "" {
-		return path
+		candidates = append(candidates, path)
 	}
 	if runtimeDir := os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR"); runtimeDir != "" {
-		return filepath.Join(runtimeDir, "agent-tracker.sock")
+		candidates = append(candidates, filepath.Join(runtimeDir, "agent-tracker.sock"))
 	}
+
+	cacheHome := os.Getenv("XDG_CACHE_HOME")
+	if cacheHome == "" {
+		home, _ := os.UserHomeDir()
+		cacheHome = filepath.Join(home, ".cache")
+	}
+	candidates = append(candidates, filepath.Join(cacheHome, "broccoli-comms", "runtime", "agent-tracker.sock"))
+
 	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
-		return filepath.Join(runtimeDir, "broccoli-comms", "agent-tracker.sock")
+		candidates = append(candidates, filepath.Join(runtimeDir, "broccoli-comms", "agent-tracker.sock"))
+	} else {
+		candidates = append(candidates, filepath.Join("/tmp", fmt.Sprint(os.Getuid()), "broccoli-comms", "agent-tracker.sock"))
+	}
+
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			conn, err := net.DialTimeout("unix", p, 100*time.Millisecond)
+			if err == nil {
+				conn.Close()
+				return p
+			}
+		}
+	}
+	if len(candidates) > 0 {
+		return candidates[0]
 	}
 	return filepath.Join("/tmp", fmt.Sprint(os.Getuid()), "broccoli-comms", "agent-tracker.sock")
 }

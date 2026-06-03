@@ -5,7 +5,7 @@ from .common import call_rpc
 
 def register(subparsers):
     parser = subparsers.add_parser("whoami", help="Show current agent identity")
-    parser.set_defaults(handler=handle)
+    parser.set_defaults(handler=handle, skip_ensure=True)
 
 
 def handle(_args):

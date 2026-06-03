@@ -52,7 +52,8 @@ func TestDefaultSocketPathUsesCanonicalRuntimeDefault(t *testing.T) {
 	t.Setenv("AGENT_TRACKER_SOCKET", "")
 	t.Setenv("BROCCOLI_COMMS_RUNTIME_DIR", "")
 	t.Setenv("XDG_RUNTIME_DIR", "/tmp/xdg-runtime")
-	if got, want := DefaultSocketPath(), filepath.Join("/tmp/xdg-runtime", "broccoli-comms", "agent-tracker.sock"); got != want {
+	t.Setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
+	if got, want := DefaultSocketPath(), filepath.Join("/tmp/xdg-cache", "broccoli-comms", "runtime", "agent-tracker.sock"); got != want {
 		t.Fatalf("DefaultSocketPath() = %q, want %q", got, want)
 	}
 }

@@ -55,17 +55,39 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def get_active_tracker_socket() -> Path:
+    candidates = []
+    if os.environ.get("AGENT_TRACKER_SOCKET"):
+        candidates.append(Path(os.environ.get("AGENT_TRACKER_SOCKET")))
+    if os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR"):
+        candidates.append(Path(os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR")) / "agent-tracker.sock")
+    candidates.append(Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / APP / "runtime" / "agent-tracker.sock")
+    candidates.append(Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}") / APP / "agent-tracker.sock")
+    
+    for sock in candidates:
+        if sock.exists():
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(0.1)
+                s.connect(str(sock))
+                s.close()
+                return sock
+            except OSError:
+                pass
+    return candidates[0]
+
 def paths() -> dict[str, Path]:
     runtime = xdg_runtime()
     cache = xdg_cache()
     config = xdg_config()
+    tracker_socket = get_active_tracker_socket()
     return {
         "runtime": runtime,
         "cache": cache,
         "config": config,
         "tmux_socket": runtime / "tmux.sock",
-        "tracker_socket": runtime / "agent-tracker.sock",
-        "tracker_pid": runtime / "agent-tracker.pid",
+        "tracker_socket": tracker_socket,
+        "tracker_pid": tracker_socket.with_name("agent-tracker.pid"),
         "tracker_log": cache / "agent-tracker.log",
         "registry_pid": runtime / "agent-registry.pid",
         "registry_log": cache / "agent-registry.log",
@@ -1671,8 +1693,12 @@ def registry_trackers(args: argparse.Namespace) -> None:
 
 def agent_tracker(args: argparse.Namespace) -> None:
     """Run the in-repo agent-tracker-ctl against Broccoli Comms private sockets."""
-    ensure_tracker()
-    ensure_tmux()
+    tracker_args = list(getattr(args, "tracker_args", None) or ["--help"])
+    
+    read_only_cmds = {"status-bar", "list", "registry-status", "whoami", "read-inbox"}
+    if not (tracker_args and tracker_args[0] in read_only_cmds):
+        ensure_tracker()
+        ensure_tmux()
     ctl = tracker_ctl_script()
     tracker_args = list(getattr(args, "tracker_args", None) or ["--help"])
     env = base_env()

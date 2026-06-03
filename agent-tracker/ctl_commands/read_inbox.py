@@ -9,7 +9,7 @@ def register(subparsers):
     parser.add_argument("--name", help="Agent name to read inbox for (defaults to current agent)")
     parser.add_argument("--id", dest="agent_id", help="Agent ID to read inbox for")
     parser.add_argument("--last", "-l", type=int, help="Read last N messages")
-    parser.set_defaults(handler=handle)
+    parser.set_defaults(handler=handle, skip_ensure=True)
 
 
 def handle(args):

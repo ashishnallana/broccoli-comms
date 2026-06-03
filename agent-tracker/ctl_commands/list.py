@@ -6,7 +6,7 @@ from .common import call_rpc, fetch_registry_agents, merge_registry_agents
 
 def register(subparsers):
     parser = subparsers.add_parser("list", help="List agents in JSON format")
-    parser.set_defaults(handler=handle)
+    parser.set_defaults(handler=handle, skip_ensure=True)
 
 
 def handle(_args):
