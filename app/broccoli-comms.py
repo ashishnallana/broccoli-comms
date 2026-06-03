@@ -76,6 +76,8 @@ def get_active_tracker_socket() -> Path:
         candidates.append(Path(configured_sock))
     candidates.append(xdg_cache() / "agent-tracker.sock")
     candidates.append(xdg_runtime() / "agent-tracker.sock")
+    legacy_cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    candidates.append(legacy_cache / "agent-tracker" / "agent-tracker.sock")
     
     for sock in candidates:
         if sock.exists():
