@@ -1,12 +1,14 @@
-local tracker = require("broccoli.tracker")
+local tracker_module = require("broccoli.tracker")
 local config_loader = require("broccoli.config_loader")
+local plugin_registry = require("broccoli.plugins.registry")
 
 local M = {}
 
-M.tracker = tracker
+M.tracker = {}
 M.config_loader = config_loader
 M._generation = 0
 M._config = { tracker = {} }
+M.plugins = plugin_registry.new(M)
 
 local function merge(base, override)
   local out = {}
@@ -37,11 +39,32 @@ function M.generation()
 end
 
 function M.new_tracker(opts)
-  return M.tracker.new(merge(M._config.tracker, opts or {}))
+  return tracker_module.new(merge(M._config.tracker, opts or {}))
 end
 
 function M.new(opts)
   return M.new_tracker(opts)
+end
+
+function M.tracker.new(opts)
+  return M.new_tracker(opts)
+end
+
+function M.tracker.list(opts)
+  return M.new_tracker():list(opts)
+end
+
+function M.tracker.send_message(opts)
+  return M.new_tracker():send_message(opts)
+end
+
+function M.tracker.read_inbox(opts)
+  return M.new_tracker():read_inbox(opts)
+end
+
+function M.reset_plugins()
+  M.plugins = plugin_registry.new(M)
+  return M.plugins
 end
 
 function M.load_init(opts)
