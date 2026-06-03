@@ -28,11 +28,26 @@ import urllib.request
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
-if "BROCCOLI_COMMS_AGENT_TRACKER" in os.environ:
-    sys.path.insert(0, str(Path(os.environ["BROCCOLI_COMMS_AGENT_TRACKER"]).parent))
-else:
-    sys.path.insert(0, str(repo_root() / "agent-tracker"))
-import config
+import tomllib
+
+def get_config_path() -> Path:
+    xdg_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return xdg_config / "broccoli-comms" / "config.toml"
+
+def load_toml_config() -> dict:
+    path = get_config_path()
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
+
+def get_toml_config(section: str, key: str, default=None):
+    cfg = load_toml_config()
+    return cfg.get(section, {}).get(key, default)
+
 
 APP = "broccoli-comms"
 VERSION = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
@@ -46,17 +61,17 @@ AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def xdg_runtime() -> Path:
-    return Path(config.get("paths", "runtime_dir", os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}/broccoli-comms"))
+    return Path(get_toml_config("paths", "runtime_dir", os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}/broccoli-comms"))
 
 def xdg_cache() -> Path:
-    return Path(config.get("paths", "cache_dir", Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / APP))
+    return Path(get_toml_config("paths", "cache_dir", Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / APP))
 
 def xdg_config() -> Path:
-    return Path(config.get("paths", "config_dir", Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP))
+    return Path(get_toml_config("paths", "config_dir", Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP))
 
 def get_active_tracker_socket() -> Path:
     candidates = []
-    configured_sock = config.get("paths", "agent_tracker_socket")
+    configured_sock = get_toml_config("paths", "agent_tracker_socket", None)
     if configured_sock:
         candidates.append(Path(configured_sock))
     candidates.append(xdg_cache() / "agent-tracker.sock")
@@ -103,7 +118,7 @@ def ensure_dirs() -> None:
 
 
 def tmux_mode() -> str:
-    mode = config.get("core", "tmux_mode", "default").lower()
+    mode = get_toml_config("core", "tmux_mode", "default").lower()
     if mode not in {"default", "private"}:
         raise SystemExit("core.tmux_mode must be 'default' or 'private'")
     return mode
@@ -187,23 +202,19 @@ def tracker_rpc(method: str, params: dict | None = None) -> object | None:
 
 
 def tracker_script() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER") or config.get("executables", "agent_tracker", str(repo_root() / "agent-tracker" / "agent-tracker.py"))
-
+    return get_toml_config("executables", "agent_tracker", str(repo_root() / "agent-tracker" / "agent-tracker.py"))
 
 def tracker_ctl_script() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER_CTL") or config.get("executables", "agent_tracker_ctl", str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py"))
-
+    return get_toml_config("executables", "agent_tracker_ctl", str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py"))
 
 def wrapper_path() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_WRAPPER") or config.get("executables", "agent_wrapper", str(repo_root() / "wrapper" / "agent-wrapper.sh"))
-
+    return get_toml_config("executables", "agent_wrapper", str(repo_root() / "wrapper" / "agent-wrapper.sh"))
 
 def registry_script() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_REGISTRY") or config.get("executables", "agent_registry", str(repo_root() / "agent-registry" / "server.py"))
-
+    return get_toml_config("executables", "agent_registry", str(repo_root() / "agent-registry" / "server.py"))
 
 def tui_path() -> str:
-    return os.environ.get("BROCCOLI_COMMS_AGENT_COMMUNICATOR_TUI") or config.get("executables", "agent_communicator_tui", "agent-communicator")
+    return get_toml_config("executables", "agent_communicator_tui", "agent-communicator")
 
 
 def ensure_tracker() -> None:
@@ -1086,8 +1097,8 @@ def remote_pane_input_doctor_checks() -> list[dict]:
     enabled_roles = ",".join(role for role, enabled in (("send", send_enabled), ("receive", receive_enabled), ("registry", registry_enabled)) if enabled)
     _doctor_check(checks, "remote pane input", "warning", "remote direct pane input is enabled; this bypasses inboxes and controls panes directly", enabled_roles=enabled_roles)
 
-    registry_auth_disabled = not config.get("registry", "auth_enabled", True)
-    registry_token = config.get("registry", "token", "")
+    registry_auth_disabled = not get_toml_config("registry", "auth_enabled", True)
+    registry_token = get_toml_config("registry", "token", "")
     if registry_auth_disabled:
         _doctor_check(checks, "remote pane input auth", "warning", "remote direct pane input is enabled while registry auth is disabled")
     elif not registry_token:
