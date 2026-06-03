@@ -13,7 +13,7 @@ import uuid
 
 import config
 
-CACHE_DIR = config.get("paths", "cache_dir", os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "agent-tracker"))
+CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "agent-tracker")
 SOCKET_PATH = config.get("paths", "agent_tracker_socket", os.path.join(CACHE_DIR, "agent-tracker.sock"))
 LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
 REGISTRY_STATUS_PATH = os.path.join(CACHE_DIR, "registry-status.json")
