@@ -268,12 +268,12 @@ services.agent-tracker = {
 };
 ```
 
-Verify from a tracker machine:
+Verify from a Broccoli Comms tracker machine:
 
 ```sh
-agent-tracker-ctl registry-status
-agent-tracker-ctl list
-agent-tracker-ctl send-message other-host/agent-name "hello from this host"
+broccoli-comms agent-tracker registry-status
+broccoli-comms agent-tracker list
+broccoli-comms agent-tracker send-message other-host/agent-name "hello from this host"
 ```
 
 ## 8. Managed agents on a registry host
@@ -396,9 +396,9 @@ Normal `send-message` delivery remains inbox-based and is the default. Direct pa
 Local direct input examples:
 
 ```sh
-agent-tracker-ctl send-text alice "hello"
-agent-tracker-ctl send-text --no-submit alice "draft prompt"
-agent-tracker-ctl send-key alice C-c Enter
+broccoli-comms agent-tracker send-text alice "hello"
+broccoli-comms agent-tracker send-text --no-submit alice "draft prompt"
+broccoli-comms agent-tracker send-key alice C-c Enter
 ```
 
 Remote direct input is disabled by default and should be enabled only for trusted registries/trackers. Enable all required gates before using host-qualified remote targets:
@@ -428,8 +428,8 @@ export AGENT_REMOTE_PANE_INPUT_MAX_KEYS=16
 Remote examples after enablement:
 
 ```sh
-agent-tracker-ctl send-text host-a/alice "hello remotely"
-agent-tracker-ctl send-key registry-a:host-a/alice Escape
+broccoli-comms agent-tracker send-text host-a/alice "hello remotely"
+broccoli-comms agent-tracker send-key registry-a:host-a/alice Escape
 ```
 
 Guardrails:

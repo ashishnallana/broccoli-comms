@@ -1,77 +1,88 @@
 # Broccoli Comms Repository Architecture Summary
 
-The `broccoli-comms` codebase is a modular, high-performance multi-agent monitoring and communication framework. It is divided into three distinct systems that coordinate seamlessly over local unix sockets, HTTP registry servers, and Node IPC bridges:
+Broccoli Comms is a standalone agent workspace runtime. Its default frontend is the terminal `agent-communicator` TUI, with optional Electron/desktop code kept as a future/secondary frontend. Runtime state flows through a local tracker socket, local inbox files, tmux pane metadata, and optional HTTP registries for multi-device routing.
 
 ```mermaid
 graph TD
-    subgraph Electron App [Electron Desktop Application]
-        Renderer[React Renderer Process]
-        Preload[Context Bridge Preload]
-        Main[Node Main Process]
+    subgraph UI [Frontends]
+        TUI[agent-communicator TUI]
+        Electron[optional Electron UI]
     end
 
-    subgraph Local Host [Local Machine Daemon]
-        Daemon[agent-tracker Daemon]
-        InboxStore[(Local .inbox Files)]
+    subgraph Runtime [Local Broccoli Runtime]
+        Launcher[broccoli-comms launcher]
+        Tracker[agent-tracker daemon]
+        Inbox[(Local inbox and timeline files)]
+        Tmux[Active tmux mode/session]
     end
 
-    subgraph Cloud Server [Global Rendezvous Registry]
-        Registry[agent-registry Server]
+    subgraph Registry [Optional Registry]
+        RegistryServer[agent-registry HTTP service]
     end
 
-    Renderer -->|React State Hooks| Preload
-    Preload -->|IPC Channels Bridge| Main
-    Main -->|Unix Socket RPCs / wait_events| Daemon
-    Daemon -->|Reads/Writes| InboxStore
-    Daemon -->|HTTP Registries / Watch Leases| Registry
-    Registry -->|Fans out remote_agent_event| Daemon
+    Launcher -->|starts/stops| Tracker
+    Launcher -->|manages windows| Tmux
+    TUI -->|Unix socket RPC / wait_events| Tracker
+    Electron -->|Unix socket RPC / wait_events| Tracker
+    Tracker -->|reads/writes| Inbox
+    Tracker -->|captures/inputs via registered panes| Tmux
+    Tracker -->|heartbeats, queued messages, watch leases| RegistryServer
 ```
 
 ---
 
-## 1. The Backend Daemon: `agent-tracker`
-- **Language**: Python (zero external dependencies, standard libraries).
-- **Role**: The central state keeper, tmux sessionizer, and event dispatcher running in the background on each local machine.
-- **Key Components**:
-  * **`state.py`**: Manages the active registered agents directory, in-memory active watchlist leases, and the global `event_sequence_id` cursored queue buffer (max 500 events).
-  * **`rpc_handler.py`**: Exposes the net-socket JSON-RPC API. Key methods:
-    * `spin_agent`: Spawns agent configurations in isolated tmux panes.
-    * `capture_pane`: Triggers tmux pane captures and extracts terminal history buffers.
-    * `send_input`: Injects direct text and symbolic keystrokes (Escape, Enter, Ctrl+C) into target panes.
-    * `wait_events`: A blocking long-poll event receiver. Supports cursors (since sequence IDs), watchlists, and lease-expiry sweeps.
-  * **`registry_client.py`**: Interfaces with the global HTTP registries, publishing agent heartbeats and delegating lease-bound remote watches.
-  * **`test_state.py` / `test_rpc_handler.py` / `test_http_registry.py`**: Extensive unit and integration test suites (114 tests total).
+## 1. Runtime launcher: `app/broccoli-comms.py`
 
----
+- Owns Broccoli runtime/cache/config paths and starts/stops the private tracker socket.
+- Reconciles configured agents into the active tmux mode.
+- Default tmux mode uses the user's normal tmux server and the `broccoli-comms-agents` session; `BROCCOLI_COMMS_TMUX_MODE=private` uses Broccoli's private tmux socket.
+- Exposes user-facing commands such as `start`, `stop`, `ui/open`, `agent ...`, `registry ...`, `track`, and the canonical tracker wrapper `broccoli-comms agent-tracker ...`.
 
-## 2. The Rendezvous Service: `agent-registry`
-- **Language**: Python (HTTP Server).
-- **Role**: A stateless, lightweight directory lookup service deployed locally or on a public VPS to coordinate remote tracking nodes.
-- **Key Components**:
-  * **`server.py`**:
-    * Tracks active node heartbeats transiently in RAM (zero database footprints).
-    * Exposes `POST /trackers/<id>/watch-leases` to register lease-bound remote watch subscriptions.
-    * Runs background sweep cycles to automatically purge expired watch leases.
-    * Fans out remote events (`remote_agent_event`) over network routes when messages are delivered to watched targets.
+## 2. Backend daemon: `agent-tracker/`
 
----
+- **Language**: Python, standard-library oriented.
+- **Role**: Local state keeper, JSON-RPC server, inbox/timeline writer, tmux pane controller, and registry client.
+- **Key modules**:
+  - `rpc_handler.py`: JSON-RPC dispatcher plus shared identity helpers and thin compatibility wrappers.
+  - `handlers/pane_capture.py`: pane capture request handling.
+  - `handlers/inbox_handlers.py`: inbox reads, unread counts, read receipts, and related structured errors.
+  - `handlers/agent_handlers.py`: registration, list, heartbeat, rename, mailbox, and unregister lifecycle logic.
+  - `handlers/messaging_handlers.py`: local delivery, attachment validation, send-message routing, and direct pane input.
+  - `state.py`: agent state, event buffer, group timelines, and watch leases.
+  - `registry_client.py`: remote registry heartbeat, discovery, queued delivery, and remote event interactions.
+  - `tmux_util.py` / `tmux_reliability.py`: tmux metadata, pane capture/input, and reliable notification helpers.
 
-## 3. The Desktop Interface: `agent-communicator-electron`
-- **Tech Stack**: TypeScript + Vite + React + Tailwind/CSS + Electron.
-- **Role**: The visual, interactive timeline and monitoring dashboard.
-- **Architecture Layers**:
+## 3. Terminal UI: `agent-communicator-tui/`
 
-### A. Node Main Process (`src/main/`)
-* **`main.ts`**: Manages window creation lifecycles, registers IPC handlers, and triggers event loop startup on window ready.
-* **`ipc.ts`**: Handles Electron Main IPC invocations. Runs the background event loop: issues cursored `waitEvents` queries against the local socket daemon and pushes new events to the sandboxed React layer reactively via `webContents.send`.
-* **`trackerClient.ts`**: The main RPC client bridging JavaScript calls to the daemon's UNIX socket.
+- **Language**: Go with Bubble Tea/Lip Gloss.
+- **Role**: Primary interactive UI for agent conversations, inboxes, pane capture, and explicit pane-control modes.
+- **Current structure**:
+  - `app.go`: compact model setup and update dispatcher.
+  - `update_key.go`, `update_status.go`, `update_data.go`: update handlers split by domain.
+  - `view.go` plus `view_*.go`: rendering split into focused view modules.
+  - `agent_list.go` and `internal/tracker/*`: tracker RPC client and list/message operations.
+  - `theme.go`, `style.go`, `bubbles.go`, `markdown.go`, `pane_capture_render.go`: styling, message rendering, Markdown, and pane snapshot rendering.
 
-### B. Context Bridge Preload (`src/preload/`)
-* **`preload.ts`**: Exposes safe, sandboxed context bridges (`window.broccoliCommsMock`) to expose IPC channel listeners (`onTrackerEvents`) and select directory dialogue invocations to the Renderer process without compromising OS security.
+## 4. Registry service: `agent-registry/`
 
-### C. React Renderer Process (`src/renderer/`)
-* **`App.tsx` Entry**: The primary state orchestrator (managing selection states, messages timelines, localStorage custom groups, and dynamic hostname-based group channels). **100% Push-Based**: Subscribes directly to preload IPC pushes to trigger instant UI refreshes with no background intervals polling.
-* **`MessageBubble.tsx`**: The rich message bubble component. Parses GFM Markdown text synchronously using the `marked` compiler, formats styled code blocks utilizing `highlight.js` paired with a Tokyo Night Dark theme, and renders virtual console frames for debug pane captures.
-* **`Composer.tsx`**: The input and control panel. Features a monospace **Unix Keystroke Quick Keypad** (Escape, Enter, Ctrl+C, Tab, Up/Down/Left/Right buttons) to instantly inject keyboard controls into active terminal panes.
-* **`AgentList.tsx`**: Renders the grouped sidebar channels (Hostname Groups and Custom Groups) and right-click context portals.
-* **`ConversationView.tsx`**: Renders the feed view with custom Group chat vertical gap adjustments and read-only composers locks.
+- **Language**: Python HTTP server.
+- **Role**: Optional rendezvous service for multi-device discovery, tracker heartbeats, queued messages, remote pane input, and watch/event fanout.
+- Can be run through `broccoli-comms registry ...`, a NixOS/Home Manager module, or directly for development.
+- Managed registry agents are supported for registry-host workflows, but local Broccoli managed agents usually live under `broccoli-comms agent ...`.
+
+## 5. Optional Electron frontend: `agent-communicator-electron/`
+
+- **Tech stack**: TypeScript, React, Vite, Electron.
+- **Status**: Secondary/future frontend path. It talks to the same tracker socket and should preserve the runtime contracts documented in `docs/RUNTIME_API.md`.
+- Keep runtime behavior in the tracker/launcher and UI-specific behavior in frontend clients.
+
+## 6. Wrapper and skills
+
+- `wrapper/agent-wrapper.sh` runs agent commands with the correct tracker identity/environment and registers pane metadata.
+- `skills/` contains agent-facing Broccoli Comms usage guidance for messaging and CLI interactions.
+
+## Validation entry points
+
+- Tracker: `cd agent-tracker && env -u AGENT_TRACKER_TMUX_SOCKET -u BROCCOLI_COMMS_TMUX_SOCKET python3 -m unittest discover -q`
+- TUI: `cd agent-communicator-tui && nix develop . -c go test ./...`
+- Whole repo/source checks: `make check`, `nix flake check`, and smoke scripts under `scripts/`.

@@ -271,14 +271,14 @@ Unread navigation: `n` jumps to the next unread conversation, while `Ctrl-N` / `
 
 ## `broccoli-comms agent-tracker` passthrough
 
-`broccoli-comms agent-tracker <subcommand> [args...]` runs the repository's `agent-tracker/agent-tracker-ctl.py` against the Broccoli Comms private runtime. It is equivalent to `agent-tracker-ctl` but pins these environment values via `base_env()`:
+`broccoli-comms agent-tracker <subcommand> [args...]` is the canonical user-facing tracker control CLI. It runs the repository's tracker control implementation against the Broccoli Comms runtime and pins these environment values via `base_env()`:
 
 - `AGENT_TRACKER_SOCKET`
 - `BROCCOLI_COMMS_RUNTIME_DIR`
 - `BROCCOLI_COMMS_CACHE_DIR`
 - `BROCCOLI_COMMS_CONFIG_DIR`
 
-The wrapper does not require `agent-tracker-ctl` to be installed globally or present on the user's shell `PATH`. Pane-sensitive commands such as `send-text`, `send-key`, `focus`, and `capture-pane` use the registered tmux pane/socket metadata. Default mode uses the user's normal tmux server; `BROCCOLI_COMMS_TMUX_MODE=private` preserves the old private tmux socket behavior.
+The wrapper does not require standalone `agent-tracker-ctl` to be installed globally or present on the user's shell `PATH`; that command is deprecated for normal use. Pane-sensitive commands such as `send-text`, `send-key`, `focus`, and `capture-pane` use registered tmux pane/socket metadata. Default tmux mode uses the user's normal tmux server and the `broccoli-comms-agents` session; `BROCCOLI_COMMS_TMUX_MODE=private` uses Broccoli's private tmux socket for compatibility.
 
 `base_env()` also auto-loads enabled saved tracker registries from `$BROCCOLI_COMMS_CONFIG_DIR/registries.json` into `AGENT_REGISTRIES_JSON` unless `AGENT_REGISTRIES_JSON` is already set by the caller or `BROCCOLI_COMMS_DISABLE_CONFIG_REGISTRIES=1` is set. Manage this file with `broccoli-comms registry add/list/remove/enable/disable/env`; token contents are not stored, only `token-file` paths.
 
@@ -300,9 +300,9 @@ Direct pane input is separate from inbox messaging. It controls a registered tmu
 Tracker CLI/RPC examples:
 
 ```sh
-agent-tracker-ctl send-text alice "hello"
-agent-tracker-ctl send-text --no-submit alice "draft"
-agent-tracker-ctl send-key alice C-c Enter
+broccoli-comms agent-tracker send-text alice "hello"
+broccoli-comms agent-tracker send-text --no-submit alice "draft"
+broccoli-comms agent-tracker send-key alice C-c Enter
 ```
 
 Remote direct input uses the same `send_input` backend with a host-qualified `target_address`, but it is disabled by default and requires explicit gates:

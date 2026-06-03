@@ -2,7 +2,7 @@
 
 ## BUG-001: agent-registry managed-agent default tmux socket can derive invalid `/run/user/tmux-<uid>/default`
 
-Status: fixed in working tree; VM validation passed; pending final review/commit
+Status: fixed and landed in `61a46b4 Fix managed-agent runtime dir handling`; VM validation passed.
 
 Found while testing registry managed agents in `~/projects/nix/test-vm`.
 
@@ -42,7 +42,7 @@ The NixOS module only sets `XDG_RUNTIME_DIR` when the target user has an explici
 
 ### Fix
 
-Implemented in the working tree:
+Implemented and landed:
 
 - added `effective_runtime_dir()` in `agent-registry/managed_agent.py`
 - treat missing, empty, bare `/run/user`, and mismatched `/run/user/<other-uid>` `XDG_RUNTIME_DIR` as invalid for managed-agent tmux socket derivation
@@ -52,7 +52,7 @@ Implemented in the working tree:
 
 ### VM validation
 
-Passed in `~/projects/nix/test-vm` after rebuilding the temporary registry test flake against the fixed working tree and activating:
+Passed in `~/projects/nix/test-vm` after rebuilding the temporary registry test flake against the fixed checkout and activating:
 
 ```text
 /nix/store/r608k24bc16wyzx9kraxic6p1rg5hqab-nixos-system-devvm-26.05.20260523.2991645

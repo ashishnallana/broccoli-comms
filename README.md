@@ -130,7 +130,9 @@ The non-Nix build creates these local executables:
 - `bin/agent-communicator`
 - `bin/agent-wrapper`
 - `bin/agent-tracker`
-- `bin/agent-tracker-ctl`
+- `bin/agent-tracker-ctl` (deprecated shim)
+
+The tracker control implementation remains in the source tree, but users should invoke it through `broccoli-comms agent-tracker ...` so commands use the Broccoli runtime environment.
 
 Useful source checks:
 
@@ -159,11 +161,13 @@ Exposed Nix packages:
 
 - `broccoliComms` / `default`
 - `agent-tracker`
-- `agent-tracker-ctl`
+- `agent-tracker-ctl` (deprecated shim; use `broccoli-comms agent-tracker ...`)
 - `agent-wrapper`
 - `agent-communicator`
 - `agent-registry`
 - `agent-registry-managed-agent`
+
+The standalone `agent-tracker-ctl` command is deprecated as a user-facing entrypoint; use `broccoli-comms agent-tracker ...` instead.
 
 ## Usage modes
 
@@ -368,7 +372,7 @@ Legacy slash commands (`/msg`, `/text`, `/text --no-submit`, `/key`) remain supp
 
 `broccoli-comms agent-tracker spin <dir> <command> [args...]` also auto-wraps raw commands through `agent-wrapper` before creating the tmux window/session, so spun agents register, heartbeat, inherit the intended private tracker environment and tmux pane metadata, and appear in status/communicator views. Commands already starting with `agent-wrapper` are not wrapped again.
 
-`broccoli-comms agent-tracker <subcommand> [args...]` runs the in-repo `agent-tracker-ctl` against the Broccoli Comms private tracker and active tmux mode. This is the preferred wrapper for source-checkout usage because it does not require a globally installed `agent-tracker-ctl` on `PATH` and keeps commands pinned to the app-owned tracker runtime.
+`broccoli-comms agent-tracker <subcommand> [args...]` is the canonical user-facing tracker CLI. It runs the in-repo tracker control implementation against the Broccoli Comms tracker and active tmux mode, so source checkouts do not need a globally installed `agent-tracker-ctl` and commands stay pinned to the app-owned runtime.
 
 ```sh
 broccoli-comms agent-tracker --help
@@ -699,14 +703,6 @@ make smoke-managed-agents
 
 The runtime test starts `broccoli-comms`, verifies the private tracker and active tmux mode/session, checks status JSON, stops the runtime, and verifies cleanup. The default-session reuse smoke verifies `broccoli-comms-agents` reuse, `ui` requiring a running tracker, `attach` targeting, and stop safety for unrelated windows. The managed-agent test adds a harmless `sleep 60` configured agent, verifies reconciliation/no duplicates/restart/remove, and cleans up isolated temp state.
 
-## Source copied from home-manager-core
+## Migration history
 
-Initial copied slices:
-
-- `agent-tracker/` from `modules/agent-tracker/`
-- `agent-communicator-tui/`
-- `agent-registry/`
-- `wrapper/agent-wrapper.sh` extracted as standalone wrapper source
-- `app/broccoli-comms.py` new private-runtime launcher
-
-See `docs/MIGRATION_PLAN.md` for the migration plan.
+Broccoli Comms began as a standalone extraction of tracker, TUI, registry, wrapper, and launcher code. The current repository is the source of truth for those components; historical migration notes live in `docs/MIGRATION_PLAN.md`.
