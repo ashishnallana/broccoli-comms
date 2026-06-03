@@ -41,32 +41,6 @@ if [[ -z "$pane_id" ]]; then
   exec "$cmd" "$@"
 fi
 
-resolved_socket=$(python3 - <<'PY'
-import os, sys, socket
-def get_candidates():
-    c = []
-    if os.environ.get("AGENT_TRACKER_SOCKET"):
-        c.append(os.environ.get("AGENT_TRACKER_SOCKET"))
-    if os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR"):
-        c.append(os.path.join(os.environ.get("BROCCOLI_COMMS_RUNTIME_DIR"), "agent-tracker.sock"))
-    c.append(os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "broccoli-comms/runtime/agent-tracker.sock"))
-    c.append(os.path.join(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{os.getuid()}", "broccoli-comms/agent-tracker.sock"))
-    return c
-for s_path in get_candidates():
-    if os.path.exists(s_path):
-        try:
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(0.1)
-            s.connect(s_path)
-            s.close()
-            print(s_path)
-            sys.exit(0)
-        except Exception:
-            pass
-print(get_candidates()[0])
-PY
-)
-export AGENT_TRACKER_SOCKET="$resolved_socket"
 tmux_socket="${AGENT_TRACKER_TMUX_SOCKET:-${BROCCOLI_COMMS_TMUX_SOCKET:-}}"
 if [[ -z "$tmux_socket" ]]; then
   tmux_socket="${TMUX%%,*}"
@@ -98,7 +72,22 @@ import json, os, socket, sys
 session, pane, wrapper_pid, tmux_socket, name, agent_type, agent_cmd, model_type, agent_id, no_notify, no_registry, cwd = sys.argv[1:]
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(3)
-s.connect(os.environ["AGENT_TRACKER_SOCKET"])
+def get_socket():
+    import os
+    config_path = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "broccoli-comms/config.toml")
+    sock = None
+    try:
+        with open(config_path, "r") as f:
+            for line in f:
+                if line.startswith("agent_tracker_socket"):
+                    sock = line.split("=")[1].strip().strip('"').strip("'")
+                    break
+    except Exception:
+        pass
+    if not sock:
+        sock = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "broccoli-comms/runtime/agent-tracker.sock")
+    return sock
+s.connect(get_socket())
 req = {
   "jsonrpc": "2.0",
   "method": "register",
@@ -152,7 +141,22 @@ import json, os, socket, sys
 agent_id, wrapper_pid, cwd = sys.argv[1:]
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(2)
-s.connect(os.environ["AGENT_TRACKER_SOCKET"])
+def get_socket():
+    import os
+    config_path = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "broccoli-comms/config.toml")
+    sock = None
+    try:
+        with open(config_path, "r") as f:
+            for line in f:
+                if line.startswith("agent_tracker_socket"):
+                    sock = line.split("=")[1].strip().strip('"').strip("'")
+                    break
+    except Exception:
+        pass
+    if not sock:
+        sock = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "broccoli-comms/runtime/agent-tracker.sock")
+    return sock
+s.connect(get_socket())
 s.sendall(json.dumps({"jsonrpc":"2.0","method":"heartbeat","params":{"agent_id":agent_id,"wrapper_pid":int(wrapper_pid),"cwd":cwd},"id":1}).encode())
 s.shutdown(socket.SHUT_WR)
 s.recv(1024)
@@ -172,7 +176,22 @@ for params in ({"tmux_pane": pane_id}, {"agent_id": agent_id}):
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.settimeout(2)
-        s.connect(os.environ["AGENT_TRACKER_SOCKET"])
+        def get_socket():
+    import os
+    config_path = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "broccoli-comms/config.toml")
+    sock = None
+    try:
+        with open(config_path, "r") as f:
+            for line in f:
+                if line.startswith("agent_tracker_socket"):
+                    sock = line.split("=")[1].strip().strip('"').strip("'")
+                    break
+    except Exception:
+        pass
+    if not sock:
+        sock = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "broccoli-comms/runtime/agent-tracker.sock")
+    return sock
+s.connect(get_socket())
         s.sendall(json.dumps({"jsonrpc":"2.0","method":"unregister","params":params,"id":1}).encode())
         s.shutdown(socket.SHUT_WR)
         data = json.loads(s.recv(4096).decode() or "{}")

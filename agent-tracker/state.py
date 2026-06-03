@@ -8,9 +8,10 @@ import hashlib
 import json
 import re
 import tmux_util
+import config
 
 CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "agent-tracker")
-SOCKET_PATH = os.environ.get("AGENT_TRACKER_SOCKET", os.path.join(CACHE_DIR, "agent-tracker.sock"))
+SOCKET_PATH = config.get("paths", "agent_tracker_socket") or os.path.join(CACHE_DIR, "agent-tracker.sock")
 LOCK_PATH = os.path.join(CACHE_DIR, "agent-tracker.lock")
 INBOX_DIR = os.path.join(CACHE_DIR, "inboxes")
 GROUP_TIMELINE_DIR = os.path.join(CACHE_DIR, "group_timelines")

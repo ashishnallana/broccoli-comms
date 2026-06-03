@@ -98,7 +98,7 @@ PY
       export AGENT_TRACKER_HOSTNAME="''${base:-${config.home.username}}-$suffix"
     fi
     ${lib.optionalString (cfg.tracker.registryAuth && cfg.tracker.registryTokenFile != null) ''export AGENT_REGISTRY_TOKEN="$(cat ${lib.escapeShellArg (toString cfg.tracker.registryTokenFile)})"''}
-    exec ${pcfg.package}/bin/broccoli-comms start
+    exec ${pcfg.package}/bin/broccoli-comms agent-tracker daemon
   '';
 
   registryStatePath = if cfg.registry.statePath != null then cfg.registry.statePath else "${stateRoot}/broccoli-comms/agent-registry/state.json";
@@ -128,7 +128,6 @@ PY
     name = "broccoli-comms";
     runtimeInputs = [ pcfg.package ];
     text = ''
-      ${lib.optionalString (broccoliRuntimeDir != null) ''export BROCCOLI_COMMS_RUNTIME_DIR="''${BROCCOLI_COMMS_RUNTIME_DIR:-${broccoliRuntimeDir}}"''}
       export BROCCOLI_COMMS_CACHE_DIR="''${BROCCOLI_COMMS_CACHE_DIR:-${broccoliCacheDir}}"
       export BROCCOLI_COMMS_CONFIG_DIR="''${BROCCOLI_COMMS_CONFIG_DIR:-${broccoliConfigDir}}"
       ${lib.optionalString (cfg.tracker.registries != []) ''
@@ -136,7 +135,6 @@ PY
           export AGENT_REGISTRIES_JSON="${escapedRegistries}"
         fi
       ''}
-      ${lib.optionalString (broccoliRuntimeDir != null) ''export AGENT_TRACKER_SOCKET="''${AGENT_TRACKER_SOCKET:-$BROCCOLI_COMMS_RUNTIME_DIR/agent-tracker.sock}"''}
       exec ${pcfg.package}/bin/broccoli-comms "$@"
     '';
   };
@@ -251,8 +249,8 @@ in {
       systemd.user.services.broccoli-comms-agent-tracker = {
         Unit.Description = "Broccoli Comms agent-tracker daemon";
         Service = {
-          Type = "oneshot";
-          RemainAfterExit = true;
+          Type = "simple";
+          Restart = "on-failure";
           Environment = envList trackerEnv;
           ExecStart = toString trackerStart;
           ExecStop = "${pcfg.package}/bin/broccoli-comms stop";
