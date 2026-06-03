@@ -2,6 +2,7 @@ local tracker_module = require("broccoli.tracker")
 local config_loader = require("broccoli.config_loader")
 local plugin_registry = require("broccoli.plugins.registry")
 local storage = require("broccoli.storage")
+local agents_module = require("broccoli.agents")
 
 local M = {}
 
@@ -11,6 +12,15 @@ M.storage_module = storage
 M._generation = 0
 M._config = { tracker = {} }
 M.storage = nil
+M._agents = agents_module.new(M, { trusted = true })
+M.agents = {
+  set_metadata = function(...) return M._agents:set_metadata(...) end,
+  get_metadata = function(...) return M._agents:get_metadata(...) end,
+  clear_metadata = function(...) return M._agents:clear_metadata(...) end,
+  list_metadata = function(...) return M._agents:list_metadata(...) end,
+  agent_key = function(...) return M._agents:agent_key(...) end,
+  reset_memory = function() M._agents.memory = {} end,
+}
 M.plugins = plugin_registry.new(M)
 
 local function merge(base, override)

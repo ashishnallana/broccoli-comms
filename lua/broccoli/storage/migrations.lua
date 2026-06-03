@@ -12,6 +12,7 @@ M.statements = {
   value_json TEXT NOT NULL,
   owner_plugin TEXT,
   persist INTEGER NOT NULL DEFAULT 1,
+  visibility TEXT NOT NULL DEFAULT 'private',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   expires_at TEXT,

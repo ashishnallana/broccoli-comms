@@ -93,6 +93,72 @@ function Store:clear_plugin_state(plugin_name, key)
   return self.db:exec("DELETE FROM plugin_state WHERE plugin_name = ? AND key = ?", { plugin_name, key })
 end
 
+function Store:set_agent_metadata(agent_key, namespace, key, value, opts)
+  opts = opts or {}
+  local now = self.now()
+  return self.db:exec(
+    "INSERT OR REPLACE INTO agent_metadata(agent_key, namespace, key, value_json, owner_plugin, persist, visibility, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM agent_metadata WHERE agent_key = ? AND namespace = ? AND key = ?), ?), ?, ?)",
+    { agent_key, namespace, key, self:encode(value), opts.owner_plugin, opts.persist == false and 0 or 1, opts.visibility or "private", agent_key, namespace, key, now, now, opts.expires_at }
+  )
+end
+
+function Store:get_agent_metadata(agent_key, namespace, key, opts)
+  opts = opts or {}
+  local sql = "SELECT value_json FROM agent_metadata WHERE agent_key = ? AND namespace = ? AND key = ?"
+  local params = { agent_key, namespace, key }
+  if not opts.include_expired_metadata then
+    sql = sql .. " AND (expires_at IS NULL OR expires_at > ?)"
+    params[#params + 1] = opts.now or self.now()
+  end
+  local rows, err = self.db:query(sql, params)
+  if err then
+    return nil, err
+  end
+  if not rows or not rows[1] then
+    return nil, nil
+  end
+  return self:decode(rows[1].value_json), nil
+end
+
+function Store:list_agent_metadata(agent_key, opts)
+  opts = opts or {}
+  local sql = "SELECT agent_key, namespace, key, value_json, owner_plugin, persist, visibility, expires_at FROM agent_metadata WHERE agent_key = ?"
+  local params = { agent_key }
+  if opts.namespace then
+    sql = sql .. " AND namespace = ?"
+    params[#params + 1] = opts.namespace
+  end
+  if not opts.include_expired_metadata then
+    sql = sql .. " AND (expires_at IS NULL OR expires_at > ?)"
+    params[#params + 1] = opts.now or self.now()
+  end
+  local rows, err = self.db:query(sql, params)
+  if err then
+    return nil, err
+  end
+  local out = {}
+  for _, row in ipairs(rows or {}) do
+    out[#out + 1] = {
+      agent_key = row.agent_key,
+      namespace = row.namespace,
+      key = row.key,
+      value = self:decode(row.value_json),
+      owner_plugin = row.owner_plugin,
+      persist = row.persist ~= 0,
+      visibility = row.visibility or "private",
+      expires_at = row.expires_at,
+    }
+  end
+  return out, nil
+end
+
+function Store:clear_agent_metadata(agent_key, namespace, key)
+  if key then
+    return self.db:exec("DELETE FROM agent_metadata WHERE agent_key = ? AND namespace = ? AND key = ?", { agent_key, namespace, key })
+  end
+  return self.db:exec("DELETE FROM agent_metadata WHERE agent_key = ? AND namespace = ?", { agent_key, namespace })
+end
+
 function Store:record_plugin_error(plugin_name, phase, message, details)
   return self.db:exec(
     "INSERT INTO plugin_errors(plugin_name, phase, message, details_json, created_at) VALUES (?, ?, ?, ?, ?)",
