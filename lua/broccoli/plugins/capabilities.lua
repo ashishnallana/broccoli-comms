@@ -34,6 +34,8 @@ function M.scoped_api(base, plugin_name, permissions)
     tracker = {},
     state = {},
     agents = {},
+    commands = {},
+    events = {},
     log = base.log or {},
   }
 
@@ -141,6 +143,67 @@ function M.scoped_api(base, plugin_name, permissions)
       opts = restrict_metadata_opts(opts)
     end
     return base.agents.get(agent_ref, opts)
+  end
+
+  local command_permissions = permissions.commands or {}
+  scoped.commands.create = function(name, spec)
+    if not allows(command_permissions, "write") then
+      return denied("commands.create")
+    end
+    spec = spec or {}
+    spec.owner_plugin = plugin_name
+    return base.commands.create(name, spec)
+  end
+  scoped.commands.delete = function(name)
+    if not allows(command_permissions, "write") then
+      return denied("commands.delete")
+    end
+    local rows = base.commands.list({ owner_plugin = plugin_name })
+    for _, row in ipairs(rows or {}) do
+      if row.name == name then
+        return base.commands.delete(name)
+      end
+    end
+    return nil, { kind = "permission", code = 0, message = "plugin is not permitted to delete command " .. tostring(name) }
+  end
+  scoped.commands.list = function()
+    if not allows(command_permissions, "read") then
+      return denied("commands.list")
+    end
+    return base.commands.list({ owner_plugin = plugin_name })
+  end
+
+  local event_permissions = permissions.events or {}
+  scoped.events.on = function(event, handler)
+    if not allows(event_permissions, "subscribe") then
+      return denied("events.on")
+    end
+    return base.events.on(event, handler, { owner_plugin = plugin_name })
+  end
+  scoped.events.off = function(handle)
+    if not allows(event_permissions, "subscribe") and not allows(event_permissions, "write") then
+      return denied("events.off")
+    end
+    local id = type(handle) == "table" and handle.id or handle
+    local rows = base.events.list({ owner_plugin = plugin_name })
+    for _, row in ipairs(rows or {}) do
+      if row.id == id then
+        return base.events.off(handle)
+      end
+    end
+    return nil, { kind = "permission", code = 0, message = "plugin is not permitted to remove event subscription " .. tostring(id) }
+  end
+  scoped.events.emit = function(event, payload, opts)
+    if not allows(event_permissions, "emit") then
+      return denied("events.emit")
+    end
+    return base.events.emit(event, payload, opts)
+  end
+  scoped.events.list = function()
+    if not allows(event_permissions, "read") then
+      return denied("events.list")
+    end
+    return base.events.list({ owner_plugin = plugin_name })
   end
 
   local state_permissions = permissions.state or {}

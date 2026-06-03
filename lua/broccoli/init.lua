@@ -3,6 +3,8 @@ local config_loader = require("broccoli.config_loader")
 local plugin_registry = require("broccoli.plugins.registry")
 local storage = require("broccoli.storage")
 local agents_module = require("broccoli.agents")
+local commands_module = require("broccoli.commands")
+local events_module = require("broccoli.events")
 
 local M = {}
 
@@ -22,6 +24,21 @@ M.agents = {
   list = function(...) return M._agents:list(...) end,
   agent_key = function(...) return M._agents:agent_key(...) end,
   reset_memory = function() M._agents.memory = {} end,
+}
+M._commands = commands_module.new()
+M.commands = {
+  create = function(...) return M._commands:create(...) end,
+  delete = function(...) return M._commands:delete(...) end,
+  list = function(...) return M._commands:list(...) end,
+  clear_owner = function(...) return M._commands:clear_owner(...) end,
+}
+M._events = events_module.new()
+M.events = {
+  on = function(...) return M._events:on(...) end,
+  off = function(...) return M._events:off(...) end,
+  emit = function(...) return M._events:emit(...) end,
+  list = function(...) return M._events:list(...) end,
+  clear_owner = function(...) return M._events:clear_owner(...) end,
 }
 M.plugins = plugin_registry.new(M)
 

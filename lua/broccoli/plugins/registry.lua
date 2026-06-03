@@ -131,6 +131,12 @@ function Registry:disable(name)
     lifecycle.teardown(instance)
     self.instances[name] = nil
   end
+  if self.api.commands then
+    self.api.commands.clear_owner(name)
+  end
+  if self.api.events then
+    self.api.events.clear_owner(name)
+  end
   self.statuses[name] = { name = name, status = "disabled" }
   return true
 end
