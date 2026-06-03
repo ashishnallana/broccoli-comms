@@ -245,13 +245,6 @@ in {
         [core]
         enable_reliable_send_keys = ${if cfg.tracker.enableReliableSendKeys then "true" else "false"}
 
-        [executables]
-        agent_tracker = "${packages.agentTracker}/bin/agent-tracker"
-        agent_tracker_ctl = "${packages.agentTrackerCtl}/bin/agent-tracker-ctl"
-        agent_tracker_ctl_py = "${packages.agentTrackerFiles}/agent-tracker-ctl.py"
-        agent_wrapper = "${packages.agentWrapper}/bin/agent-wrapper"
-        agent_communicator_tui = "${packages.agentCommunicator}/bin/agent-communicator"
-        agent_registry = "${packages.agentRegistry}/bin/agent-registry"
       '';
     })
 

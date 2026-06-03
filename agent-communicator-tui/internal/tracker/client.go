@@ -60,18 +60,18 @@ func (e *RPCError) Error() string {
 
 func DefaultSocketPath() string {
 	candidates := []string{}
+	if path := os.Getenv("AGENT_TRACKER_SOCKET"); path != "" {
+		return path
+	}
 	if path := config.GetString("", "paths", "agent_tracker_socket"); path != "" {
 		return path
 	}
-	if path := os.Getenv("AGENT_TRACKER_SOCKET"); path != "" {
-		candidates = append(candidates, path)
+	if runtimeDir := os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR"); runtimeDir != "" {
+		return filepath.Join(runtimeDir, "agent-tracker.sock")
 	}
 	if runtimeDir := config.GetString("", "paths", "runtime_dir"); runtimeDir != "" {
 		path := filepath.Join(runtimeDir, "agent-tracker.sock")
 		return path
-	}
-	if runtimeDir := os.Getenv("BROCCOLI_COMMS_RUNTIME_DIR"); runtimeDir != "" {
-		candidates = append(candidates, filepath.Join(runtimeDir, "agent-tracker.sock"))
 	}
 
 	cacheHome := os.Getenv("XDG_CACHE_HOME")
@@ -188,8 +188,21 @@ func (c *Client) TrackerInfo(ctx context.Context) (TrackerInfo, error) {
 }
 
 func (c *Client) List(ctx context.Context) (map[string]Agent, error) {
+	return c.ListWithOptions(ctx, ListOptions{})
+}
+
+func (c *Client) ListWithOptions(ctx context.Context, opts ListOptions) (map[string]Agent, error) {
 	agents := map[string]Agent{}
-	if err := c.call(ctx, "list", map[string]any{}, 5*time.Second, &agents); err != nil {
+	params := map[string]any{}
+	if opts.IncludeRemote {
+		params["include_remote"] = true
+	}
+	if opts.AgentID != "" {
+		params["agent_id"] = opts.AgentID
+	} else if opts.AgentName != "" {
+		params["agent_name"] = opts.AgentName
+	}
+	if err := c.call(ctx, "list", params, 5*time.Second, &agents); err != nil {
 		return nil, err
 	}
 	for name, agent := range agents {

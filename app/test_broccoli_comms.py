@@ -60,6 +60,31 @@ class TestBroccoliCommsApp(unittest.TestCase):
         self.assertNotIn("TMUX", env)
         self.assertNotIn("TMUX_PANE", env)
 
+    def test_executable_resolution_uses_environment_not_config(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
+            "XDG_CONFIG_HOME": tmp,
+            "BROCCOLI_COMMS_AGENT_TRACKER": "/env/agent-tracker",
+            "BROCCOLI_COMMS_AGENT_TRACKER_CTL": "/env/agent-tracker-ctl.py",
+            "BROCCOLI_COMMS_AGENT_WRAPPER": "/env/agent-wrapper",
+            "BROCCOLI_COMMS_AGENT_REGISTRY": "/env/agent-registry",
+            "BROCCOLI_COMMS_AGENT_COMMUNICATOR_TUI": "/env/agent-communicator",
+        }, clear=False):
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text("""
+[executables]
+agent_tracker = "/config/agent-tracker"
+agent_tracker_ctl_py = "/config/agent-tracker-ctl.py"
+agent_wrapper = "/config/agent-wrapper"
+agent_registry = "/config/agent-registry"
+agent_communicator_tui = "/config/agent-communicator"
+""")
+            self.assertEqual(broccoli_comms_app.tracker_script(), "/env/agent-tracker")
+            self.assertEqual(broccoli_comms_app.tracker_ctl_script(), "/env/agent-tracker-ctl.py")
+            self.assertEqual(broccoli_comms_app.wrapper_path(), "/env/agent-wrapper")
+            self.assertEqual(broccoli_comms_app.registry_script(), "/env/agent-registry")
+            self.assertEqual(broccoli_comms_app.tui_path(), "/env/agent-communicator")
+
     def test_agent_tracker_passthrough_preserves_agent_identity(self):
         env = {"AGENT_ID": "agent-id"}
         with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \

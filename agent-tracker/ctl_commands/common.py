@@ -2,7 +2,9 @@ import argparse
 import fcntl
 import json
 import os
+from pathlib import Path
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -42,13 +44,26 @@ def _can_connect() -> bool:
         return False
 
 
+def tracker_daemon_command() -> str | None:
+    env_val = os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER")
+    if env_val:
+        return env_val
+    on_path = shutil.which("agent-tracker")
+    if on_path:
+        return on_path
+    source_tree_tracker = Path(__file__).resolve().parents[1] / "agent-tracker.py"
+    if source_tree_tracker.exists():
+        return f"{shlex.quote(sys.executable)} {shlex.quote(str(source_tree_tracker))}"
+    return None
+
+
 def ensure_tracker_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> bool:
     os.makedirs(CACHE_DIR, exist_ok=True)
     os.makedirs(RUNTIME_DIR, exist_ok=True)
     if _can_connect():
         return True
 
-    daemon_cmd = config.get("executables", "agent_tracker")
+    daemon_cmd = tracker_daemon_command()
     if not daemon_cmd:
         return False
 

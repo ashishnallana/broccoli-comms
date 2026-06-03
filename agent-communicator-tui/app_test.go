@@ -34,6 +34,7 @@ type fakeLocal struct {
 	unreadCounts map[string]int
 	ensureName   string
 	ensureErr    error
+	listOptions  tracker.ListOptions
 }
 
 func (f *fakeLocal) EnsureMailbox(_ context.Context, agentName string) (tracker.EnsureMailboxResult, error) {
@@ -44,6 +45,10 @@ func (f *fakeLocal) TrackerInfo(context.Context) (tracker.TrackerInfo, error) {
 	return tracker.TrackerInfo{Status: "ok", AgentCount: len(f.agents), OnlineAgentCount: len(f.agents)}, nil
 }
 func (f *fakeLocal) List(context.Context) (map[string]tracker.Agent, error) { return f.agents, nil }
+func (f *fakeLocal) ListWithOptions(_ context.Context, opts tracker.ListOptions) (map[string]tracker.Agent, error) {
+	f.listOptions = opts
+	return f.agents, nil
+}
 func (f *fakeLocal) ReadInbox(_ context.Context, _ string, limit int, _ bool) (tracker.ReadInboxResult, error) {
 	f.lastLimit = limit
 	return tracker.ReadInboxResult{Mode: "history", Messages: f.inbox}, nil

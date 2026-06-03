@@ -20,6 +20,7 @@ type localClient interface {
 	EnsureMailbox(context.Context, string) (tracker.EnsureMailboxResult, error)
 	TrackerInfo(context.Context) (tracker.TrackerInfo, error)
 	List(context.Context) (map[string]tracker.Agent, error)
+	ListWithOptions(context.Context, tracker.ListOptions) (map[string]tracker.Agent, error)
 	ReadInbox(context.Context, string, int, bool) (tracker.ReadInboxResult, error)
 	ReadInboxForSender(context.Context, string, int, bool, string, string, string) (tracker.ReadInboxResult, error)
 	GetUnreadCounts(context.Context, string) (tracker.UnreadCountsResult, error)

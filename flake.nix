@@ -104,6 +104,11 @@
             runtimeInputs = with pkgs; [ python3 tmux coreutils procps bash agentTracker agentTrackerCtl agentWrapper agentCommunicator agentRegistry ];
             text = ''
               export PATH=${lib.makeBinPath [ agentTracker agentTrackerCtl agentWrapper agentCommunicator agentRegistry pkgs.tmux pkgs.python3 pkgs.coreutils pkgs.procps pkgs.bash ]}:$PATH
+              export BROCCOLI_COMMS_AGENT_TRACKER=${agentTracker}/bin/agent-tracker
+              export BROCCOLI_COMMS_AGENT_TRACKER_CTL=${agentTrackerFiles}/agent-tracker-ctl.py
+              export BROCCOLI_COMMS_AGENT_WRAPPER=${agentWrapper}/bin/agent-wrapper
+              export BROCCOLI_COMMS_AGENT_REGISTRY=${agentRegistry}/bin/agent-registry
+              export BROCCOLI_COMMS_AGENT_COMMUNICATOR_TUI=${agentCommunicator}/bin/agent-communicator
               exec ${pkgs.python3}/bin/python3 ${./app/broccoli-comms.py} "$@"
             '';
           };

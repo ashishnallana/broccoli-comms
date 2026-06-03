@@ -209,30 +209,19 @@ def tracker_rpc(method: str, params: dict | None = None) -> object | None:
 
 
 def tracker_script() -> str:
-    return get_toml_config("executables", "agent_tracker", str(repo_root() / "agent-tracker" / "agent-tracker.py"))
+    return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER") or str(repo_root() / "agent-tracker" / "agent-tracker.py")
 
 def tracker_ctl_script() -> str:
-    cfg_val = get_toml_config("executables", "agent_tracker_ctl_py", None)
-    if cfg_val:
-        path = Path(cfg_val)
-        if path.exists() and not os.environ.get("BROCCOLI_COMMS_LOCAL_DEV"):
-            return str(path)
-    
-    cfg_val = get_toml_config("executables", "agent_tracker_ctl", None)
-    if cfg_val:
-        path = Path(cfg_val)
-        if path.exists() and not os.environ.get("BROCCOLI_COMMS_LOCAL_DEV"):
-            return str(path)
-    return str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py")
+    return os.environ.get("BROCCOLI_COMMS_AGENT_TRACKER_CTL") or str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py")
 
 def wrapper_path() -> str:
-    return get_toml_config("executables", "agent_wrapper", str(repo_root() / "wrapper" / "agent-wrapper.sh"))
+    return os.environ.get("BROCCOLI_COMMS_AGENT_WRAPPER") or str(repo_root() / "wrapper" / "agent-wrapper.sh")
 
 def registry_script() -> str:
-    return get_toml_config("executables", "agent_registry", str(repo_root() / "agent-registry" / "server.py"))
+    return os.environ.get("BROCCOLI_COMMS_AGENT_REGISTRY") or str(repo_root() / "agent-registry" / "server.py")
 
 def tui_path() -> str:
-    return get_toml_config("executables", "agent_communicator_tui", "agent-communicator")
+    return os.environ.get("BROCCOLI_COMMS_AGENT_COMMUNICATOR_TUI") or "agent-communicator"
 
 
 def ensure_tracker() -> None:
@@ -1731,10 +1720,7 @@ def agent_tracker(args: argparse.Namespace) -> None:
         ensure_tmux()
     ctl = tracker_ctl_script()
     tracker_args = list(getattr(args, "tracker_args", None) or ["--help"])
-    env = base_env()
-    for key in ("AGENT_ID", "AGENT_NAME", "AGENT_UUID"):
-        if os.environ.get(key):
-            env[key] = os.environ[key]
+    env = base_env(preserve_agent_identity=True)
     cmd = [sys.executable, ctl] if ctl.endswith(".py") else [ctl]
     cmd.extend(tracker_args)
     os.execvpe(cmd[0], cmd, env)

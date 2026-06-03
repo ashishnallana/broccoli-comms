@@ -84,6 +84,44 @@ func TestListDecodesDetectionStatus(t *testing.T) {
 	}
 }
 
+func TestListWithOptionsIncludesRemoteAndPreferredCallerID(t *testing.T) {
+	client := fakeClient(t, func(req rpcRequest) any {
+		if req.Method != "list" {
+			t.Fatalf("method = %s, want list", req.Method)
+		}
+		params, ok := req.Params.(map[string]any)
+		if !ok {
+			t.Fatalf("params = %#v", req.Params)
+		}
+		if params["include_remote"] != true || params["agent_id"] != "caller-id" {
+			t.Fatalf("params = %#v", params)
+		}
+		if _, ok := params["agent_name"]; ok {
+			t.Fatalf("agent_name should not be sent when agent_id is available: %#v", params)
+		}
+		return map[string]Agent{}
+	})
+	if _, err := client.ListWithOptions(context.Background(), ListOptions{IncludeRemote: true, AgentID: "caller-id", AgentName: "caller-name"}); err != nil {
+		t.Fatalf("ListWithOptions: %v", err)
+	}
+}
+
+func TestListWithOptionsFallsBackToCallerName(t *testing.T) {
+	client := fakeClient(t, func(req rpcRequest) any {
+		params, ok := req.Params.(map[string]any)
+		if !ok {
+			t.Fatalf("params = %#v", req.Params)
+		}
+		if params["agent_name"] != "caller-name" {
+			t.Fatalf("params = %#v", params)
+		}
+		return map[string]Agent{}
+	})
+	if _, err := client.ListWithOptions(context.Background(), ListOptions{AgentName: "caller-name"}); err != nil {
+		t.Fatalf("ListWithOptions: %v", err)
+	}
+}
+
 func TestListSetsAgentNamesFromMapKeys(t *testing.T) {
 	client := fakeClient(t, func(req rpcRequest) any {
 		if req.Method != "list" {

@@ -19,6 +19,12 @@ type DetectionStatus struct {
 	Error                string   `json:"error"`
 }
 
+type ListOptions struct {
+	IncludeRemote bool
+	AgentID       string
+	AgentName     string
+}
+
 type Agent struct {
 	Name            string          `json:"name"`
 	AgentID         string          `json:"agent_id"`

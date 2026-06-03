@@ -1473,6 +1473,19 @@ def handle_capture_pane(params: dict, caller_pid: int = None) -> dict:
         if pane_info:
             session = pane_info.get("session")
 
+    # Resize to a stable width before capture so wrapped pane output is predictable.
+    capture_width = params.get("capture_width", 80)
+    if capture_width is not None:
+        try:
+            capture_width = int(capture_width)
+        except ValueError:
+            raise ValueError("capture_width must be an integer")
+        if capture_width > 0:
+            try:
+                tmux_util.resize_pane_width(tmux_pane, capture_width, tmux_socket)
+            except Exception as e:
+                raise RuntimeError(f"Failed to resize pane before capture: {e}")
+
     # Query copy-mode status
     copy_mode = tmux_util.is_pane_in_copy_mode(tmux_pane, tmux_socket)
 

@@ -19,6 +19,8 @@ class TestRpcHandler(unittest.TestCase):
         state.events = []
         state.event_sequence_id = 0
         state.INBOX_DIR = "/tmp/test-agent-inboxes"
+        self.resize_pane_width = mock.patch("tmux_util.resize_pane_width").start()
+        self.addCleanup(mock.patch.stopall)
 
     @mock.patch("tmux_util.set_agent_no_registry")
     @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")
@@ -1346,6 +1348,7 @@ class TestRpcHandler(unittest.TestCase):
         self.assertFalse(res["copy_mode"])
         self.assertEqual(res["content"], "Screen Text")
         self.assertEqual(res["lines_requested"], 100)
+        self.resize_pane_width.assert_called_once_with("%1", 80, "sock")
         mock_copy_mode.assert_called_once_with("%1", "sock")
         mock_capture.assert_called_once_with("%1", last_lines=100, socket_path="sock", include_ansi=True)
 

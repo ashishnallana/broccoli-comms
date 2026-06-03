@@ -1,5 +1,6 @@
 import unittest
 from unittest import mock
+import subprocess
 import time
 
 import tmux_reliability
@@ -8,6 +9,12 @@ from ctl_commands import common as ctl_common
 
 
 class TestTmuxUtil(unittest.TestCase):
+    @mock.patch('tmux_util.subprocess.run')
+    def test_resize_pane_width(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout=b'', stderr=b'')
+        tmux_util.resize_pane_width('%0', 80, socket_path='sock')
+        mock_run.assert_called_once_with(['tmux', '-S', 'sock', 'resize-pane', '-t', '%0', '-x', '80'], check=True, capture_output=True, timeout=5, env=mock.ANY)
+
     def setUp(self):
         # Reset the global state before each test
         tmux_util.last_send_keys_time = 0.0

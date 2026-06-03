@@ -475,6 +475,20 @@ def execute_command_reliable(pane_id, command, socket_path=None, timeout=30):
 
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
+def resize_pane_width(pane_id, width=80, socket_path=None) -> None:
+    """Resizes a tmux pane to a specific width in cells."""
+    try:
+        width = int(width)
+    except (TypeError, ValueError):
+        raise ValueError("width must be an integer")
+    if width <= 0:
+        raise ValueError("width must be positive")
+    cmd = []
+    if socket_path:
+        cmd.extend(["-S", socket_path])
+    cmd.extend(["resize-pane", "-t", pane_id, "-x", str(width)])
+    run_tmux_cmd(cmd)
+
 def capture_pane_visible_text(pane_id, last_lines=200, socket_path=None, include_ansi=False) -> str:
     """Captures the visible text of a pane and its scrollback history.
     
