@@ -75,6 +75,7 @@ def get_active_tracker_socket() -> Path:
     if configured_sock:
         candidates.append(Path(configured_sock))
     candidates.append(xdg_cache() / "agent-tracker.sock")
+    candidates.append(xdg_cache() / "agent-tracker" / "agent-tracker.sock")
     candidates.append(xdg_runtime() / "agent-tracker.sock")
     legacy_cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     candidates.append(legacy_cache / "agent-tracker" / "agent-tracker.sock")
@@ -207,7 +208,15 @@ def tracker_script() -> str:
     return get_toml_config("executables", "agent_tracker", str(repo_root() / "agent-tracker" / "agent-tracker.py"))
 
 def tracker_ctl_script() -> str:
-    return get_toml_config("executables", "agent_tracker_ctl", str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py"))
+    path = Path(get_toml_config("executables", "agent_tracker_ctl_py", ""))
+    if path.exists() and not os.environ.get("BROCCOLI_COMMS_LOCAL_DEV"):
+        return str(path)
+    
+    # Fallback for old configs before agent_tracker_ctl_py was added
+    path = Path(get_toml_config("executables", "agent_tracker_ctl", ""))
+    if path.exists() and not os.environ.get("BROCCOLI_COMMS_LOCAL_DEV"):
+        return str(path)
+    return str(repo_root() / "agent-tracker" / "agent-tracker-ctl.py")
 
 def wrapper_path() -> str:
     return get_toml_config("executables", "agent_wrapper", str(repo_root() / "wrapper" / "agent-wrapper.sh"))

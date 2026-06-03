@@ -102,7 +102,7 @@
             '';
           };
         in {
-          inherit agentTracker agentTrackerCtl agentWrapper agentCommunicator agentCommunicatorElectron agentRegistry managedAgent broccoliComms;
+          inherit agentTrackerFiles agentTracker agentTrackerCtl agentWrapper agentCommunicator agentCommunicatorElectron agentRegistry managedAgent broccoliComms;
           agent-tracker = agentTracker;
           agent-tracker-ctl = agentTrackerCtl;
           agent-wrapper = agentWrapper;
