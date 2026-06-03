@@ -192,7 +192,7 @@ def background_monitor():
 def check_unread_messages_and_remind():
     """Checks all inboxes for unread messages, sends reminders to live agents, and resolves gone ones."""
     import glob
-    import rpc_handler
+    from handlers import inbox_handlers
 
     inbox_pattern = os.path.join(state.INBOX_DIR, "*.inbox")
     inbox_files = glob.glob(inbox_pattern)
@@ -209,7 +209,7 @@ def check_unread_messages_and_remind():
         target_id_or_name = basename[:-6] # remove ".inbox"
 
         try:
-            with rpc_handler._locked_inbox(inbox_file):
+            with inbox_handlers._locked_inbox(inbox_file):
                 messages = []
                 if os.path.exists(inbox_file):
                     with open(inbox_file, "r") as f:
@@ -246,7 +246,7 @@ def check_unread_messages_and_remind():
                         msg["read"] = True
                         msg["status"] = "no-receiver"
 
-                    rpc_handler._atomic_write_inbox(inbox_file, messages)
+                    inbox_handlers._atomic_write_inbox(inbox_file, messages)
         except Exception as e:
             logging.error(f"Failed to process inbox {inbox_file} for reminder/cleanup: {e}")
 
