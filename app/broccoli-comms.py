@@ -28,7 +28,10 @@ import urllib.request
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
-sys.path.insert(0, str(repo_root() / "agent-tracker"))
+if "BROCCOLI_COMMS_AGENT_TRACKER" in os.environ:
+    sys.path.insert(0, str(Path(os.environ["BROCCOLI_COMMS_AGENT_TRACKER"]).parent))
+else:
+    sys.path.insert(0, str(repo_root() / "agent-tracker"))
 import config
 
 APP = "broccoli-comms"
