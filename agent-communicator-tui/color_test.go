@@ -32,6 +32,7 @@ func TestDefaultThemeUsesANSIColorIndexes(t *testing.T) {
 		"PanelBg":          theme.PanelBg,
 		"PanelBgAlt":       theme.PanelBgAlt,
 		"IncomingBubbleBg": theme.IncomingBubbleBg,
+		"CapturePaneBg":    theme.CapturePaneBg,
 		"RightColumnBg":    theme.RightColumnBg,
 		"Text":             theme.Text,
 		"TextStrong":       theme.TextStrong,

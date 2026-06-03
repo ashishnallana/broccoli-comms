@@ -9,6 +9,7 @@ func everforestTerminalTheme() TerminalTheme {
 		PanelBg:          c("#343f44"),
 		PanelBgAlt:       c("#3d484d"),
 		IncomingBubbleBg: c("#34483f"),
+		CapturePaneBg:    c("#3d484d"),
 		RightColumnBg:    c("#343f44"),
 		Text:             c("#d3c6aa"),
 		TextStrong:       c("#fdf6e3"),

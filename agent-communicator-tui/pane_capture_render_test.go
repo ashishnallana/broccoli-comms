@@ -47,10 +47,13 @@ func TestPaneCaptureRenderingIsBackgroundSafeAndDoesNotMutateStoredBody(t *testi
 	rendered := strings.Join(m.messageLinesForWidth(100), "\n")
 	assertNoResetToRawSpace(t, "pane capture message", rendered)
 	assertVisibleCellsHaveBackground(t, "pane capture message", rendered)
-	for _, want := range []string{"▣ pane capture", "… 2 earlier lines hidden", "capture-line-03", "capture-line-12", "48;2;52;72;63"} {
+	for _, want := range []string{"▣ pane capture", "… 2 earlier lines hidden", "capture-line-03", "capture-line-12", "38;2;167;192;128;48;2;60;72;77m▣ pane capture", "48;2;60;72;77"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered pane capture missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "48;2;52;72;63") {
+		t.Fatalf("pane capture should use CapturePaneBg instead of IncomingBubbleBg:\n%s", rendered)
 	}
 	for _, unwanted := range []string{"capture-line-01", "capture-line-02"} {
 		if strings.Contains(rendered, unwanted) {
