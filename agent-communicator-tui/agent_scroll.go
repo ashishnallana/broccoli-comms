@@ -17,10 +17,11 @@ func (m model) selectedAgentLineRangeFromOffset(offset int) (int, int) {
 	lastGroup := ""
 	hiddenStart := m.hiddenStartIndex()
 	for i := offset; i < len(m.rows); i++ {
-		if i == hiddenStart && hiddenStart > 0 {
+		if i == hiddenStart && hiddenStart < len(m.rows) {
 			if line > 0 {
 				line++
 			}
+			line++
 			lastGroup = ""
 		}
 		group := m.agentView(m.rows[i]).GroupHeader

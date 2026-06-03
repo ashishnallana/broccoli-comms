@@ -39,6 +39,24 @@ func TestHiddenAgentsSortAfterActiveWithoutVisibleExplanation(t *testing.T) {
 	}
 }
 
+func TestAgentListShowsHiddenAgentsSeparator(t *testing.T) {
+	m := model{
+		rows: []agentRow{
+			{Name: "alpha", Scope: "local"},
+			{Name: "remote-a", Scope: "remote"},
+			{Name: "beta", Scope: "local"},
+		},
+		hiddenAgents: map[string]bool{"beta": true},
+	}
+	view := m.agentList(60, 20)
+	if !strings.Contains(view, "Hidden Agents") {
+		t.Fatalf("agent list missing hidden separator:\n%s", view)
+	}
+	if !strings.Contains(view, "beta") || !strings.Contains(view, "◌") {
+		t.Fatalf("hidden row should remain visible with marker:\n%s", view)
+	}
+}
+
 func TestCtrlHTogglesHiddenAndMovesSelection(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}, {Name: "beta", Scope: "local"}, {Name: "gamma", Scope: "local"}}, selected: 1, hiddenAgents: map[string]bool{}}
@@ -196,12 +214,10 @@ func namesOfRows(rows []agentRow) []string {
 	return names
 }
 
-func TestCtrlNStaysWithinFocusedAgentSection(t *testing.T) {
+func TestCtrlNCtrlPSkipHiddenAgents(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}, {Name: "beta", Scope: "local"}, {Name: "gamma", Scope: "local"}}, hiddenAgents: map[string]bool{"gamma": true}}
 	m.sortRowsByHidden("")
-	// "gamma" is hidden, so it is sorted last.
-	// The order of rows is: "alpha", "beta", "gamma".
-	// Starts at index 0 ("alpha").
+	// "gamma" is hidden, so active cycling should stay between alpha and beta.
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	m = updated.(model)
@@ -211,13 +227,29 @@ func TestCtrlNStaysWithinFocusedAgentSection(t *testing.T) {
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	m = updated.(model)
-	if m.currentRow().Name != "gamma" {
-		t.Fatalf("selected=%+v, want gamma (hidden agent in continuous loop)", m.currentRow())
+	if m.currentRow().Name != "alpha" {
+		t.Fatalf("ctrl-n should skip hidden agents, selected=%+v", m.currentRow())
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+	if m.currentRow().Name != "beta" {
+		t.Fatalf("ctrl-p should skip hidden agents, selected=%+v", m.currentRow())
+	}
+}
+
+func TestCtrlNCtrlPFallbackWhenAllAgentsHidden(t *testing.T) {
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}, {Name: "beta", Scope: "local"}}, hiddenAgents: map[string]bool{"alpha": true, "beta": true}}
+	m.sortRowsByHidden("")
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(model)
+	if m.currentRow().Name != "beta" {
+		t.Fatalf("all-hidden fallback should preserve existing cycling, selected=%+v", m.currentRow())
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
 	m = updated.(model)
 	if m.currentRow().Name != "alpha" {
-		t.Fatalf("selected wrapped outside continuous list: %+v", m.currentRow())
+		t.Fatalf("all-hidden fallback should preserve existing cycling, selected=%+v", m.currentRow())
 	}
 }

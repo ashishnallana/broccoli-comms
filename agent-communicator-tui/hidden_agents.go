@@ -198,9 +198,31 @@ func (m *model) selectNextInSection(delta int) {
 	if len(m.rows) == 0 {
 		return
 	}
-	debugLogf("selectNextInSection continuous start selected=%d delta=%d rows_len=%d", m.selected, delta, len(m.rows))
-	m.selected = (m.selected + delta + len(m.rows)) % len(m.rows)
-	debugLogf("selectNextInSection continuous end selected=%d", m.selected)
+	indices := m.sectionIndices(activeAgents)
+	if len(indices) == 0 {
+		debugLogf("selectNextInSection fallback start selected=%d delta=%d rows_len=%d", m.selected, delta, len(m.rows))
+		m.selected = (m.selected + delta + len(m.rows)) % len(m.rows)
+		debugLogf("selectNextInSection fallback end selected=%d", m.selected)
+		return
+	}
+	currentPos := -1
+	for pos, idx := range indices {
+		if idx == m.selected {
+			currentPos = pos
+			break
+		}
+	}
+	if currentPos < 0 {
+		if delta < 0 {
+			m.selected = indices[len(indices)-1]
+		} else {
+			m.selected = indices[0]
+		}
+		m.agentSection = activeAgents
+		return
+	}
+	m.selected = indices[(currentPos+delta+len(indices))%len(indices)]
+	m.agentSection = activeAgents
 }
 
 func (m *model) toggleAgentSection() {

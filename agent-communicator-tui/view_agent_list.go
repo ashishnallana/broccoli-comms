@@ -51,8 +51,9 @@ func (m model) currentAgentPanel(width, height int) string {
 }
 
 func (m model) switcherPanel(width, height int) string {
-	shown := len(m.rows)
-	hidden := m.hiddenCount() + m.systemHiddenCount()
+	hiddenRows := m.hiddenCount()
+	shown := max(0, len(m.rows)-hiddenRows)
+	hidden := hiddenRows + m.systemHiddenCount()
 	headerRight := fmt.Sprintf("%d shown", shown)
 	if hidden > 0 {
 		headerRight = fmt.Sprintf("%d shown · %d hidden", shown, hidden)
@@ -159,7 +160,7 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 }
 
 func (m model) hiddenSeparator(width int) string {
-	return ""
+	return sectionHeaderStyle.Render(truncateCells("Hidden Agents", max(1, width-1)))
 }
 
 func compactCWD(cwd string) string {
@@ -195,20 +196,29 @@ func (m model) agentList(width, height int) string {
 		return mutedStyle.Render("no agents")
 	}
 	items := make([]struct {
-		Index int
-		Row   agentRow
+		Index  int
+		Row    agentRow
+		Hidden bool
 	}, 0, len(m.rows))
-	localCount, remoteCount := 0, 0
+	activeLocalCount, activeRemoteCount, hiddenLocalCount, hiddenRemoteCount := 0, 0, 0, 0
 	for i, row := range m.rows {
+		hidden := m.isHiddenAgent(row)
 		if row.Scope == "remote" {
-			remoteCount++
+			if hidden {
+				hiddenRemoteCount++
+			} else {
+				activeRemoteCount++
+			}
+		} else if hidden {
+			hiddenLocalCount++
 		} else {
-			localCount++
+			activeLocalCount++
 		}
 		items = append(items, struct {
-			Index int
-			Row   agentRow
-		}{Index: i, Row: row})
+			Index  int
+			Row    agentRow
+			Hidden bool
+		}{Index: i, Row: row, Hidden: hidden})
 	}
 	if len(items) == 0 {
 		return mutedStyle.Render("no agents")
@@ -218,22 +228,40 @@ func (m model) agentList(width, height int) string {
 	end := min(len(items), offset+visible)
 	var b strings.Builder
 	lastGroup := ""
+	hiddenSeparatorWritten := false
+	justWroteSeparator := false
 	for pos := offset; pos < end; pos++ {
 		item := items[pos]
+		if item.Hidden && !hiddenSeparatorWritten {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(m.hiddenSeparator(width) + "\n")
+			hiddenSeparatorWritten = true
+			justWroteSeparator = true
+			lastGroup = ""
+		}
 		group := "LOCAL"
-		count := localCount
+		count := activeLocalCount
+		if item.Hidden {
+			count = hiddenLocalCount
+		}
 		if item.Row.Scope == "remote" {
 			group = "REMOTE"
-			count = remoteCount
+			count = activeRemoteCount
+			if item.Hidden {
+				count = hiddenRemoteCount
+			}
 		}
 		heading := fmt.Sprintf("%s (%d)", group, count)
 		if heading != lastGroup {
-			if b.Len() > 0 {
+			if b.Len() > 0 && !justWroteSeparator {
 				b.WriteString("\n")
 			}
 			b.WriteString(sectionHeaderStyle.Render(truncateCells(heading, max(1, width-1))) + "\n")
 			lastGroup = heading
 		}
+		justWroteSeparator = false
 		b.WriteString(m.agentCard(item.Row, item.Index == m.selected, width-2))
 		if pos < end-1 {
 			b.WriteString("\n")
