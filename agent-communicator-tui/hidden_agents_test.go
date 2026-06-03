@@ -163,6 +163,39 @@ func TestSendUnhidesHiddenAgent(t *testing.T) {
 	}
 }
 
+func TestUnhideImmediatelyRebuildsDisplayGrouping(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	alpha := agentRow{Name: "alpha", Scope: "local"}
+	beta := agentRow{Name: "beta", Scope: "local"}
+	remote := agentRow{Name: "host/remote", Scope: "remote"}
+	m := model{
+		allRows:      []agentRow{alpha, beta, remote},
+		rows:         []agentRow{alpha, remote, beta},
+		selected:     2,
+		hiddenAgents: map[string]bool{"beta": true},
+		agentSection: hiddenAgents,
+	}
+
+	cmd := m.unhideAgent(beta)
+	if cmd == nil {
+		t.Fatal("expected hidden-agent save command")
+	}
+	if got := namesOfRows(m.rows); strings.Join(got, ",") != "alpha,beta,host/remote" {
+		t.Fatalf("rows were not regrouped immediately: %v", got)
+	}
+	if m.currentRow().Name != "beta" || m.agentSection != activeAgents {
+		t.Fatalf("selected=%+v section=%v", m.currentRow(), m.agentSection)
+	}
+}
+
+func namesOfRows(rows []agentRow) []string {
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		names = append(names, row.Name)
+	}
+	return names
+}
+
 func TestCtrlNStaysWithinFocusedAgentSection(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}, {Name: "beta", Scope: "local"}, {Name: "gamma", Scope: "local"}}, hiddenAgents: map[string]bool{"gamma": true}}
 	m.sortRowsByHidden("")

@@ -231,7 +231,7 @@ func (m *model) toggleHiddenCurrentAgent() tea.Cmd {
 	} else {
 		m.hiddenAgents[key] = true
 	}
-	m.sortRowsByHidden("")
+	m.applyAgentVisibility(key)
 	m.selectSectionPosition(oldSection, oldPos)
 	m.scrollSelectedAgentIntoView()
 	return saveHiddenAgentsCmd(m.hiddenAgents)
@@ -274,7 +274,7 @@ func (m *model) unhideAgent(row agentRow) tea.Cmd {
 		return nil
 	}
 	delete(m.hiddenAgents, key)
-	m.sortRowsByHidden(key)
+	m.applyAgentVisibility(key)
 	m.agentSection = activeAgents
 	m.scrollSelectedAgentIntoView()
 	return saveHiddenAgentsCmd(m.hiddenAgents)
