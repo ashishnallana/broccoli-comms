@@ -10,6 +10,29 @@ import state
 import tmux_util
 
 
+AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+VALID_SWARM_ROLES = {"main", "subagent"}
+
+
+def normalize_swarms(swarms: object) -> list[dict[str, str]]:
+    if swarms is None:
+        return []
+    if not isinstance(swarms, list):
+        raise ValueError("swarms must be a list")
+    normalized = []
+    for item in swarms:
+        if not isinstance(item, dict):
+            raise ValueError("swarm membership must be an object")
+        name = item.get("name")
+        role = item.get("role")
+        if not isinstance(name, str) or not name or not AGENT_NAME_RE.match(name):
+            raise ValueError("swarm name must contain only letters, numbers, dot, underscore, and dash")
+        if role not in VALID_SWARM_ROLES:
+            raise ValueError("swarm role must be 'main' or 'subagent'")
+        normalized.append({"name": name, "role": role})
+    return normalized
+
+
 def generate_unique_agent_name(name: str, session: str = None, is_register: bool = False) -> str:
     if not name:
         num = 1
@@ -74,6 +97,7 @@ def handle_register(params: dict) -> str:
     no_notify_with_send_keys = bool(params.get("no_notify_with_send_keys", False))
     no_registry = bool(params.get("no_registry", False))
     cwd = params.get("cwd")
+    raw_swarms = params.get("swarms") if "swarms" in params else None
 
     if not (session and tmux_pane and wrapper_pid and tmux_socket):
         raise ValueError("Invalid params")
@@ -94,6 +118,7 @@ def handle_register(params: dict) -> str:
         agent_name = generate_unique_agent_name(name, session, is_register=True)
 
     existing_info = state.get_agent(existing_name_for_id) if existing_name_for_id else None
+    swarms = normalize_swarms(raw_swarms) if raw_swarms is not None else (existing_info or {}).get("swarms", [])
     state.set_agent(agent_name, {
         **(existing_info or {}),
         "session": session,
@@ -111,6 +136,7 @@ def handle_register(params: dict) -> str:
         "no_notify_with_send_keys": no_notify_with_send_keys,
         "no_registry": no_registry,
         "cwd": cwd or (existing_info or {}).get("cwd"),
+        "swarms": swarms,
         "last_heartbeat": time.time(),
         "recovered_at": None,
         "pending_notifications": (existing_info or {}).get("pending_notifications", [])
@@ -179,6 +205,7 @@ def _local_agent_list_row(name: str, info: dict) -> dict:
         "tracker_id": info.get("tracker_id") or registry_client.TRACKER_ID,
         "target_address": info.get("target_address") or name,
         "model_type": state.normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd")),
+        "swarms": normalize_swarms(info.get("swarms", [])),
     }
 
 
@@ -278,6 +305,8 @@ def handle_update_agent(params: dict, caller_pid: int = None, identify_agent=Non
     agent_name = _identify_or_error(params, caller_pid, identify_agent)
 
     kwargs = {k: v for k, v in params.items() if k not in ["agent_id", "agent_name", "tmux_pane"]}
+    if "swarms" in kwargs:
+        kwargs["swarms"] = normalize_swarms(kwargs.get("swarms"))
     old_info = state.get_agent(agent_name) or {}
     old_status = old_info.get("status")
     if state.update_agent(agent_name, **kwargs):
@@ -297,6 +326,8 @@ def handle_heartbeat(params: dict, caller_pid: int = None, identify_agent=None) 
     old_info = state.get_agent(agent_name) or {}
     old_status = old_info.get("status")
     kwargs = {k: v for k, v in params.items() if k not in ["agent_id", "agent_name"]}
+    if "swarms" in kwargs:
+        kwargs["swarms"] = normalize_swarms(kwargs.get("swarms"))
     kwargs["last_heartbeat"] = time.time()
     kwargs["recovered_at"] = None
     if state.update_agent(agent_name, **kwargs):

@@ -25,26 +25,32 @@ type ListOptions struct {
 	AgentName     string
 }
 
+type SwarmMembership struct {
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
 type Agent struct {
-	Name            string          `json:"name"`
-	AgentID         string          `json:"agent_id"`
-	UUID            string          `json:"uuid"`
-	Session         string          `json:"session"`
-	TmuxPane        string          `json:"tmux_pane"`
-	Status          string          `json:"status"`
-	WaitingApproval bool            `json:"waiting_approval"`
-	AgentType       string          `json:"agent_type"`
-	AgentCmd        string          `json:"agent_cmd"`
-	ModelType       string          `json:"model_type"`
-	Aliases         []string        `json:"aliases"`
-	IsThisMe        bool            `json:"is_this_me"`
-	CWD             string          `json:"cwd,omitempty"`
-	Scope           string          `json:"scope,omitempty"`
-	Hostname        string          `json:"hostname,omitempty"`
-	TargetAddress   string          `json:"target_address,omitempty"`
-	TrackerID       string          `json:"tracker_id,omitempty"`
-	RegistryName    string          `json:"registry_name,omitempty"`
-	Detection       DetectionStatus `json:"detection,omitempty"`
+	Name            string            `json:"name"`
+	AgentID         string            `json:"agent_id"`
+	UUID            string            `json:"uuid"`
+	Session         string            `json:"session"`
+	TmuxPane        string            `json:"tmux_pane"`
+	Status          string            `json:"status"`
+	WaitingApproval bool              `json:"waiting_approval"`
+	AgentType       string            `json:"agent_type"`
+	AgentCmd        string            `json:"agent_cmd"`
+	ModelType       string            `json:"model_type"`
+	Aliases         []string          `json:"aliases"`
+	IsThisMe        bool              `json:"is_this_me"`
+	CWD             string            `json:"cwd,omitempty"`
+	Scope           string            `json:"scope,omitempty"`
+	Hostname        string            `json:"hostname,omitempty"`
+	TargetAddress   string            `json:"target_address,omitempty"`
+	TrackerID       string            `json:"tracker_id,omitempty"`
+	RegistryName    string            `json:"registry_name,omitempty"`
+	Detection       DetectionStatus   `json:"detection,omitempty"`
+	Swarms          []SwarmMembership `json:"swarms,omitempty"`
 }
 
 type Attachment struct {
@@ -53,6 +59,51 @@ type Attachment struct {
 	ContentType string `json:"content_type,omitempty"`
 	Path        string `json:"path,omitempty"`
 	Size        int64  `json:"size,omitempty"`
+}
+
+type SwarmMember struct {
+	Name          string `json:"name"`
+	AgentName     string `json:"agent_name,omitempty"`
+	Role          string `json:"role,omitempty"`
+	AgentID       string `json:"agent_id,omitempty"`
+	TargetAddress string `json:"target_address,omitempty"`
+	Scope         string `json:"scope,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Hostname      string `json:"hostname,omitempty"`
+	TrackerID     string `json:"tracker_id,omitempty"`
+	RegistryName  string `json:"registry_name,omitempty"`
+	ModelType     string `json:"model_type,omitempty"`
+	AgentType     string `json:"agent_type,omitempty"`
+	AgentCmd      string `json:"agent_cmd,omitempty"`
+}
+
+type Swarm struct {
+	Name     string        `json:"name"`
+	Main     SwarmMember   `json:"main"`
+	Members  []SwarmMember `json:"members"`
+	Warnings []string      `json:"warnings,omitempty"`
+}
+
+type ListSwarmsResult struct {
+	Swarms []Swarm `json:"swarms"`
+}
+
+type SwarmTimelineMessage struct {
+	MessageID   string `json:"message_id,omitempty"`
+	Sender      string `json:"sender"`
+	Recipient   string `json:"recipient,omitempty"`
+	Timestamp   string `json:"timestamp"`
+	Message     string `json:"message"`
+	Body        string `json:"body,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+}
+
+type SwarmTimelineResult struct {
+	Messages []SwarmTimelineMessage `json:"messages"`
+}
+
+type WatchSwarmResult struct {
+	OK bool `json:"ok"`
 }
 
 type Message struct {

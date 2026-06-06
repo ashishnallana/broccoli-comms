@@ -78,6 +78,43 @@ func (m model) handleAllInboxLoaded(msg allInboxLoaded) (model, tea.Cmd) {
 	return m, loadUnreadCounts(m.local, m.ownName)
 }
 
+func (m model) handleSwarmsLoaded(msg swarmsLoaded) (model, tea.Cmd) {
+	m.swarmErr = msg.Err
+	if msg.Err != nil {
+		m.swarms = nil
+		m.selectedSwarm = 0
+		m.swarmMessages = nil
+		return m, nil
+	}
+	previous := m.selectedSwarmName()
+	m.swarms = msg.Rows
+	m.clampSelectedSwarm()
+	if previous != "" {
+		for i, swarm := range m.swarms {
+			if swarm.Name == previous {
+				m.selectedSwarm = i
+				break
+			}
+		}
+	}
+	if m.mode == swarmView {
+		return m, loadSelectedSwarmTimeline(m.local, m.selectedSwarmName())
+	}
+	return m, nil
+}
+
+func (m model) handleSwarmTimelineLoaded(msg swarmTimelineLoaded) (model, tea.Cmd) {
+	m.swarmErr = msg.Err
+	if msg.Err != nil {
+		return m, nil
+	}
+	if msg.Swarm == "" || msg.Swarm == m.selectedSwarmName() {
+		m.swarmMessages = msg.Messages
+		m.selectLatestMessage()
+	}
+	return m, nil
+}
+
 func (m model) handleMessageSent(msg messageSent) (model, tea.Cmd) {
 	m.err = msg.Err
 	if msg.Err != nil {
@@ -183,7 +220,7 @@ func (m model) handleConfigItemsLoaded(msg configItemsLoaded) (model, tea.Cmd) {
 func (m model) handlePromptEdited(msg promptEdited) (model, tea.Cmd) {
 	m.err = msg.Err
 	if msg.Err == nil && msg.Saved && m.canSendCurrent() && strings.TrimSpace(msg.Body) != "" {
-		row := m.rows[m.selected]
+		row, _ := m.currentSendTarget()
 		record := makeOutboxRecord(m.ownName, row, msg.Body)
 		unhideCmd := m.unhideAgent(row)
 		m.clearUnread(row)

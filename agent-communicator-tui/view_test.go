@@ -94,7 +94,7 @@ func TestCtrlUCtrlDClampMessageScroll(t *testing.T) {
 func TestViewWideAndNarrowIncludeCoreRegions(t *testing.T) {
 	m := model{width: 120, height: 30, rows: []agentRow{{Name: "alpha", Scope: "local", Status: "idle", CWD: "/repo"}}, messages: []tracker.Message{{Sender: "agent", Body: "**hello**"}}}
 	wide := m.View()
-	for _, want := range []string{"Switch agent", "Conversation", "alpha", "hello"} {
+	for _, want := range []string{"Switch agent", "Simple Chat", "alpha", "hello"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("wide view missing %q:\n%s", want, wide)
 		}
@@ -107,7 +107,7 @@ func TestViewWideAndNarrowIncludeCoreRegions(t *testing.T) {
 	}
 	m.width = 48
 	narrow := m.View()
-	if !strings.Contains(narrow, "Conversation") || strings.Contains(narrow, "Selected") {
+	if !strings.Contains(narrow, "Simple Chat") || strings.Contains(narrow, "Selected") {
 		t.Fatalf("unexpected narrow view:\n%s", narrow)
 	}
 	if got := maxRenderedLineWidth(narrow); got > m.width {
@@ -126,7 +126,7 @@ func TestCurrentAgentPanelDoesNotRepeatStandaloneHostLine(t *testing.T) {
 func TestWideComposerSitsBelowConversationHeader(t *testing.T) {
 	m := model{width: 120, height: 30, rows: []agentRow{{Name: "alpha", Scope: "local"}}, messages: []tracker.Message{{Sender: "agent", Body: "hello"}}}
 	view := m.View()
-	titleIndex := strings.Index(view, "Conversation")
+	titleIndex := strings.Index(view, "Simple Chat")
 	composerIndex := strings.Index(view, "/msg")
 	messageIndex := strings.Index(view, "hello")
 	if titleIndex < 0 || composerIndex < 0 || messageIndex < 0 || composerIndex < titleIndex || messageIndex < composerIndex {

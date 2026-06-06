@@ -356,3 +356,29 @@ func (c *Client) PublishTrackerEvent(ctx context.Context, targetTrackerID, event
 	}
 	return c.call(ctx, "publish_tracker_event", params, 10*time.Second, nil)
 }
+
+func (c *Client) ListSwarms(ctx context.Context) (ListSwarmsResult, error) {
+	var result ListSwarmsResult
+	err := c.call(ctx, "list_swarms", map[string]any{}, 5*time.Second, &result)
+	return result, err
+}
+
+func (c *Client) GetSwarmTimeline(ctx context.Context, swarmName string, lastN int) (SwarmTimelineResult, error) {
+	params := map[string]any{"swarm": swarmName}
+	if lastN > 0 {
+		params["last_n"] = lastN
+	}
+	var result SwarmTimelineResult
+	err := c.call(ctx, "get_swarm_timeline", params, 5*time.Second, &result)
+	return result, err
+}
+
+func (c *Client) WatchSwarm(ctx context.Context, swarmName string, leaseSeconds int) (WatchSwarmResult, error) {
+	params := map[string]any{"swarm": swarmName}
+	if leaseSeconds > 0 {
+		params["lease_seconds"] = leaseSeconds
+	}
+	var result WatchSwarmResult
+	err := c.call(ctx, "watch_swarm", params, 5*time.Second, &result)
+	return result, err
+}

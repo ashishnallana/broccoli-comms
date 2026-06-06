@@ -58,6 +58,7 @@ UI_WINDOW_OPTION = "@broccoli_ui_window"
 UI_WINDOW_NAME = "ui"
 UI_AGENT_NAME = "agent-communicator"
 AGENT_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+VALID_SWARM_ROLES = {"main", "subagent"}
 
 
 def xdg_runtime() -> Path:
@@ -141,7 +142,7 @@ def tmux_socket_label() -> str | None:
 def base_env(preserve_agent_identity: bool = False) -> dict[str, str]:
     p = paths()
     env = os.environ.copy()
-    strip_keys = ["TMUX", "TMUX_PANE", "SUGGESTED_AGENT_NAME"]
+    strip_keys = ["TMUX", "TMUX_PANE", "SUGGESTED_AGENT_NAME", "AGENT_SWARMS_JSON"]
     if not preserve_agent_identity:
         strip_keys.extend(["AGENT_ID", "AGENT_NAME", "AGENT_UUID"])
     for key in strip_keys:
@@ -324,6 +325,15 @@ def normalize_config(cfg: dict) -> dict:
             raise ValueError(f"agent {name!r} config must be an object")
         if "autostart" in spec and not isinstance(spec.get("autostart"), bool):
             raise ValueError(f"agent {name!r} autostart must be a boolean")
+        if "swarms" in spec or "swarm" in spec or "role" in spec:
+            if "swarms" in spec:
+                spec["swarms"] = normalize_swarms(spec.get("swarms"))
+            elif "swarm" in spec:
+                spec["swarms"] = normalize_swarms([{"name": spec.get("swarm"), "role": spec.get("role")}])
+                spec.pop("swarm", None)
+                spec.pop("role", None)
+            else:
+                raise ValueError(f"agent {name!r} role requires swarm")
     return normalized
 
 
@@ -353,6 +363,44 @@ def save_config(cfg: dict) -> None:
 def validate_agent_name(name: str) -> None:
     if not name or not AGENT_NAME_RE.match(name):
         raise ValueError("agent name must contain only letters, numbers, dot, underscore, and dash")
+
+
+def validate_swarm_name(name: str) -> None:
+    if not isinstance(name, str) or not name or not AGENT_NAME_RE.match(name):
+        raise ValueError("swarm name must contain only letters, numbers, dot, underscore, and dash")
+
+
+def normalize_swarms(swarms: object) -> list[dict[str, str]]:
+    if swarms is None:
+        return []
+    if not isinstance(swarms, list):
+        raise ValueError("swarms must be a list")
+    normalized = []
+    for item in swarms:
+        if not isinstance(item, dict):
+            raise ValueError("swarm membership must be an object")
+        name = item.get("name")
+        role = item.get("role")
+        validate_swarm_name(name)
+        if role not in VALID_SWARM_ROLES:
+            raise ValueError("swarm role must be 'main' or 'subagent'")
+        normalized.append({"name": name, "role": role})
+    return normalized
+
+
+def parse_swarm_args(args: argparse.Namespace) -> list[dict[str, str]]:
+    swarm_values = list(getattr(args, "swarm", None) or [])
+    role_values = list(getattr(args, "role", None) or [])
+    if role_values and not swarm_values:
+        raise SystemExit("--role requires --swarm")
+    if swarm_values and not role_values:
+        raise SystemExit("--swarm requires --role")
+    if len(swarm_values) != len(role_values):
+        raise SystemExit("each --swarm requires a paired --role")
+    try:
+        return normalize_swarms([{"name": swarm, "role": role} for swarm, role in zip(swarm_values, role_values)])
+    except ValueError as e:
+        raise SystemExit(str(e))
 
 
 def agent_spec(cfg: dict, name: str) -> dict:
@@ -552,8 +600,11 @@ def managed_track_env_assignments() -> list[str]:
     return [shell_env_assignment(key, env[key]) for key in keys if env.get(key)]
 
 
-def managed_agent_launch_command(name: str, cwd: str, command: str) -> str:
-    track_prefix = [*broccoli_comms_launcher_argv(), "track", "--name", name, "--cwd", cwd, "--"]
+def managed_agent_launch_command(name: str, cwd: str, command: str, swarms: list[dict[str, str]] | None = None) -> str:
+    track_prefix = [*broccoli_comms_launcher_argv(), "track", "--name", name, "--cwd", cwd]
+    for swarm in normalize_swarms(swarms or []):
+        track_prefix.extend(["--swarm", swarm["name"], "--role", swarm["role"]])
+    track_prefix.append("--")
     return " ".join([
         *managed_track_env_assignments(),
         *(shlex.quote(part) for part in track_prefix),
@@ -576,7 +627,7 @@ def reconcile_agents(names: set[str] | None = None, *, autostart_only: bool = Fa
         if not os.path.isdir(cwd):
             raise SystemExit(f"configured cwd for agent {name!r} does not exist: {cwd}")
         command = spec.get("command") or "bash"
-        launch = managed_agent_launch_command(name, cwd, command)
+        launch = managed_agent_launch_command(name, cwd, command, spec.get("swarms") or [])
         result = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", SESSION, "-n", name, "-c", cwd, launch)
         window_id = result.stdout.strip()
         if window_id:
@@ -740,11 +791,13 @@ def agent_list_payload() -> dict:
                     "cwd": spec.get("cwd"),
                     "command": spec.get("command"),
                     "autostart": agent_autostart(spec),
+                    "swarms": spec.get("swarms", []),
                 },
                 # Backward-compatible direct fields for simple JSON consumers.
                 "cwd": spec.get("cwd"),
                 "command": spec.get("command"),
                 "autostart": agent_autostart(spec),
+                "swarms": spec.get("swarms", []),
                 "running": bool(windows_by_name.get(name)),
                 "window_exists": bool(windows_by_name.get(name)),
                 "managed_windows": windows_by_name.get(name, []),
@@ -823,7 +876,13 @@ def agent_add(args: argparse.Namespace) -> None:
     if args.name in agents and not args.force:
         raise SystemExit(f"agent {args.name!r} already exists; use --force to update")
     autostart = bool(args.autostart) if args.autostart is not None else bool((existing or {}).get("autostart", False))
-    agents[args.name] = {"cwd": cwd, "command": command, "autostart": autostart}
+    swarms = parse_swarm_args(args)
+    spec = {"cwd": cwd, "command": command, "autostart": autostart}
+    if swarms:
+        spec["swarms"] = swarms
+    elif existing and "swarms" in existing:
+        spec["swarms"] = existing.get("swarms") or []
+    agents[args.name] = spec
     save_config(cfg)
     print(json.dumps({"added": args.name, "config": str(paths()["config_json"]), "agent": agents[args.name]}, indent=2, sort_keys=True))
 
@@ -972,6 +1031,8 @@ def track(args: argparse.Namespace) -> None:
     if not command:
         raise SystemExit("track requires a command after --")
 
+    swarms = parse_swarm_args(args)
+
     if os.environ.get("BROCCOLI_COMMS_TRACK_ACTIVE") == "1" or os.environ.get("AGENT_WRAPPER_DEPTH", "0") != "0":
         if args.cwd:
             cwd = os.path.abspath(os.path.expanduser(args.cwd))
@@ -1012,6 +1073,9 @@ def track(args: argparse.Namespace) -> None:
         if key in os.environ:
             env[key] = os.environ[key]
     env["SUGGESTED_AGENT_NAME"] = name
+    env.pop("AGENT_SWARMS_JSON", None)
+    if swarms:
+        env["AGENT_SWARMS_JSON"] = json.dumps(swarms, separators=(",", ":"))
     if cwd:
         os.chdir(cwd)
     os.execvpe(wrapper, [wrapper, *command], env)
@@ -1765,6 +1829,8 @@ def main() -> None:
     track_parser = sub.add_parser("track", help="Run a command through agent-wrapper so it appears in Agent Communicator")
     track_parser.add_argument("--name", help="Suggested registered agent name; defaults to command basename")
     track_parser.add_argument("--cwd", help="Working directory for the command")
+    track_parser.add_argument("--swarm", action="append", help="Swarm membership name; repeat with --role for multiple swarms")
+    track_parser.add_argument("--role", action="append", choices=sorted(VALID_SWARM_ROLES), help="Swarm role for the preceding --swarm")
     track_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to run after --")
     track_parser.set_defaults(func=track)
 
@@ -1837,6 +1903,8 @@ def main() -> None:
     agent_add_parser.add_argument("name", help="Agent/window name")
     agent_add_parser.add_argument("--cwd", required=True, help="Working directory")
     agent_add_parser.add_argument("--command", required=True, help="Command to run through broccoli-comms track")
+    agent_add_parser.add_argument("--swarm", action="append", help="Swarm membership name; repeat with --role for multiple swarms")
+    agent_add_parser.add_argument("--role", action="append", choices=sorted(VALID_SWARM_ROLES), help="Swarm role for the preceding --swarm")
     autostart_group = agent_add_parser.add_mutually_exclusive_group()
     autostart_group.add_argument("--autostart", dest="autostart", action="store_true", default=None, help="Launch this agent during broccoli-comms start/ui")
     autostart_group.add_argument("--no-autostart", dest="autostart", action="store_false", help="Keep this agent configured but do not launch it during start/ui")

@@ -637,7 +637,7 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 for key in ("name", "hostname", "status"):
                     if query.get(key):
                         agents = [agent for agent in agents if agent.get(key) == query[key][0]]
-                public_keys = ("agent_id", "name", "aliases", "tracker_id", "hostname", "status", "agent_type", "agent_cmd", "model_type", "cwd", "last_seen")
+                public_keys = ("agent_id", "name", "aliases", "tracker_id", "hostname", "status", "agent_type", "agent_cmd", "model_type", "cwd", "swarms", "last_seen")
                 agents = [{k: agent[k] for k in public_keys if k in agent} for agent in agents]
                 return self._json(200, {"agents": agents})
             if len(parts) == 2 and parts[0] == "agents":

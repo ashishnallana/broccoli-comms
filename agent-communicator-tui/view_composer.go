@@ -126,6 +126,12 @@ func wrapCells(s string, firstWidth, nextWidth int) []string {
 }
 
 func (m model) composerPlaceholder() string {
+	if m.mode == swarmView {
+		if swarmName := m.selectedSwarmName(); swarmName != "" {
+			return "message main agent in " + swarmName
+		}
+		return "message main agent in swarm"
+	}
 	if m.inputMode == inputModeText {
 		return "type pane text…"
 	}
@@ -133,6 +139,16 @@ func (m model) composerPlaceholder() string {
 		return "type key tokens…"
 	}
 	return ""
+}
+
+func (m model) disabledComposerText() string {
+	if m.mode == swarmView {
+		if swarm, ok := m.selectedSwarmRow(); ok && (swarm.MainMissing || rowTarget(swarm.Main) == "") {
+			return "Swarm Mode · no main agent configured/running"
+		}
+		return "Swarm Mode · no swarm selected"
+	}
+	return viewModeLabel(m.mode, false)
 }
 
 type inputModeButton struct {

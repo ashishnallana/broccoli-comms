@@ -18,8 +18,8 @@ func (m model) conversationPanel(width, height int) string {
 	innerW := max(1, width-(padX*2))
 	title := titleStyle.Render(m.conversationTitle())
 	composer := m.composerBox(innerW)
-	if m.mode == savedView {
-		composer = mutedStyle.Render("Saved messages")
+	if !m.activeTabCanCompose() {
+		composer = mutedStyle.Render(m.disabledComposerText())
 	}
 	messageH := max(1, height-lineCount(title)-lineCount(composer)-3)
 	messages := m.messageViewWithHeight(innerW, messageH)
@@ -35,13 +35,7 @@ func (m model) conversationPanel(width, height int) string {
 }
 
 func (m model) conversationTitle() string {
-	if m.mode == savedView {
-		return "Saved Messages"
-	}
-	if m.mode == advancedView {
-		return "Conversation"
-	}
-	return "Conversation"
+	return viewModeLabel(m.mode, false)
 }
 func (m model) messageView(width int) string {
 	return m.messageViewWithHeight(width, m.messageVisibleLines())
@@ -62,6 +56,9 @@ func (m model) messageViewWithHeight(width, visible int) string {
 func (m model) messageLinesForWidth(width int) []string {
 	start := time.Now()
 	wrapWidth := max(10, width)
+	if m.mode == swarmView {
+		return m.swarmLines(wrapWidth)
+	}
 	messages := m.displayOrderedMessages()
 	defer func() {
 		debugLogf("message_lines duration=%s messages=%d width=%d", time.Since(start), len(messages), width)
@@ -157,11 +154,12 @@ func (m model) messageContentWidth() int {
 
 func (m model) messageChromeHeight() int {
 	chat, _, _ := m.layoutWidths()
-	return lineCount(titleStyle.Render("Conversation") + "\n" + m.composerBox(max(1, chat-6)))
+	return lineCount(titleStyle.Render(m.conversationTitle()) + "\n" + m.composerBox(max(1, chat-6)))
 }
 
 func (m model) messageVisibleLines() int {
-	return max(1, m.height-lineCount(m.footer(max(1, m.width)))-m.messageChromeHeight())
+	bottomH := lineCount(m.footer(max(1, m.width))) + lineCount(m.bottomTabBar(max(1, m.width)))
+	return max(1, m.height-bottomH-m.messageChromeHeight())
 }
 func messagePageSize(height int) int             { return max(1, height/2) }
 func messageBottomOffset(total, visible int) int { return max(0, total-visible) }

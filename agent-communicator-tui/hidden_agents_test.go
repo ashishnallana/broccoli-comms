@@ -90,8 +90,76 @@ func TestTabTogglesAgentSection(t *testing.T) {
 	m.sortRowsByHidden("")
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(model)
+	if m.agentSection != hiddenAgents || m.currentRow().Name != "beta" || m.mode != simpleView {
+		t.Fatalf("mode=%v section=%v selected=%+v", m.mode, m.agentSection, m.currentRow())
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(model)
+	if m.agentSection != activeAgents || m.currentRow().Name != "alpha" || m.mode != simpleView {
+		t.Fatalf("mode=%v section=%v selected=%+v", m.mode, m.agentSection, m.currentRow())
+	}
+}
+
+func TestCtrlGStillTogglesAgentSection(t *testing.T) {
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local"}, {Name: "beta", Scope: "local"}}, hiddenAgents: map[string]bool{"beta": true}}
+	m.sortRowsByHidden("")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m = updated.(model)
 	if m.agentSection != hiddenAgents || m.currentRow().Name != "beta" {
 		t.Fatalf("section=%v selected=%+v", m.agentSection, m.currentRow())
+	}
+}
+
+func TestCtrlNCtrlPRespectHiddenAgentSection(t *testing.T) {
+	m := model{
+		rows: []agentRow{
+			{Name: "alpha", Scope: "local"},
+			{Name: "beta", Scope: "local"},
+			{Name: "hidden-a", Scope: "local"},
+			{Name: "hidden-b", Scope: "local"},
+		},
+		hiddenAgents: map[string]bool{"hidden-a": true, "hidden-b": true},
+		local:        &fakeLocal{},
+	}
+	m.sortRowsByHidden("")
+	m.agentSection = hiddenAgents
+	m.selected = 2
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(model)
+	if m.agentSection != hiddenAgents || m.currentRow().Name != "hidden-b" {
+		t.Fatalf("ctrl-n should stay in hidden section, section=%v selected=%+v", m.agentSection, m.currentRow())
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	m = updated.(model)
+	if m.agentSection != hiddenAgents || m.currentRow().Name != "hidden-a" {
+		t.Fatalf("ctrl-p should stay in hidden section, section=%v selected=%+v", m.agentSection, m.currentRow())
+	}
+}
+
+func TestCtrlNCtrlPRespectActiveAgentSection(t *testing.T) {
+	m := model{
+		rows: []agentRow{
+			{Name: "alpha", Scope: "local"},
+			{Name: "beta", Scope: "local"},
+			{Name: "hidden-a", Scope: "local"},
+		},
+		hiddenAgents: map[string]bool{"hidden-a": true},
+		local:        &fakeLocal{},
+	}
+	m.sortRowsByHidden("")
+	m.agentSection = activeAgents
+	m.selected = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(model)
+	if m.agentSection != activeAgents || m.currentRow().Name != "beta" {
+		t.Fatalf("ctrl-n should stay in active section, section=%v selected=%+v", m.agentSection, m.currentRow())
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m = updated.(model)
+	if m.agentSection != activeAgents || m.currentRow().Name != "alpha" {
+		t.Fatalf("ctrl-n should wrap within active section, section=%v selected=%+v", m.agentSection, m.currentRow())
 	}
 }
 

@@ -31,6 +31,9 @@ type localClient interface {
 	WaitEvents(context.Context, tracker.WaitOptions) (tracker.WaitEventsResult, error)
 	ListTrackers(context.Context) ([]tracker.RemoteTracker, error)
 	PublishTrackerEvent(ctx context.Context, targetTrackerID, eventType string, payload any) error
+	ListSwarms(context.Context) (tracker.ListSwarmsResult, error)
+	GetSwarmTimeline(context.Context, string, int) (tracker.SwarmTimelineResult, error)
+	WatchSwarm(context.Context, string, int) (tracker.WatchSwarmResult, error)
 }
 
 type messageIDSender interface {
@@ -70,6 +73,15 @@ type inboxLoaded struct {
 }
 type allInboxLoaded struct {
 	Messages []tracker.Message
+	Err      error
+}
+type swarmsLoaded struct {
+	Rows []swarmRow
+	Err  error
+}
+type swarmTimelineLoaded struct {
+	Swarm    string
+	Messages []tracker.SwarmTimelineMessage
 	Err      error
 }
 type unreadCountsLoaded struct {

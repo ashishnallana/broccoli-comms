@@ -327,6 +327,7 @@ def get_agents_for_registry() -> list[dict]:
             "agent_cmd": info.get("agent_cmd", "unknown"),
             "model_type": normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd")),
             "cwd": info.get("cwd"),
+            "swarms": info.get("swarms", []),
         } for agent_id, info in state.items() if not info.get("no_registry", False)]
 
 

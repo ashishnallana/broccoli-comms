@@ -198,7 +198,8 @@ func (m *model) selectNextInSection(delta int) {
 	if len(m.rows) == 0 {
 		return
 	}
-	indices := m.sectionIndices(activeAgents)
+	section := m.effectiveAgentSection()
+	indices := m.sectionIndices(section)
 	if len(indices) == 0 {
 		debugLogf("selectNextInSection fallback start selected=%d delta=%d rows_len=%d", m.selected, delta, len(m.rows))
 		m.selected = (m.selected + delta + len(m.rows)) % len(m.rows)
@@ -218,11 +219,11 @@ func (m *model) selectNextInSection(delta int) {
 		} else {
 			m.selected = indices[0]
 		}
-		m.agentSection = activeAgents
+		m.agentSection = section
 		return
 	}
 	m.selected = indices[(currentPos+delta+len(indices))%len(indices)]
-	m.agentSection = activeAgents
+	m.agentSection = section
 }
 
 func (m *model) toggleAgentSection() {

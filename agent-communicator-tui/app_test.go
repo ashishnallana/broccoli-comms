@@ -14,27 +14,30 @@ import (
 )
 
 type fakeLocal struct {
-	agents       map[string]tracker.Agent
-	inbox        []tracker.Message
-	lastLimit    int
-	lastSenderID string
-	lastTracker  string
-	lastSender   string
-	sentTo       string
-	sentBody     string
-	sentSender   string
-	sentID       string
-	sendErr      error
-	directText   string
-	directSubmit bool
-	directKeys   []string
-	directTarget string
-	directErr    error
-	events       tracker.WaitEventsResult
-	unreadCounts map[string]int
-	ensureName   string
-	ensureErr    error
-	listOptions  tracker.ListOptions
+	agents        map[string]tracker.Agent
+	inbox         []tracker.Message
+	lastLimit     int
+	lastSenderID  string
+	lastTracker   string
+	lastSender    string
+	sentTo        string
+	sentBody      string
+	sentSender    string
+	sentID        string
+	sendErr       error
+	directText    string
+	directSubmit  bool
+	directKeys    []string
+	directTarget  string
+	directErr     error
+	events        tracker.WaitEventsResult
+	unreadCounts  map[string]int
+	swarms        []tracker.Swarm
+	swarmMessages []tracker.SwarmTimelineMessage
+	lastSwarmName string
+	ensureName    string
+	ensureErr     error
+	listOptions   tracker.ListOptions
 }
 
 func (f *fakeLocal) EnsureMailbox(_ context.Context, agentName string) (tracker.EnsureMailboxResult, error) {
@@ -95,6 +98,16 @@ func (f *fakeLocal) ListTrackers(context.Context) ([]tracker.RemoteTracker, erro
 }
 func (f *fakeLocal) PublishTrackerEvent(context.Context, string, string, any) error {
 	return nil
+}
+func (f *fakeLocal) ListSwarms(context.Context) (tracker.ListSwarmsResult, error) {
+	return tracker.ListSwarmsResult{Swarms: f.swarms}, nil
+}
+func (f *fakeLocal) GetSwarmTimeline(_ context.Context, swarmName string, _ int) (tracker.SwarmTimelineResult, error) {
+	f.lastSwarmName = swarmName
+	return tracker.SwarmTimelineResult{Messages: f.swarmMessages}, nil
+}
+func (f *fakeLocal) WatchSwarm(context.Context, string, int) (tracker.WatchSwarmResult, error) {
+	return tracker.WatchSwarmResult{OK: true}, nil
 }
 
 func TestRunPrintsVersion(t *testing.T) {

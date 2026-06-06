@@ -64,12 +64,13 @@ print(uuid.uuid4())
 PY
 )}"
 export AGENT_ID="$agent_id"
+swarms_json="${AGENT_SWARMS_JSON:-[]}"
 current_cwd=$("${tmux_cmd[@]}" display-message -p -t "$pane_id" '#{pane_current_path}' 2>/dev/null || pwd)
 
 rpc_register() {
-  python3 - "$session_name" "$pane_id" "$wrapper_pid" "$tmux_socket" "$suggested_name" "$agent_type" "$agent_cmd" "$model_type" "$agent_id" "$no_notify_with_send_keys" "$no_registry" "$current_cwd" <<'PY'
+  python3 - "$session_name" "$pane_id" "$wrapper_pid" "$tmux_socket" "$suggested_name" "$agent_type" "$agent_cmd" "$model_type" "$agent_id" "$no_notify_with_send_keys" "$no_registry" "$current_cwd" "$swarms_json" <<'PY'
 import json, os, socket, sys
-session, pane, wrapper_pid, tmux_socket, name, agent_type, agent_cmd, model_type, agent_id, no_notify, no_registry, cwd = sys.argv[1:]
+session, pane, wrapper_pid, tmux_socket, name, agent_type, agent_cmd, model_type, agent_id, no_notify, no_registry, cwd, swarms_json = sys.argv[1:]
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(3)
 
@@ -105,6 +106,10 @@ def get_socket():
         return os.path.join(tempfile.gettempdir(), "broccoli-comms/agent-tracker.sock")
 
 s.connect(get_socket())
+try:
+    swarms = json.loads(swarms_json or "[]")
+except Exception:
+    swarms = []
 req = {
   "jsonrpc": "2.0",
   "method": "register",
@@ -121,6 +126,7 @@ req = {
     "no_notify_with_send_keys": no_notify.lower() == "true",
     "no_registry": no_registry.lower() == "true",
     "cwd": cwd,
+    "swarms": swarms,
   },
   "id": 1,
 }

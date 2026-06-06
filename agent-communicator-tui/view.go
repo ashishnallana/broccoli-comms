@@ -31,16 +31,31 @@ func (m model) View() string {
 }
 
 func (m model) baseView() string {
-	bodyH := max(3, m.height)
+	fullH := max(1, m.height)
 	if m.showingSaveForm {
 		return m.renderSaveForm()
 	}
 	if m.showingPromptMenu {
-		return m.renderPromptMenu(m.width, bodyH)
+		return m.renderPromptMenu(m.width, fullH)
 	}
 	if m.showingConfigMenu {
-		return m.renderConfigMenu(m.width, bodyH)
+		return m.renderConfigMenu(m.width, fullH)
 	}
+	tabs := m.bottomTabBar(m.width)
+	status := m.footer(m.width)
+	bottomH := lineCount(status) + lineCount(tabs)
+	bodyH := max(1, fullH-bottomH)
+	parts := []string{m.mainContentView(bodyH)}
+	if status != "" {
+		parts = append(parts, status)
+	}
+	if tabs != "" {
+		parts = append(parts, tabs)
+	}
+	return truncateLines(lipgloss.JoinVertical(lipgloss.Left, parts...), fullH)
+}
+
+func (m model) mainContentView(bodyH int) string {
 	if m.width < 70 {
 		return truncateLines(m.conversationPanel(m.width, bodyH), bodyH)
 	}

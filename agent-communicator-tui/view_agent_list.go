@@ -13,6 +13,9 @@ func (m model) sidebarView(width, height int) string {
 }
 
 func (m model) rightColumn(width, height int) string {
+	if m.mode == swarmView {
+		return m.swarmSidebarView(width, height)
+	}
 	status := m.registryStatusLine()
 	statusH := 2
 	currentH := min(7, max(5, height/4))

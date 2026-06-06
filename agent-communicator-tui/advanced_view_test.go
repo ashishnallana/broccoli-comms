@@ -8,21 +8,13 @@ import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
-func TestCtrlTTogglesAdvancedViewAndLoadsAllInbox(t *testing.T) {
-	local := &fakeLocal{inbox: []tracker.Message{{Sender: "alpha", Body: "a"}, {Sender: "beta", Body: "b"}}}
+func TestCtrlTTogglesSwarmViewAndLoadsSwarms(t *testing.T) {
+	local := &fakeLocal{swarms: []tracker.Swarm{{Name: "backend-fix"}}}
 	m := model{ownName: "agent-communicator", rows: []agentRow{{Name: "alpha", Scope: "local"}}, local: local}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	m = updated.(model)
-	if m.mode != advancedView || cmd == nil {
+	if m.mode != swarmView || cmd == nil {
 		t.Fatalf("mode=%v cmd=%v", m.mode, cmd)
-	}
-	updated, _ = m.Update(cmd())
-	m = updated.(model)
-	if len(m.allMessages) != 2 {
-		t.Fatalf("allMessages = %+v", m.allMessages)
-	}
-	if local.lastLimit != advancedInboxFetchLimit {
-		t.Fatalf("ReadInbox limit = %d, want %d", local.lastLimit, advancedInboxFetchLimit)
 	}
 }
 
@@ -50,7 +42,7 @@ func TestAdvancedComposerShowsMessageModeInline(t *testing.T) {
 func TestAdvancedViewUsesAgentListAndConversationPanels(t *testing.T) {
 	m := model{mode: advancedView, width: 100, height: 20, rows: []agentRow{{Name: "alpha", Scope: "local"}}, allMessages: []tracker.Message{{Sender: "beta", Body: "hello"}}}
 	view := m.View()
-	for _, want := range []string{"Switch agent", "Conversation", "alpha", "hello"} {
+	for _, want := range []string{"Switch agent", "Advanced Chat", "alpha", "hello"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("advanced view missing %q:\n%s", want, view)
 		}

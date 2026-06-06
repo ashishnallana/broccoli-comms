@@ -12,7 +12,12 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if event.Action != tea.MouseActionPress || event.Button != tea.MouseButtonLeft {
 		return m, nil
 	}
-	if m.mode != savedView && m.mouseSelectAgent(event.X, event.Y) {
+	if mode, ok := m.mouseSelectBottomTab(event.X, event.Y); ok {
+		m.setMode(mode)
+		m.selectLatestMessage()
+		return m, m.reloadMessages()
+	}
+	if m.mode == simpleView && m.mouseSelectAgent(event.X, event.Y) {
 		m.scrollSelectedAgentIntoView()
 		m.selectLatestMessage()
 		return m, m.reloadMessages()
@@ -24,12 +29,33 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) bottomContentHeight() int {
+	return lineCount(m.footer(max(1, m.width))) + lineCount(m.bottomTabBar(max(1, m.width)))
+}
+
+func (m model) mouseSelectBottomTab(x, y int) (viewMode, bool) {
+	if m.width <= 0 || m.height <= 0 || x < 0 {
+		return simpleView, false
+	}
+	tabsH := lineCount(m.bottomTabBar(m.width))
+	if tabsH == 0 || y < m.height-tabsH || y >= m.height {
+		return simpleView, false
+	}
+	_, hits := m.bottomTabLayout(m.width)
+	for _, hit := range hits {
+		if x >= hit.Start && x < hit.End {
+			return hit.Mode, true
+		}
+	}
+	return simpleView, false
+}
+
 func (m *model) mouseSelectAgent(x, y int) bool {
 	if m.width < 70 {
 		return false
 	}
 	chatW, rightW, _ := m.layoutWidths()
-	bodyH := max(3, m.height)
+	bodyH := max(3, m.height-m.bottomContentHeight())
 	if x < chatW || x >= chatW+rightW || y < 0 || y >= bodyH || len(m.rows) == 0 {
 		return false
 	}
@@ -96,7 +122,7 @@ func (m *model) selectAgentAtListLine(listY, width int) bool {
 }
 
 func (m model) sidebarAgentListHeight() int {
-	bodyH := max(3, m.height)
+	bodyH := max(3, m.height-m.bottomContentHeight())
 	currentH := min(7, max(5, bodyH/4))
 	statusH := 2
 	listH := max(1, bodyH-currentH-statusH)
@@ -104,7 +130,7 @@ func (m model) sidebarAgentListHeight() int {
 }
 
 func (m model) mouseInputMode(x, y int) (inputMode, bool) {
-	if m.mode == savedView || m.width == 0 || m.height == 0 {
+	if !m.activeTabCanCompose() || m.width == 0 || m.height == 0 || y >= m.height-m.bottomContentHeight() {
 		return inputModeMessage, false
 	}
 	chatW, _, _ := m.layoutWidths()

@@ -91,7 +91,7 @@ class TestHttpAndRegistry(unittest.TestCase):
             server, base = start(registry_server.make_handler(store=store, token="secret"))
             self.addCleanup(server.shutdown)
             self.addCleanup(server.server_close)
-            payload = {"tracker_id": "t1", "hostname": "host1", "address": "127.0.0.1", "http_port": 19876, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi", "model_type": "pi", "cwd": "/work/project"}]}
+            payload = {"tracker_id": "t1", "hostname": "host1", "address": "127.0.0.1", "http_port": 19876, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi", "model_type": "pi", "cwd": "/work/project", "swarms": [{"name": "backend-fix", "role": "main"}]}]}
             self.assertEqual(post(f"{base}/trackers", payload, token="secret")[0], 201)
             self.assertEqual(post(f"{base}/trackers/t1/agent-update", {"agent_id": "a1", "status": "working"}, token="secret")[0], 200)
             code, body = get(f"{base}/agents/a1", token="secret")
@@ -102,7 +102,10 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.assertNotIn("http_port", agents[0])
             self.assertEqual(agents[0]["cwd"], "/work/project")
             self.assertEqual(agents[0]["model_type"], "pi")
-            self.assertEqual(post(f"{base}/trackers/t1/heartbeat", {"agents": payload["agents"]}, token="secret")[0], 200)
+            self.assertEqual(agents[0]["swarms"], [{"name": "backend-fix", "role": "main"}])
+            heartbeat_agents = [{**payload["agents"][0], "swarms": [{"name": "backend-fix", "role": "subagent"}]}]
+            self.assertEqual(post(f"{base}/trackers/t1/heartbeat", {"agents": heartbeat_agents}, token="secret")[0], 200)
+            self.assertEqual(get(f"{base}/agents", token="secret")[1]["agents"][0]["swarms"], [{"name": "backend-fix", "role": "subagent"}])
             old_stale, old_gone = registry_server.STALE, registry_server.GONE
             registry_server.STALE, registry_server.GONE = 1, 2
             self.addCleanup(setattr, registry_server, "STALE", old_stale)

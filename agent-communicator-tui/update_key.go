@@ -50,6 +50,17 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.toggleMode()
 		m.selectLatestMessage()
 		return m, m.reloadMessages()
+	case tea.KeyCtrlY:
+		m.selectTab(-1)
+		m.selectLatestMessage()
+		return m, m.reloadMessages()
+	case tea.KeyCtrlG:
+		if len(m.rows) > 0 {
+			m.toggleAgentSection()
+			m.scrollSelectedAgentIntoView()
+			m.selectLatestMessage()
+			return m, m.reloadMessages()
+		}
 	case tea.KeyCtrlX:
 		if len(m.rows) > 0 && m.selected >= 0 && m.selected < len(m.rows) {
 			row := m.rows[m.selected]
@@ -61,6 +72,10 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		return m, m.toggleSaveSelectedMessage()
 	case tea.KeyCtrlP:
 		debugLogf("KeyCtrlP matched: mode=%v rows_len=%d", m.mode, len(m.rows))
+		if m.mode == swarmView {
+			m.selectSwarm(-1)
+			return m, loadSelectedSwarmTimeline(m.local, m.selectedSwarmName())
+		}
 		if m.mode == savedView {
 			m.selectSavedRow(-1)
 			m.selectLatestMessage()
@@ -74,6 +89,10 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		}
 	case tea.KeyCtrlN:
 		debugLogf("KeyCtrlN matched: mode=%v rows_len=%d", m.mode, len(m.rows))
+		if m.mode == swarmView {
+			m.selectSwarm(1)
+			return m, loadSelectedSwarmTimeline(m.local, m.selectedSwarmName())
+		}
 		if m.mode == savedView {
 			m.selectSavedRow(1)
 			m.selectLatestMessage()
@@ -99,7 +118,7 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 			return m, tea.Batch(cmd, m.reloadMessages())
 		}
 	case tea.KeyCtrlA:
-		if m.mode != savedView && len(m.rows) > 0 {
+		if m.activeTabCanCompose() && len(m.rows) > 0 {
 			m.clearUnread(m.rows[m.selected])
 			return m, nil
 		}
@@ -120,26 +139,36 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 	case tea.KeyPgDown, tea.KeyCtrlD:
 		m.messageOffset = clampMessageOffset(m.messageOffset+messagePageSize(m.height), len(m.messageLinesForWidth(m.messageContentWidth())), m.messageVisibleLines())
 	case tea.KeyF1:
-		m.inputMode = inputModeMessage
+		if m.activeTabCanCompose() {
+			m.inputMode = inputModeMessage
+		}
 		return m, nil
 	case tea.KeyF2:
-		m.inputMode = inputModeText
+		if m.activeTabCanCompose() {
+			m.inputMode = inputModeText
+		}
 		return m, nil
 	case tea.KeyF3:
-		m.inputMode = inputModeKeys
+		if m.activeTabCanCompose() {
+			m.inputMode = inputModeKeys
+		}
 		return m, nil
 	case tea.KeyF4:
 		return m, nil
 	case tea.KeyEnter:
 		return m.handleComposerSubmit()
 	case tea.KeyBackspace:
-		m.messageFocused = false
-		if len(m.composer) > 0 {
-			m.composer = m.composer[:len(m.composer)-1]
+		if m.activeTabCanCompose() {
+			m.messageFocused = false
+			if len(m.composer) > 0 {
+				m.composer = m.composer[:len(m.composer)-1]
+			}
 		}
 	case tea.KeyCtrlW:
-		m.messageFocused = false
-		m.composer = deletePreviousWord(m.composer)
+		if m.activeTabCanCompose() {
+			m.messageFocused = false
+			m.composer = deletePreviousWord(m.composer)
+		}
 	case tea.KeyCtrlE:
 		messages := m.displayOrderedMessages()
 		if len(messages) > 0 {
@@ -149,18 +178,22 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		if len(msg.Runes) == 1 && msg.Runes[0] == 'r' && len(m.composer) == 0 && m.err != nil && m.retryOperation != "" {
 			return m, m.retryCurrentOperation()
 		}
-		if len(msg.Runes) == 1 && msg.Runes[0] == 'n' && len(m.composer) == 0 && m.mode != savedView && m.selectNextUnread() {
+		if len(msg.Runes) == 1 && msg.Runes[0] == 'n' && len(m.composer) == 0 && m.activeTabCanCompose() && m.selectNextUnread() {
 			m.scrollSelectedAgentIntoView()
 			m.selectLatestMessage()
 			return m, m.reloadMessages()
 		}
-		m.messageFocused = false
-		m.composer = append(m.composer, msg.Runes...)
-		m.messageOffset = 0
+		if m.activeTabCanCompose() {
+			m.messageFocused = false
+			m.composer = append(m.composer, msg.Runes...)
+			m.messageOffset = 0
+		}
 	case tea.KeySpace:
-		m.messageFocused = false
-		m.composer = append(m.composer, ' ')
-		m.messageOffset = 0
+		if m.activeTabCanCompose() {
+			m.messageFocused = false
+			m.composer = append(m.composer, ' ')
+			m.messageOffset = 0
+		}
 	}
 	return m, nil
 }
@@ -230,9 +263,11 @@ func (m model) handleConfigMenuKey(msg tea.KeyMsg) (model, tea.Cmd) {
 }
 
 func (m model) handleComposerSubmit() (model, tea.Cmd) {
-	if m.mode != savedView && m.canSendCurrent() && strings.TrimSpace(string(m.composer)) != "" {
+	if !m.activeTabCanCompose() {
+		return m, nil
+	}
+	if row, ok := m.currentSendTarget(); ok && !m.agentListStale && strings.TrimSpace(string(m.composer)) != "" {
 		input := string(m.composer)
-		row := m.rows[m.selected]
 		action := composerActionForMode(input, m.inputMode)
 		if action.Kind == "broadcast" {
 			m.directInputStatus = "Broadcast mode is disabled in this milestone; no message was sent"

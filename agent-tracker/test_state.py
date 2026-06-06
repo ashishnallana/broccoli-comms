@@ -86,17 +86,24 @@ class TestState(unittest.TestCase):
         self.assertEqual(info["status"], "unknown")
         self.assertIsNone(info["pid"])
 
-    def test_get_agents_for_registry_omits_local_fields(self):
-        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "session": "s", "cwd": "/work/project"})
+    def test_get_agents_for_registry_omits_local_fields_and_includes_swarms(self):
+        state.set_agent("agent1", {
+            "agent_id": "id-1",
+            "status": "idle",
+            "tmux_pane": "%1",
+            "session": "s",
+            "cwd": "/work/project",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+        })
         self.assertEqual(state.get_agents_for_registry(), [{
-            "agent_id": "id-1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": "/work/project"
+            "agent_id": "id-1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": "/work/project", "swarms": [{"name": "backend-fix", "role": "main"}]
         }])
 
     def test_get_agents_for_registry_skips_no_registry_agents(self):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "no_registry": True})
         state.set_agent("agent2", {"agent_id": "id-2", "status": "working"})
         self.assertEqual(state.get_agents_for_registry(), [{
-            "agent_id": "id-2", "name": "agent2", "aliases": [], "status": "working", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": None
+            "agent_id": "id-2", "name": "agent2", "aliases": [], "status": "working", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": None, "swarms": []
         }])
 
     def test_normalize_model_type(self):

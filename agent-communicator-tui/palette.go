@@ -113,7 +113,7 @@ func commandPaletteActions() []commandAction {
 			Category: "Agents",
 			Shortcut: "run",
 			Keywords: []string{"agent", "next", "select"},
-			Enabled:  func(m model) bool { return m.mode != savedView && len(m.rows) > 1 },
+			Enabled:  func(m model) bool { return m.activeTabCanCompose() && len(m.rows) > 1 },
 			Run: func(m *model) tea.Cmd {
 				m.selectNextInSection(1)
 				m.scrollSelectedAgentIntoView()

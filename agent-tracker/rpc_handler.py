@@ -246,6 +246,85 @@ def handle_get_inbox(params: dict, caller_pid: int = None) -> dict:
     )
 
 
+def _validate_positive_int(value, field_name: str) -> int:
+    try:
+        parsed = int(value)
+        if parsed <= 0:
+            raise ValueError(f"{field_name} must be a positive integer")
+        return parsed
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be a positive integer")
+
+
+def _validate_swarm_name(name: str) -> str:
+    if not isinstance(name, str) or not name or not agent_handlers.AGENT_NAME_RE.match(name):
+        raise ValueError("swarm name must contain only letters, numbers, dot, underscore, and dash")
+    return name
+
+
+def _swarm_group_id(swarm_name: str) -> str:
+    return f"swarm:local:{swarm_name}"
+
+
+def _swarm_member_row(agent_name: str, info: dict, role: str) -> dict:
+    return {
+        "name": agent_name,
+        "role": role,
+        "agent_id": info.get("agent_id") or info.get("uuid"),
+        "target_address": info.get("target_address") or agent_name,
+        "hostname": info.get("hostname") or registry_client.HOSTNAME,
+        "scope": info.get("scope", "local"),
+    }
+
+
+def _agents_for_swarm_derivation(include_remote: bool = True) -> dict:
+    agents = {
+        name: {**info, "scope": "local"}
+        for name, info in state.get_all_agents().items()
+    }
+    if include_remote:
+        try:
+            agents.update(agent_handlers._fetch_registry_agents_for_list())
+        except Exception as e:
+            logging.warning("failed to fetch remote agents for swarm derivation: %s", e)
+    return agents
+
+
+def _derive_swarms(include_remote: bool = True) -> list[dict]:
+    swarms: dict[str, dict] = {}
+    for agent_name, info in _agents_for_swarm_derivation(include_remote).items():
+        for membership in agent_handlers.normalize_swarms(info.get("swarms", [])):
+            swarm_name = membership["name"]
+            role = membership["role"]
+            swarm = swarms.setdefault(swarm_name, {"name": swarm_name, "main": None, "members": [], "warnings": []})
+            member = _swarm_member_row(agent_name, info, role)
+            swarm["members"].append(member)
+            if role == "main":
+                swarm["main"] = member
+    for swarm in swarms.values():
+        mains = [member for member in swarm["members"] if member.get("role") == "main"]
+        if not mains:
+            swarm["warnings"].append("no main agent configured/running")
+        elif len(mains) > 1:
+            swarm["warnings"].append("duplicate main agents: " + ", ".join(member.get("name", "") for member in mains))
+            swarm["main"] = mains[-1]
+    return [swarms[name] for name in sorted(swarms)]
+
+
+def _find_swarm_or_error(swarm_name: str, include_remote: bool = True) -> dict:
+    swarm_name = _validate_swarm_name(swarm_name)
+    for swarm in _derive_swarms(include_remote):
+        if swarm["name"] == swarm_name:
+            return swarm
+    raise ValueError(f"swarm {swarm_name!r} not found")
+
+
+def handle_list_swarms(params: dict) -> dict:
+    """Derives swarms from current local and registry-discovered agent metadata."""
+    include_remote = bool(params.get("include_remote", True))
+    return {"swarms": _derive_swarms(include_remote)}
+
+
 def handle_get_group_timeline(params: dict) -> dict:
     """Handles get_group_timeline RPC call by reading directly from the group's cached timeline file."""
     group_id = params.get("group_id")
@@ -257,15 +336,41 @@ def handle_get_group_timeline(params: dict) -> dict:
         raise ValueError("group_id must be a string")
 
     if last_n is not None:
-        try:
-            last_n = int(last_n)
-            if last_n <= 0:
-                raise ValueError("last_n must be a positive integer")
-        except ValueError:
-            raise ValueError("last_n must be a positive integer")
+        last_n = _validate_positive_int(last_n, "last_n")
 
     messages = state.read_group_timeline(group_id, last_n)
     return {"messages": messages}
+
+
+def handle_get_swarm_timeline(params: dict) -> dict:
+    swarm_name = _validate_swarm_name(params.get("swarm"))
+    last_n = params.get("last_n", 200)
+    if last_n is not None:
+        last_n = _validate_positive_int(last_n, "last_n")
+    group_id = _swarm_group_id(swarm_name)
+    return {"group_id": group_id, "messages": state.read_group_timeline(group_id, last_n)}
+
+
+def handle_watch_swarm(params: dict) -> dict:
+    include_remote = bool(params.get("include_remote", True))
+    swarm = _find_swarm_or_error(params.get("swarm"), include_remote)
+    watch_id = params.get("watch_id") or f"swarm:{swarm['name']}"
+    if not isinstance(watch_id, str) or not watch_id:
+        raise ValueError("watch_id must be a non-empty string")
+    try:
+        lease_seconds = float(params.get("lease_seconds", 30))
+    except (TypeError, ValueError):
+        raise ValueError("lease_seconds must be a number")
+    include_body = bool(params.get("include_body", True))
+    members = [member["target_address"] for member in swarm.get("members", []) if member.get("target_address")]
+    group_id = _swarm_group_id(swarm["name"])
+    state.update_group_watch(watch_id, group_id, members, lease_seconds, include_body)
+    threading.Thread(
+        target=_delegate_group_watch_to_remote_trackers,
+        args=(watch_id, group_id, members, lease_seconds, include_body),
+        daemon=True,
+    ).start()
+    return {"ok": True, "watch_id": watch_id, "group_id": group_id, "members": members}
 
 
 def _delegate_group_watch_to_remote_trackers(watch_id: str, group_id: str, members: list[str], lease_seconds: float, include_body: bool) -> None:
@@ -522,7 +627,10 @@ dispatcher = {
     "send_input": handle_send_input,
     "get_inbox": handle_get_inbox,
     "get_unread_counts": handle_get_unread_counts,
+    "list_swarms": handle_list_swarms,
     "get_group_timeline": handle_get_group_timeline,
+    "get_swarm_timeline": handle_get_swarm_timeline,
+    "watch_swarm": handle_watch_swarm,
     "update_watchlist": handle_update_watchlist,
     "wait_events": handle_wait_events,
     "tracker_info": handle_tracker_info,

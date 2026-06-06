@@ -7,8 +7,8 @@ func (m model) visibleAgentCards() int {
 }
 
 func (m model) agentListVisibleLines() int {
-	footerH := lineCount(m.footer(max(1, m.width)))
-	bodyH := max(3, m.height-footerH)
+	bottomH := lineCount(m.footer(max(1, m.width))) + lineCount(m.bottomTabBar(max(1, m.width)))
+	bodyH := max(3, m.height-bottomH)
 	return max(1, panelInnerHeight(bodyH)-3)
 }
 

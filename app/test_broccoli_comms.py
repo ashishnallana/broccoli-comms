@@ -1,5 +1,6 @@
 import argparse
 import importlib.util
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -100,6 +101,48 @@ agent_communicator_tui = "/config/agent-communicator"
             [broccoli_comms_app.sys.executable, "/ctl.py", "send-message", "target", "hello"],
             env,
         )
+
+    def test_agent_add_persists_normalized_swarms(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):
+            broccoli_comms_app.agent_add(argparse.Namespace(
+                name="planner",
+                cwd=tmp,
+                command="pi",
+                autostart=True,
+                force=False,
+                swarm=["s1"],
+                role=["main"],
+            ))
+            cfg = json.loads((Path(tmp) / "broccoli-comms" / "config.json").read_text())
+
+        self.assertEqual(cfg["agents"]["planner"]["swarms"], [{"name": "s1", "role": "main"}])
+
+    def test_invalid_swarm_role_is_rejected(self):
+        with self.assertRaises(SystemExit):
+            broccoli_comms_app.parse_swarm_args(argparse.Namespace(swarm=["s1"], role=["worker"]))
+
+    def test_repeated_swarm_role_pairs_are_normalized(self):
+        swarms = broccoli_comms_app.parse_swarm_args(argparse.Namespace(
+            swarm=["backend-fix", "review"],
+            role=["main", "subagent"],
+        ))
+        self.assertEqual(swarms, [
+            {"name": "backend-fix", "role": "main"},
+            {"name": "review", "role": "subagent"},
+        ])
+
+    def test_managed_launch_command_includes_swarm_flags(self):
+        with mock.patch.object(broccoli_comms_app, "broccoli_comms_launcher_argv", return_value=["broccoli-comms"]), \
+             mock.patch.object(broccoli_comms_app, "managed_track_env_assignments", return_value=[]):
+            command = broccoli_comms_app.managed_agent_launch_command(
+                "planner",
+                "/work tree",
+                "pi --flag",
+                [{"name": "backend-fix", "role": "main"}],
+            )
+
+        self.assertIn("--swarm backend-fix --role main", command)
+        self.assertIn("-- pi --flag", command)
 
 
 if __name__ == "__main__":
