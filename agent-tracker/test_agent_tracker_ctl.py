@@ -268,6 +268,32 @@ class TestAgentTrackerCtl(unittest.TestCase):
         self.assertNotEqual(delivered["payload"]["sender"], "local-beta")
 
     @mock.patch.dict(os.environ, {}, clear=True)
+    def test_send_message_parser_registration(self):
+        parser = ctl.build_parser()
+        parsed = parser.parse_args(["send-message", "alice", "hello", "--swarm-context", "backend-fix"])
+        self.assertEqual(parsed.subcommand, "send-message")
+        self.assertEqual(parsed.target, "alice")
+        self.assertEqual(parsed.message, "hello")
+        self.assertEqual(parsed.swarm_context, "backend-fix")
+
+    @mock.patch("ctl_commands.send_message.call_rpc")
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_send_message_handler_forwards_swarm_context(self, mock_call_rpc):
+        from ctl_commands import send_message
+
+        mock_call_rpc.return_value = {"success": True}
+        args = mock.Mock(target="alice", message="hello", agent_id=None, swarm_context="backend-fix", verify=False)
+
+        with mock.patch("builtins.print"):
+            send_message.handle(args)
+
+        mock_call_rpc.assert_called_once_with("send_message", {
+            "message": "hello",
+            "agent_name": "alice",
+            "swarm_context": "backend-fix",
+        })
+
+    @mock.patch.dict(os.environ, {}, clear=True)
     def test_capture_pane_parser_registration(self):
         parser = ctl.build_parser()
         # Test parsing typical capture-pane subcommand arguments
