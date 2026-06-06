@@ -1023,7 +1023,17 @@ def handle_pane_output(params: dict) -> dict:
     )
 
 
+def _reject_remote_pane_output_control_target(params: dict) -> None:
+    target_address = params.get("target_address")
+    if not target_address:
+        return
+    target = str(target_address).strip()
+    if "/" in target or target.startswith("registry:") or ":" in target:
+        raise ValueError("remote agents cannot be piped locally")
+
+
 def _resolve_pane_output_control_target(params: dict) -> str:
+    _reject_remote_pane_output_control_target(params)
     target = params.get("agent_id") or params.get("agent_name") or params.get("name")
     if not isinstance(target, str) or not target:
         raise ValueError("agent_id or agent_name is required")
@@ -1033,8 +1043,6 @@ def _resolve_pane_output_control_target(params: dict) -> str:
 def handle_enable_pane_output(params: dict) -> dict:
     if not isinstance(params, dict):
         raise ValueError("Invalid params")
-    if params.get("target_address") and "/" in str(params.get("target_address")):
-        raise ValueError("remote agents cannot be piped locally")
     rotate = bool(params.get("rotate", True))
     return pane_output_lifecycle.enable_pane_output(_resolve_pane_output_control_target(params), rotate=rotate)
 
@@ -1042,9 +1050,13 @@ def handle_enable_pane_output(params: dict) -> dict:
 def handle_disable_pane_output(params: dict) -> dict:
     if not isinstance(params, dict):
         raise ValueError("Invalid params")
-    if params.get("target_address") and "/" in str(params.get("target_address")):
-        raise ValueError("remote agents cannot be piped locally")
     return pane_output_lifecycle.disable_pane_output(_resolve_pane_output_control_target(params))
+
+
+def handle_pane_output_status(params: dict) -> dict:
+    if not isinstance(params, dict):
+        raise ValueError("Invalid params")
+    return pane_output_lifecycle.pane_output_status(_resolve_pane_output_control_target(params))
 
 
 def handle_publish_tracker_event(params: dict) -> dict:
@@ -1095,6 +1107,7 @@ dispatcher = {
     "pane_output": handle_pane_output,
     "enable_pane_output": handle_enable_pane_output,
     "disable_pane_output": handle_disable_pane_output,
+    "pane_output_status": handle_pane_output_status,
 }
 
 def handle_client(conn: socket.socket) -> None:

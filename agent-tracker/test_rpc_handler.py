@@ -2466,6 +2466,58 @@ class TestRpcHandler(unittest.TestCase):
         )
         self.assertTrue(configured)
 
+    def test_pane_output_control_config_disabled_refuses_without_metadata(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+
+        with mock.patch.dict(os.environ, {"AGENT_TRACKER_PANE_OUTPUT_ENABLED": "0"}, clear=False), \
+             mock.patch("tmux_util.run_tmux_cmd") as run_tmux:
+            with self.assertRaises(RuntimeError):
+                rpc_handler.handle_enable_pane_output({"agent_id": "id-1"})
+
+        run_tmux.assert_not_called()
+        self.assertFalse(state.get_agent("id-1").get("pipe_output_enabled", False))
+
+    def test_pane_output_control_enable_response_has_no_token_or_raw_output(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        def fake_tmux(args):
+            if args[:5] == ["-S", "sock", "display-message", "-p", "-t"]:
+                return "0|"
+            return ""
+
+        with mock.patch.dict(os.environ, {"AGENT_TRACKER_PANE_OUTPUT_ENABLED": "1"}, clear=False), \
+             mock.patch("tmux_util.run_tmux_cmd", side_effect=fake_tmux):
+            result = rpc_handler.handle_enable_pane_output({"agent_id": "id-1"})
+            status = rpc_handler.handle_pane_output_status({"agent_id": "id-1"})
+
+        combined = json.dumps(result) + json.dumps(status) + json.dumps(state.get_agent("id-1"))
+        self.assertTrue(result["enabled"])
+        self.assertNotIn("secret", combined.lower())
+        self.assertNotIn("pipe_token\"", combined)
+        self.assertNotIn("raw", json.dumps(result).lower() + json.dumps(status).lower())
+
+    def test_pane_output_control_remote_target_rejected(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        state.configure_pane_output("id-1", pipe_instance_id="pipe-1", pipe_token="secret-token", tmux_pane="%1")
+
+        with mock.patch("tmux_util.run_tmux_cmd") as run_tmux:
+            for method in (
+                rpc_handler.handle_enable_pane_output,
+                rpc_handler.handle_disable_pane_output,
+                rpc_handler.handle_pane_output_status,
+            ):
+                with self.assertRaises(ValueError):
+                    method({"target_address": "remote-host/agent1", "agent_name": "agent1"})
+                with self.assertRaises(ValueError):
+                    method({"target_address": "registry:agent1", "agent_name": "agent1"})
+                with self.assertRaises(ValueError):
+                    method({"target_address": "corp:agent1", "agent_name": "agent1"})
+
+        run_tmux.assert_not_called()
+        info = state.get_agent("id-1")
+        self.assertTrue(info["pipe_output_enabled"])
+        self.assertEqual(info["pipe_instance_id"], "pipe-1")
+        self.assertNotIn("secret-token", json.dumps(info))
+
     def test_pane_output_valid_chunk_accepted(self):
         self._setup_pane_output_agent()
 

@@ -13,6 +13,7 @@ import rpc_handler
 import http_sidecar
 import registry_client
 import permission_detection
+import pane_output_lifecycle
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', stream=sys.stderr)
 
@@ -83,6 +84,7 @@ def main():
         server.listen(10)
 
     state.init_state()
+    pane_output_lifecycle.recover_enabled_pane_outputs()
     
     # Start background threads
     threading.Thread(target=monitor.background_monitor, daemon=True).start()
