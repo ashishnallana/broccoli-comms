@@ -7,6 +7,7 @@ import message_journal
 import registry_client
 import permission_detection
 import pane_output_lifecycle
+import pane_output_parser
 import datetime
 import time
 import threading
@@ -30,6 +31,7 @@ PANE_OUTPUT_RATE_WINDOW_SECONDS = float(os.environ.get("AGENT_PANE_OUTPUT_RATE_W
 PANE_OUTPUT_MAX_ACCEPTED_CHUNKS_PER_WINDOW = int(os.environ.get("AGENT_PANE_OUTPUT_MAX_ACCEPTED_CHUNKS_PER_WINDOW", "200"))
 LOCAL_HOSTNAME = config.get("tracker", "hostname", socket.gethostname())
 REMOTE_BROAD_WATCH_ENABLED = config.get("tracker", "broad_watch_enabled", False)
+PANE_OUTPUT_PARSER_STATES: dict[tuple[str, str], dict] = {}
 
 
 class CursorExpiredError(ValueError):
@@ -878,6 +880,50 @@ def _pane_output_rate_limited(info: dict, now: float) -> tuple[bool, float, int]
     return window_chunks >= PANE_OUTPUT_MAX_ACCEPTED_CHUNKS_PER_WINDOW, window_started, window_chunks
 
 
+def _apply_pane_output_event(agent_id: str, event: dict) -> None:
+    """Publishes a local normalized parser event and applies validated patches."""
+    patch = event.get("state_patch") if isinstance(event.get("state_patch"), dict) else {}
+    if patch:
+        old_info = state.get_agent(agent_id) or {}
+        old_status = old_info.get("status")
+        if state.update_agent(agent_id, **patch):
+            new_info = state.get_agent(agent_id) or {}
+            if "status" in patch and patch.get("status") != old_status:
+                try:
+                    registry_client.push_agent_update(agent_id, patch["status"])
+                except Exception as exc:
+                    logging.debug("failed to push parser-derived status update for %s: %s", agent_id, exc)
+                state.publish_event("agent_status_changed", {
+                    **_agent_event_payload(new_info.get("name") or event.get("agent_name") or agent_id, new_info),
+                    "old_status": old_status,
+                })
+    state.publish_event("agent_output_event", event)
+
+
+def _process_pane_output_parser(agent_id: str, pipe_instance_id: str, chunk: str, now: float) -> int:
+    agent_name = state.get_agent_name_by_id(agent_id)
+    parser_key = (agent_id, pipe_instance_id)
+    parser_state = PANE_OUTPUT_PARSER_STATES.get(parser_key)
+    try:
+        next_parser_state, events, errors = pane_output_parser.parse_chunk(
+            parser_state,
+            chunk,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            pipe_instance_id=pipe_instance_id,
+            now=now,
+        )
+    except pane_output_parser.ParserValidationError as exc:
+        logging.info("pane_output parser rejected chunk metadata agent_id=%s pipe_instance_id=%s reason=%s", agent_id, pipe_instance_id, pane_output_parser.safe_error_code(exc))
+        return 0
+    PANE_OUTPUT_PARSER_STATES[parser_key] = next_parser_state
+    for error in errors:
+        logging.info("pane_output parser rejected line metadata agent_id=%s pipe_instance_id=%s reason=%s", agent_id, pipe_instance_id, error)
+    for event in events:
+        _apply_pane_output_event(agent_id, event)
+    return len(events)
+
+
 def handle_pane_output(params: dict) -> dict:
     """Internal Phase-1 tmux pipe-pane ingestion path.
 
@@ -954,6 +1000,7 @@ def handle_pane_output(params: dict) -> dict:
         seq,
         chunk_bytes,
     )
+    _process_pane_output_parser(agent_id, pipe_instance_id, chunk, now)
     return _pane_output_response(
         agent_id,
         accepted=True,

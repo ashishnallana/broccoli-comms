@@ -21,6 +21,7 @@ class TestRpcHandler(unittest.TestCase):
         state.events = []
         state.event_sequence_id = 0
         state.active_group_watches = {}
+        rpc_handler.PANE_OUTPUT_PARSER_STATES = {}
         self.inbox_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.inbox_dir.cleanup)
         state.INBOX_DIR = self.inbox_dir.name
@@ -2715,6 +2716,125 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual(info["pipe_chunks_accepted"], 1)
         self.assertEqual(info["pipe_chunks_dropped"], 1)
         self.assertEqual(info["pipe_last_seq"], 1)
+
+    @mock.patch("registry_client.push_agent_update")
+    def test_pane_output_structured_event_publishes_and_applies_valid_patch(self, push_update):
+        self._setup_pane_output_agent()
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"status_update","payload":{"reason":"ok"},"state_patch":{"status":"working","waiting_approval":false,"last_activity":true}}\n'
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": chunk,
+        })
+
+        self.assertTrue(result["accepted"])
+        info = state.get_agent("id-1")
+        self.assertEqual(info["status"], "working")
+        self.assertFalse(info["waiting_approval"])
+        self.assertIn("last_activity", info)
+        output_events = [event for event in state.events if event["type"] == "agent_output_event"]
+        self.assertEqual(len(output_events), 1)
+        self.assertEqual(output_events[0]["event_type"], "status_update")
+        self.assertNotIn("chunk", json.dumps(output_events[0]))
+        push_update.assert_called_once_with("id-1", "working")
+
+    def test_pane_output_malformed_structured_event_does_not_mutate_state(self):
+        self._setup_pane_output_agent()
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": "@@BROCCOLI_EVENT@@ {bad json}\n",
+        })
+
+        self.assertTrue(result["accepted"])
+        info = state.get_agent("id-1")
+        self.assertEqual(info["status"], "idle")
+        self.assertFalse(any(event["type"] == "agent_output_event" for event in state.events))
+
+    def test_pane_output_forbidden_state_patch_rejected_without_mutation(self):
+        self._setup_pane_output_agent()
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"bad_patch","state_patch":{"tmux_pane":"%evil"}}\n'
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": chunk,
+        })
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(state.get_agent("id-1")["tmux_pane"], "%1")
+        self.assertFalse(any(event["type"] == "agent_output_event" for event in state.events))
+
+    def test_pane_output_rejected_parser_content_not_in_logs_events_or_result(self):
+        self._setup_pane_output_agent()
+        secret_key = "RAW_SECRET_CHUNK"
+        secret_value = "TOKEN_SECRET_VALUE"
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"bad_patch","payload":{"safe":"ok"},"state_patch":{"%s":"%s"}}\n' % (secret_key, secret_value)
+
+        with mock.patch("logging.info") as logging_info:
+            result = rpc_handler.handle_pane_output({
+                "agent_id": "id-1",
+                "tmux_pane": "%1",
+                "pipe_instance_id": "pipe-1",
+                "pipe_token": "secret-token",
+                "seq": 1,
+                "chunk": chunk,
+            })
+
+        self.assertTrue(result["accepted"])
+        combined = json.dumps(result) + json.dumps(state.events) + str(logging_info.call_args_list)
+        self.assertNotIn(secret_key, combined)
+        self.assertNotIn(secret_value, combined)
+        self.assertIn("state_patch_field_not_allowed", combined)
+        self.assertFalse(any(event["type"] == "agent_output_event" for event in state.events))
+
+    def test_pane_output_forbidden_payload_keys_not_published(self):
+        self._setup_pane_output_agent()
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"bad_payload","payload":{"rawOutput":"RAW_SECRET_VALUE"}}\n'
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": chunk,
+        })
+
+        self.assertTrue(result["accepted"])
+        self.assertFalse(any(event["type"] == "agent_output_event" for event in state.events))
+        self.assertNotIn("RAW_SECRET_VALUE", json.dumps(state.events))
+
+    def test_pane_output_heuristic_permission_hint_applies_waiting_patch(self):
+        self._setup_pane_output_agent()
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": "permission approval required\n",
+        })
+
+        self.assertTrue(result["accepted"])
+        info = state.get_agent("id-1")
+        self.assertEqual(info["status"], "waiting")
+        self.assertTrue(info["waiting_approval"])
+        self.assertEqual(info["last_permission_prompt"], "permission prompt detected")
+        output_events = [event for event in state.events if event["type"] == "agent_output_event"]
+        self.assertEqual(output_events[0]["event_type"], "permission_hint")
 
     def test_pane_output_never_exposes_raw_chunk_in_result_logs_or_events(self):
         self._setup_pane_output_agent()
