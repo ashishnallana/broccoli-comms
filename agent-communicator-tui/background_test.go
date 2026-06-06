@@ -176,6 +176,12 @@ func TestMessageTimelineCriticalSegmentsKeepBackground(t *testing.T) {
 	assertNoResetToRawSpace(t, "incoming message", incoming)
 	assertVisibleCellsHaveBackground(t, "incoming message", incoming)
 	assertContains(t, "incoming message", incoming, "48;2;52;72;63", "48;2;52;72;63malice", "48;2;52;72;63mt1", "hello world")
+
+	m = model{messages: []tracker.Message{{Sender: "alice", Body: strings.Repeat("wrapped ", 30)}}}
+	wrappedIncoming := strings.Join(m.messageLinesForWidth(80), "\n")
+	assertNoResetToRawSpace(t, "wrapped incoming message", wrappedIncoming)
+	assertVisibleCellsHaveBackground(t, "wrapped incoming message", wrappedIncoming)
+
 	for _, line := range incomingLines {
 		if strings.TrimSpace(line) == "" {
 			continue

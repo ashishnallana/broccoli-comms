@@ -52,13 +52,11 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 		if content == "" {
 			return bgSpaces(innerWidth, bodyBg)
 		}
-		if !strings.Contains(content, "\x1b[") {
-			fg := colors.Text
-			if isPaneCapture {
-				fg = colors.Success
-			}
-			content = fgOnBg(fg, bodyBg).Render(content)
+		fg := colors.Text
+		if isPaneCapture {
+			fg = colors.Success
 		}
+		content = fgOnBg(fg, bodyBg).Render(content)
 		return bgSpaces(bubblePadX, bodyBg) + padStyledLine(content, wrapWidth, bodyBg) + bgSpaces(bubblePadX, bodyBg)
 	}
 
