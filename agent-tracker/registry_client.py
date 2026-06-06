@@ -1,4 +1,4 @@
-import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error, urllib.request, uuid, shlex
+import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error, urllib.parse, urllib.request, uuid, shlex
 import state
 import rpc_handler
 import config
@@ -80,6 +80,13 @@ class RegistryClient:
 
     def publish_event(self, target_tracker_id, event_type, payload):
         return self.request("POST", "/tracker-events", {"event_type": event_type, "source_tracker_id": self.tracker_id, "target_tracker_id": target_tracker_id, "payload": payload})[0]
+
+    def publish_message_event(self, event):
+        return self.request("POST", "/message-events", event)
+
+    def fetch_message_events(self, swarm_name, limit=200):
+        query = urllib.parse.urlencode({"swarm": swarm_name, "limit": int(limit)})
+        return self.request("GET", f"/message-events?{query}")
 
     def push_agent_update(self, agent_id, status):
         return self.request("POST", f"/trackers/{self.tracker_id}/agent-update", {"agent_id": agent_id, "status": status})[0]
@@ -332,6 +339,58 @@ def send_remote_message_to_registry(registry_name, sender_name, sender_agent_id,
         if client.name == registry_name:
             return client.request("POST", "/messages", _remote_message_payload(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, message, attachments, message_id, sender_metadata))
     return 404, {"message": f"registry not configured: {registry_name}"}
+
+
+def publish_message_event(event, registry_name=None):
+    clients = [client for client in load_registry_clients() if registry_name is None or client.name == registry_name]
+    if not clients:
+        return []
+    results = []
+    for client in clients:
+        try:
+            status, body = client.publish_message_event(event)
+            results.append((client.name, status, body))
+            if status not in {200, 201}:
+                LOG.warning("registry[%s] message-event publish returned status=%s body=%s", client.name, status, body)
+        except Exception as e:
+            LOG.warning("registry[%s] message-event publish failed: %s", client.name, e)
+            results.append((client.name, None, None))
+    return results
+
+
+def fetch_message_events(swarm_name, limit=200):
+    events_by_id = {}
+    events_without_id = []
+    for client in load_registry_clients():
+        status, body = client.fetch_message_events(swarm_name, limit)
+        if status != 200:
+            continue
+        for event in (body or {}).get("events") or []:
+            if not isinstance(event, dict):
+                continue
+            event = {**event, "registry_name": client.name}
+            message_id = event.get("message_id")
+            if message_id:
+                events_by_id[message_id] = event
+            else:
+                events_without_id.append(event)
+    events = list(events_by_id.values()) + events_without_id
+    events.sort(key=lambda event: event.get("timestamp") or "")
+    return events[-max(1, int(limit)):]
+
+
+def find_remote_agent(target_hostname, target_name_or_id, registry_name=None):
+    clients = [client for client in load_registry_clients() if registry_name is None or client.name == registry_name]
+    for client in clients:
+        status, body = client.fetch_agents()
+        if status != 200:
+            continue
+        for agent in (body or {}).get("agents") or []:
+            if agent.get("hostname") != target_hostname:
+                continue
+            if agent.get("agent_id") == target_name_or_id or agent.get("name") == target_name_or_id or target_name_or_id in (agent.get("aliases") or []):
+                return {**agent, "registry_name": client.name, "scope": "remote"}
+    return None
 
 
 def send_remote_pane_input(sender_name, sender_agent_id, sender_tracker_id, target_hostname, target_name_or_id, input_type, text=None, keys=None, submit=True, pane_input_id=None, request_id=None):
@@ -905,6 +964,12 @@ def _delivery_loop(client=None):
                         "sender_agent_type": delivery.get("sender_agent_type"),
                         "sender_agent_cmd": delivery.get("sender_agent_cmd"),
                         "kind": delivery.get("kind"),
+                        "recipient_agent_id": delivery.get("target_agent_id"),
+                        "recipient_tracker_id": tracker_id,
+                        "recipient_hostname": HOSTNAME,
+                        "swarms": delivery.get("swarms") or [],
+                        "membership_snapshot": delivery.get("membership_snapshot") or {},
+                        "swarm_context": delivery.get("swarm_context"),
                     },
                 )
                 ack_status = _ack(client, delivery["message_id"])

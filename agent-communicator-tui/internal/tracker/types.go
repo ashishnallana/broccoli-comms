@@ -67,6 +67,9 @@ type SwarmMember struct {
 	Role          string `json:"role,omitempty"`
 	AgentID       string `json:"agent_id,omitempty"`
 	TargetAddress string `json:"target_address,omitempty"`
+	Configured    *bool  `json:"configured,omitempty"`
+	Running       *bool  `json:"running,omitempty"`
+	Launchable    *bool  `json:"launchable,omitempty"`
 	Scope         string `json:"scope,omitempty"`
 	Status        string `json:"status,omitempty"`
 	Hostname      string `json:"hostname,omitempty"`
@@ -100,10 +103,6 @@ type SwarmTimelineMessage struct {
 
 type SwarmTimelineResult struct {
 	Messages []SwarmTimelineMessage `json:"messages"`
-}
-
-type WatchSwarmResult struct {
-	OK bool `json:"ok"`
 }
 
 type Message struct {

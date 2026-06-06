@@ -318,7 +318,10 @@ def normalize_config(cfg: dict) -> dict:
     agents = cfg.get("agents") or {}
     if not isinstance(agents, dict):
         raise ValueError("config agents must be an object")
+    swarms = normalize_swarm_config(cfg.get("swarms") or {})
     normalized = {**cfg, "agents": agents}
+    if swarms:
+        normalized["swarms"] = swarms
     for name, spec in agents.items():
         validate_agent_name(name)
         if not isinstance(spec, dict):
@@ -385,6 +388,33 @@ def normalize_swarms(swarms: object) -> list[dict[str, str]]:
         if role not in VALID_SWARM_ROLES:
             raise ValueError("swarm role must be 'main' or 'subagent'")
         normalized.append({"name": name, "role": role})
+    return normalized
+
+
+def normalize_swarm_config(swarms: object) -> dict[str, dict]:
+    if swarms is None:
+        return {}
+    if not isinstance(swarms, dict):
+        raise ValueError("config swarms must be an object")
+    normalized = {}
+    for swarm_name, spec in swarms.items():
+        validate_swarm_name(swarm_name)
+        if not isinstance(spec, dict):
+            raise ValueError(f"swarm {swarm_name!r} config must be an object")
+        members = spec.get("members") or []
+        if not isinstance(members, list):
+            raise ValueError(f"swarm {swarm_name!r} members must be a list")
+        normalized_members = []
+        for member in members:
+            if not isinstance(member, dict):
+                raise ValueError(f"swarm {swarm_name!r} member must be an object")
+            agent = member.get("agent")
+            role = member.get("role")
+            validate_agent_name(agent)
+            if role not in VALID_SWARM_ROLES:
+                raise ValueError("swarm role must be 'main' or 'subagent'")
+            normalized_members.append({"agent": agent, "role": role})
+        normalized[swarm_name] = {**spec, "name": spec.get("name") or swarm_name, "members": normalized_members}
     return normalized
 
 

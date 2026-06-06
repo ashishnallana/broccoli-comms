@@ -33,11 +33,14 @@ type localClient interface {
 	PublishTrackerEvent(ctx context.Context, targetTrackerID, eventType string, payload any) error
 	ListSwarms(context.Context) (tracker.ListSwarmsResult, error)
 	GetSwarmTimeline(context.Context, string, int) (tracker.SwarmTimelineResult, error)
-	WatchSwarm(context.Context, string, int) (tracker.WatchSwarmResult, error)
 }
 
 type messageIDSender interface {
 	SendMessageWithID(context.Context, string, string, string, string, []tracker.Attachment) error
+}
+
+type messageContextSender interface {
+	SendMessageWithContext(context.Context, string, string, string, string, string, []tracker.Attachment) error
 }
 
 type agentRow struct {
@@ -46,6 +49,10 @@ type agentRow struct {
 	Status        string
 	CWD           string
 	TargetAddress string
+	Configured    *bool
+	Running       *bool
+	Launchable    *bool
+	Role          string
 	Hostname      string
 	AgentName     string
 	TmuxPane      string
@@ -364,7 +371,17 @@ func sendOutboxRecord(local localClient, senderName string, row agentRow, record
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		var err error
-		if withID, ok := local.(messageIDSender); ok {
+		if record.SwarmContext != "" {
+			if withContext, ok := local.(messageContextSender); ok {
+				err = withContext.SendMessageWithContext(ctx, senderName, target, deliveryBody, record.ID, record.SwarmContext, nil)
+			} else if withID, ok := local.(messageIDSender); ok {
+				err = withID.SendMessageWithID(ctx, senderName, target, deliveryBody, record.ID, nil)
+			} else if senderName != "" {
+				err = local.SendMessageFrom(ctx, senderName, target, deliveryBody, nil)
+			} else {
+				err = local.SendMessage(ctx, target, deliveryBody, nil)
+			}
+		} else if withID, ok := local.(messageIDSender); ok {
 			err = withID.SendMessageWithID(ctx, senderName, target, deliveryBody, record.ID, nil)
 		} else if senderName != "" {
 			err = local.SendMessageFrom(ctx, senderName, target, deliveryBody, nil)

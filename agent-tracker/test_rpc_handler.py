@@ -1,11 +1,13 @@
 import datetime
 import json
 import os
+import tempfile
 import threading
 import time
 import unittest
 from unittest import mock
 
+import message_journal
 import registry_client
 import rpc_handler
 import state
@@ -18,7 +20,17 @@ class TestRpcHandler(unittest.TestCase):
         state.pane_index = {}
         state.events = []
         state.event_sequence_id = 0
-        state.INBOX_DIR = "/tmp/test-agent-inboxes"
+        state.active_group_watches = {}
+        self.inbox_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.inbox_dir.cleanup)
+        state.INBOX_DIR = self.inbox_dir.name
+        self.journal_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.journal_dir.cleanup)
+        message_journal.JOURNAL_PATH = os.path.join(self.journal_dir.name, "message_journal.jsonl")
+        self.config_home = tempfile.TemporaryDirectory()
+        self.addCleanup(self.config_home.cleanup)
+        self.env_patch = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": self.config_home.name, "AGENT_REGISTRIES_JSON": "[]"}, clear=False)
+        self.env_patch.start()
         self.resize_pane_width = mock.patch("tmux_util.resize_pane_width").start()
         self.addCleanup(mock.patch.stopall)
 
@@ -1124,7 +1136,8 @@ class TestRpcHandler(unittest.TestCase):
     def test_send_message_routes_remote_target_address_via_registry(self, send_remote):
         state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
         self.assertTrue(rpc_handler.handle_send_message({"sender_id": "id-s", "target_address": "remote-host/agent2", "message": "hello"}))
-        send_remote.assert_called_once_with("sender", "id-s", mock.ANY, "remote-host", "agent2", "hello", None, None, mock.ANY)
+        send_remote.assert_called_once_with("sender", "id-s", mock.ANY, "remote-host", "agent2", "hello", None, mock.ANY, mock.ANY)
+        self.assertTrue(send_remote.call_args.args[7])
         self.assertEqual(send_remote.call_args.args[8]["sender_model_type"], "unknown")
 
     @mock.patch("registry_client.send_remote_message", return_value=(202, {"ok": True}))
@@ -1132,13 +1145,15 @@ class TestRpcHandler(unittest.TestCase):
         state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
         target_id = "961477f2-6523-4dae-87ea-bc6223fa04df"
         self.assertTrue(rpc_handler.handle_send_message({"sender_id": "id-s", "target_address": f"remote-host/{target_id}", "message": "hello"}))
-        send_remote.assert_called_once_with("sender", "id-s", mock.ANY, "remote-host", target_id, "hello", None, None, mock.ANY)
+        send_remote.assert_called_once_with("sender", "id-s", mock.ANY, "remote-host", target_id, "hello", None, mock.ANY, mock.ANY)
+        self.assertTrue(send_remote.call_args.args[7])
 
     @mock.patch("registry_client.send_remote_message_to_registry", return_value=(202, {"ok": True}))
     def test_send_message_routes_explicit_registry_target_address(self, send_remote):
         state.set_agent("sender", {"agent_id": "id-s", "status": "idle"})
         self.assertTrue(rpc_handler.handle_send_message({"sender_id": "id-s", "target_address": "corp:remote-host/agent2", "message": "hello"}))
-        send_remote.assert_called_once_with("corp", "sender", "id-s", mock.ANY, "remote-host", "agent2", "hello", None, None, mock.ANY)
+        send_remote.assert_called_once_with("corp", "sender", "id-s", mock.ANY, "remote-host", "agent2", "hello", None, mock.ANY, mock.ANY)
+        self.assertTrue(send_remote.call_args.args[8])
 
     @mock.patch("tmux_util.send_keys")
     def test_plain_local_target_without_sender_identity_uses_cli_user(self, send_keys):
@@ -1723,6 +1738,63 @@ class TestRpcHandler(unittest.TestCase):
             rpc_handler.REMOTE_BROAD_WATCH_ENABLED = old_broad
 
 
+    def test_list_swarms_includes_configured_offline_top_level_members(self):
+        from pathlib import Path
+        cfg_dir = Path(self.config_home.name) / "broccoli-comms"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.json").write_text(json.dumps({
+            "agents": {"planner": {"cwd": "/repo", "command": "pi"}},
+            "swarms": {"backend-fix": {"members": [{"agent": "planner", "role": "main"}]}},
+        }))
+        os.environ.pop("BROCCOLI_COMMS_APP_RUNTIME", None)
+
+        result = rpc_handler.handle_list_swarms({"include_remote": False})
+
+        self.assertEqual(len(result["swarms"]), 1)
+        member = result["swarms"][0]["members"][0]
+        self.assertEqual(member["name"], "planner")
+        self.assertTrue(member["configured"])
+        self.assertFalse(member["running"])
+        self.assertTrue(member["launchable"])
+        self.assertIsNone(member["target_address"])
+
+    def test_list_swarms_includes_configured_offline_legacy_membership(self):
+        from pathlib import Path
+        cfg_dir = Path(self.config_home.name) / "broccoli-comms"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.json").write_text(json.dumps({
+            "agents": {"coder": {"cwd": "/repo", "command": "pi", "swarms": [{"name": "backend-fix", "role": "subagent"}]}},
+        }))
+
+        result = rpc_handler.handle_list_swarms({"include_remote": False})
+
+        member = result["swarms"][0]["members"][0]
+        self.assertEqual(member["name"], "coder")
+        self.assertEqual(member["role"], "subagent")
+        self.assertTrue(member["configured"])
+        self.assertFalse(member["running"])
+
+    def test_list_swarms_merges_configured_and_running_member(self):
+        from pathlib import Path
+        cfg_dir = Path(self.config_home.name) / "broccoli-comms"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.json").write_text(json.dumps({
+            "agents": {"planner": {"cwd": "/repo", "command": "pi", "swarms": [{"name": "backend-fix", "role": "main"}]}},
+        }))
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+        })
+
+        result = rpc_handler.handle_list_swarms({"include_remote": False})
+
+        members = result["swarms"][0]["members"]
+        self.assertEqual(len(members), 1)
+        self.assertTrue(members[0]["configured"])
+        self.assertTrue(members[0]["running"])
+        self.assertTrue(members[0]["launchable"])
+        self.assertEqual(members[0]["target_address"], "planner")
+
     def test_list_swarms_groups_main_and_subagents(self):
         state.set_agent("planner", {
             "agent_id": "id-main",
@@ -1790,6 +1862,295 @@ class TestRpcHandler(unittest.TestCase):
         duplicate_main = rpc_handler.handle_list_swarms({})["swarms"][0]
         self.assertIn("duplicate main", duplicate_main["warnings"][0])
         self.assertEqual(duplicate_main["main"]["name"], "planner-b")
+
+    def test_swarm_timeline_reads_durable_journal_without_watch_swarm(self):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+        state.set_agent("coder", {
+            "agent_id": "id-sub",
+            "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            "no_notify_with_send_keys": True,
+        })
+
+        rpc_handler.handle_send_message({
+            "sender_id": "id-main",
+            "agent_name": "coder",
+            "message": "please fix",
+            "message_id": "durable-swarm-msg-1",
+        })
+        timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+
+        self.assertEqual(timeline["group_id"], "swarm:local:backend-fix")
+        self.assertEqual(len(timeline["messages"]), 1)
+        message = timeline["messages"][0]
+        self.assertEqual(message["message_id"], "durable-swarm-msg-1")
+        self.assertEqual(message["sender"], "planner")
+        self.assertEqual(message["recipient"], "coder")
+        self.assertEqual(message["message"], "please fix")
+        self.assertEqual(message["source"], "message_journal")
+        self.assertEqual(message["membership_snapshot"]["backend-fix"]["sender_role"], "main")
+        self.assertEqual(message["membership_snapshot"]["backend-fix"]["recipient_role"], "subagent")
+
+    def test_swarm_timeline_generates_message_id_for_local_send_without_explicit_id(self):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+        state.set_agent("coder", {
+            "agent_id": "id-sub",
+            "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            "no_notify_with_send_keys": True,
+        })
+
+        rpc_handler.handle_send_message({
+            "sender_id": "id-main",
+            "agent_name": "coder",
+            "message": "please fix without explicit id",
+        })
+        timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+
+        self.assertEqual(len(timeline["messages"]), 1)
+        self.assertTrue(timeline["messages"][0]["message_id"])
+        self.assertEqual(timeline["messages"][0]["message"], "please fix without explicit id")
+
+    def test_swarm_journal_dedupes_duplicate_message_id(self):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+        state.set_agent("coder", {
+            "agent_id": "id-sub",
+            "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            "no_notify_with_send_keys": True,
+        })
+        params = {
+            "sender_id": "id-main",
+            "agent_name": "coder",
+            "message": "please fix once",
+            "message_id": "duplicate-swarm-msg-1",
+        }
+
+        rpc_handler.handle_send_message(params)
+        rpc_handler.handle_send_message(params)
+        timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+
+        self.assertEqual([m["message_id"] for m in timeline["messages"]], ["duplicate-swarm-msg-1"])
+
+    def test_swarm_context_classifies_user_message_to_swarm_main(self):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+
+        rpc_handler.handle_send_message({
+            "agent_name": "planner",
+            "message": "user asks main in swarm context",
+            "message_id": "user-to-main-context-1",
+            "swarm_context": "backend-fix",
+        })
+        timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+
+        self.assertEqual(len(timeline["messages"]), 1)
+        message = timeline["messages"][0]
+        self.assertEqual(message["message_id"], "user-to-main-context-1")
+        self.assertEqual(message["sender"], "cli-user")
+        self.assertEqual(message["recipient"], "planner")
+        self.assertEqual(message["membership_snapshot"]["backend-fix"]["sender_role"], None)
+        self.assertEqual(message["membership_snapshot"]["backend-fix"]["recipient_role"], "main")
+
+    def test_user_message_to_swarm_main_without_context_is_not_classified(self):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+
+        rpc_handler.handle_send_message({
+            "agent_name": "planner",
+            "message": "simple chat without swarm context",
+            "message_id": "user-to-main-no-context-1",
+        })
+        timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+
+        self.assertEqual(timeline["messages"], [])
+
+    def test_non_swarm_message_is_not_in_swarm_journal_timeline(self):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+        state.set_agent("outsider", {
+            "agent_id": "id-outsider",
+            "swarms": [],
+            "no_notify_with_send_keys": True,
+        })
+
+        rpc_handler.handle_send_message({
+            "sender_id": "id-main",
+            "agent_name": "outsider",
+            "message": "not swarm related",
+            "message_id": "non-swarm-msg-1",
+        })
+        timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+
+        self.assertEqual(timeline["messages"], [])
+
+    @mock.patch("registry_client.publish_message_event")
+    def test_local_swarm_send_publishes_registry_message_event(self, publish_event):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+        state.set_agent("coder", {
+            "agent_id": "id-sub",
+            "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            "no_notify_with_send_keys": True,
+        })
+
+        rpc_handler.handle_send_message({
+            "sender_id": "id-main",
+            "agent_name": "coder",
+            "message": "publish this",
+            "message_id": "publish-local-1",
+        })
+
+        publish_event.assert_called_once()
+        event = publish_event.call_args.args[0]
+        self.assertEqual(event["message_id"], "publish-local-1")
+        self.assertEqual(event["sender_agent_name"], "planner")
+        self.assertEqual(event["recipient_agent_name"], "coder")
+        self.assertEqual(event["swarms"], [{"name": "backend-fix"}])
+
+    @mock.patch("registry_client.publish_message_event", side_effect=RuntimeError("registry down"))
+    def test_local_registry_publish_failure_does_not_break_delivery_or_timeline(self, _publish_event):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+        state.set_agent("coder", {
+            "agent_id": "id-sub",
+            "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            "no_notify_with_send_keys": True,
+        })
+
+        self.assertTrue(rpc_handler.handle_send_message({
+            "sender_id": "id-main",
+            "agent_name": "coder",
+            "message": "local survives registry outage",
+            "message_id": "publish-fail-local-1",
+        }))
+        timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+
+        self.assertEqual([m["message_id"] for m in timeline["messages"]], ["publish-fail-local-1"])
+
+    @mock.patch("registry_client.publish_message_event")
+    @mock.patch("registry_client.find_remote_agent")
+    @mock.patch("registry_client.send_remote_message", return_value=(202, {"ok": True}))
+    def test_remote_swarm_send_uses_same_generated_message_id_for_delivery_and_event(self, send_remote, find_remote, publish_event):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+        })
+        find_remote.return_value = {
+            "agent_id": "remote-id",
+            "name": "coder",
+            "hostname": "remote-host",
+            "tracker_id": "remote-tracker",
+            "swarms": [{"name": "backend-fix", "role": "subagent"}],
+        }
+
+        self.assertTrue(rpc_handler.handle_send_message({
+            "sender_id": "id-main",
+            "target_address": "remote-host/coder",
+            "message": "remote durable",
+        }))
+
+        delivery_message_id = send_remote.call_args.args[7]
+        event = publish_event.call_args.args[0]
+        self.assertTrue(delivery_message_id)
+        self.assertEqual(event["message_id"], delivery_message_id)
+        self.assertEqual(event["recipient_tracker_id"], "remote-tracker")
+        self.assertEqual(event["swarms"], [{"name": "backend-fix"}])
+
+    @mock.patch("registry_client.publish_message_event")
+    def test_user_swarm_context_message_to_main_publishes_registry_event(self, publish_event):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+
+        rpc_handler.handle_send_message({
+            "agent_name": "planner",
+            "message": "context publish",
+            "message_id": "user-context-publish-1",
+            "swarm_context": "backend-fix",
+        })
+
+        event = publish_event.call_args.args[0]
+        self.assertEqual(event["message_id"], "user-context-publish-1")
+        self.assertEqual(event["sender_agent_name"], "cli-user")
+        self.assertEqual(event["recipient_agent_name"], "planner")
+        self.assertEqual(event["swarms"], [{"name": "backend-fix"}])
+
+    @mock.patch("registry_client.fetch_message_events")
+    def test_swarm_timeline_includes_registry_events_and_dedupes_local_rows(self, fetch_events):
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+            "no_notify_with_send_keys": True,
+        })
+        state.set_agent("coder", {
+            "agent_id": "id-sub",
+            "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            "no_notify_with_send_keys": True,
+        })
+        rpc_handler.handle_send_message({
+            "sender_id": "id-main",
+            "agent_name": "coder",
+            "message": "local duplicate base",
+            "message_id": "dedupe-registry-1",
+        })
+        fetch_events.return_value = [
+            {
+                "message_id": "dedupe-registry-1",
+                "timestamp": "2026-06-06T10:00:00Z",
+                "sender_hostname": "zephyrus",
+                "sender_agent_name": "planner",
+                "sender_agent_id": "id-main",
+                "sender_tracker_id": "local-tracker",
+                "recipient_hostname": "zephyrus",
+                "recipient_agent_name": "coder",
+                "recipient_agent_id": "id-sub",
+                "recipient_tracker_id": "local-tracker",
+                "swarms": [{"name": "backend-fix"}],
+                "message": "registry duplicate",
+            },
+            {
+                "message_id": "registry-only-1",
+                "timestamp": "2026-06-06T10:01:00Z",
+                "sender_hostname": "remote-host",
+                "sender_agent_name": "reviewer",
+                "recipient_hostname": "zephyrus",
+                "recipient_agent_name": "planner",
+                "swarms": [{"name": "backend-fix"}],
+                "message": "registry only",
+            },
+        ]
+
+        timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+
+        self.assertEqual([m["message_id"] for m in timeline["messages"]], ["dedupe-registry-1", "registry-only-1"])
+        self.assertEqual(timeline["messages"][1]["source"], "registry_message_event")
 
     def test_watch_swarm_records_observed_messages_to_swarm_timeline(self):
         import tempfile, shutil

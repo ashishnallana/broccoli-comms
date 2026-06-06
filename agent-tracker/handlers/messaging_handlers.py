@@ -8,6 +8,7 @@ import socket
 import uuid
 
 import config
+import message_journal
 import registry_client
 import state
 import tmux_util
@@ -164,6 +165,26 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
             state.record_to_matching_group_timelines(notify_sender, current_name, msg_obj)
         except Exception as ge:
             logging.warning("Failed to record observed message to group timelines: %s", ge)
+
+        try:
+            inbound_registry_delivery = bool(msg_obj.get("sender_tracker_id") and msg_obj.get("sender_tracker_id") != registry_client.TRACKER_ID)
+            journal_event = message_journal.record_local_message(
+                notify_sender,
+                current_name,
+                msg_obj,
+                sender_info=state.get_agent(notify_sender) or {},
+                recipient_info=info,
+                swarm_context=msg_obj.get("swarm_context") or msg_obj.get("swarm"),
+                direction="inbound" if inbound_registry_delivery else "local",
+                source="registry_delivery" if inbound_registry_delivery else "deliver_local_message",
+            )
+            if journal_event:
+                try:
+                    registry_client.publish_message_event(message_journal.to_registry_event(journal_event))
+                except Exception as pe:
+                    logging.warning("Best-effort registry message-event publish failed: %s", pe)
+        except Exception as je:
+            logging.warning("Failed to record observed message to durable journal: %s", je)
 
         notification = {
             "target_agent_id": info.get("agent_id"),
@@ -422,9 +443,45 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
         if ":" in hostname:
             registry_name, hostname = hostname.split(":", 1)
         if hostname not in {"local", LOCAL_HOSTNAME}:
+            message_id = params.get("message_id") or str(uuid.uuid4())
+            remote_recipient = registry_client.find_remote_agent(hostname, target, registry_name=registry_name) or {
+                "name": target,
+                "hostname": hostname,
+                "tracker_id": None,
+                "agent_id": target if _is_uuid(target) else None,
+                "swarms": [],
+            }
+            remote_payload = {
+                "message_id": message_id,
+                "timestamp": _utc_now_isoformat(),
+                "message": msg,
+                "attachments": attachments,
+                "sender_agent_id": sender_id,
+                "sender_tracker_id": registry_client.TRACKER_ID,
+                "recipient_agent_id": remote_recipient.get("agent_id"),
+                "recipient_tracker_id": remote_recipient.get("tracker_id"),
+            }
+            remote_event = message_journal.build_message_event(
+                sender_name,
+                remote_recipient.get("name") or target,
+                remote_payload,
+                sender_info=sender_info,
+                recipient_info=remote_recipient,
+                swarm_context=params.get("swarm_context") or params.get("swarm"),
+                direction="outbound",
+                source="send_message",
+            )
+            delivery_metadata = sender_metadata
+            if remote_event:
+                delivery_metadata = {
+                    **sender_metadata,
+                    "swarms": remote_event.get("swarms") or [],
+                    "membership_snapshot": remote_event.get("membership_snapshot") or {},
+                    "swarm_context": params.get("swarm_context") or params.get("swarm"),
+                }
             if registry_name:
                 status, body = registry_client.send_remote_message_to_registry(
-                    registry_name, sender_name, sender_id, registry_client.TRACKER_ID, hostname, target, msg, attachments, params.get("message_id"), sender_metadata
+                    registry_name, sender_name, sender_id, registry_client.TRACKER_ID, hostname, target, msg, attachments, message_id, delivery_metadata
                 )
             else:
                 status, body = registry_client.send_remote_message(
@@ -435,10 +492,15 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
                     target,
                     msg,
                     attachments,
-                    params.get("message_id"),
-                    sender_metadata,
+                    message_id,
+                    delivery_metadata,
                 )
             if status == 202:
+                if remote_event:
+                    try:
+                        registry_client.publish_message_event(message_journal.to_registry_event(remote_event), registry_name=registry_name)
+                    except Exception as pe:
+                        logging.warning("Best-effort registry message-event publish failed: %s", pe)
                 return True
             raise RuntimeError(f"Remote delivery failed: {(body or {}).get('message', 'unknown error')}")
         params = {**params, **({"agent_id": target} if _is_uuid(target) else {"agent_name": target})}
@@ -453,16 +515,21 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
         warning_msg = f"Note: Agent '{agent_name}' was renamed to '{current_name}'."
         logging.info(warning_msg)
 
+    message_id = params.get("message_id") or str(uuid.uuid4())
     payload = {
         "sender": sender_name,
         "timestamp": _utc_now_isoformat(),
         "message": msg,
         "attachments": attachments,
         "read": False,
-        "message_id": params.get("message_id"),
+        "message_id": message_id,
         **sender_metadata,
         "sender_tracker_id": registry_client.TRACKER_ID,
     }
+    if params.get("swarm_context") is not None:
+        payload["swarm_context"] = params.get("swarm_context")
+    elif params.get("swarm") is not None:
+        payload["swarm_context"] = params.get("swarm")
     logging.info("local delivery payload target=%s sender=%s message_id=%s sender_agent_id=%s sender_tracker_id=%s", agent_name, sender_name, payload.get("message_id"), payload.get("sender_agent_id"), payload.get("sender_tracker_id"))
     verify = params.get("verify", False)
     (deliver_message or deliver_local_message)(agent_name, payload, sender_name, verify=verify)

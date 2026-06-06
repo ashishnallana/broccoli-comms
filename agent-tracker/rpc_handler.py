@@ -3,6 +3,7 @@ import logging
 import socket
 import state
 import tmux_util
+import message_journal
 import registry_client
 import permission_detection
 import datetime
@@ -10,6 +11,8 @@ import time
 import threading
 import uuid
 import struct
+import os
+from pathlib import Path
 
 import config
 from handlers import pane_capture
@@ -266,6 +269,83 @@ def _swarm_group_id(swarm_name: str) -> str:
     return f"swarm:local:{swarm_name}"
 
 
+def _broccoli_config_json_path() -> Path:
+    if os.environ.get("XDG_CONFIG_HOME"):
+        return Path(os.environ["XDG_CONFIG_HOME"]) / "broccoli-comms" / "config.json"
+    configured = config.get("paths", "config_dir")
+    if configured:
+        return Path(configured).expanduser() / "config.json"
+    return Path.home() / ".config" / "broccoli-comms" / "config.json"
+
+
+def _load_broccoli_runtime_config() -> dict:
+    path = _broccoli_config_json_path()
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logging.warning("failed to load broccoli config for swarms from %s: %s", path, e)
+        return {}
+
+
+def _configured_swarm_members() -> dict[str, list[dict]]:
+    cfg = _load_broccoli_runtime_config()
+    agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
+    swarms: dict[str, list[dict]] = {}
+
+    top_level = cfg.get("swarms") if isinstance(cfg.get("swarms"), dict) else {}
+    for swarm_name, spec in top_level.items():
+        if not isinstance(spec, dict):
+            continue
+        try:
+            _validate_swarm_name(swarm_name)
+        except ValueError:
+            continue
+        members = spec.get("members") if isinstance(spec.get("members"), list) else []
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            agent_name = member.get("agent")
+            role = member.get("role")
+            if not isinstance(agent_name, str) or role not in agent_handlers.VALID_SWARM_ROLES:
+                continue
+            swarms.setdefault(swarm_name, []).append({
+                "name": agent_name,
+                "role": role,
+                "agent_id": None,
+                "target_address": None,
+                "hostname": registry_client.HOSTNAME,
+                "scope": "local",
+                "configured": agent_name in agents,
+                "running": False,
+                "launchable": agent_name in agents,
+            })
+
+    for agent_name, spec in agents.items():
+        if not isinstance(spec, dict):
+            continue
+        try:
+            memberships = agent_handlers.normalize_swarms(spec.get("swarms", []))
+        except ValueError:
+            continue
+        for membership in memberships:
+            swarms.setdefault(membership["name"], []).append({
+                "name": agent_name,
+                "role": membership["role"],
+                "agent_id": None,
+                "target_address": None,
+                "hostname": registry_client.HOSTNAME,
+                "scope": "local",
+                "configured": True,
+                "running": False,
+                "launchable": True,
+            })
+    return swarms
+
+
 def _swarm_member_row(agent_name: str, info: dict, role: str) -> dict:
     return {
         "name": agent_name,
@@ -274,6 +354,9 @@ def _swarm_member_row(agent_name: str, info: dict, role: str) -> dict:
         "target_address": info.get("target_address") or agent_name,
         "hostname": info.get("hostname") or registry_client.HOSTNAME,
         "scope": info.get("scope", "local"),
+        "configured": bool(info.get("configured", False)),
+        "running": True,
+        "launchable": bool(info.get("launchable", False)),
     }
 
 
@@ -290,15 +373,36 @@ def _agents_for_swarm_derivation(include_remote: bool = True) -> dict:
     return agents
 
 
+def _merge_swarm_member(swarm: dict, member: dict) -> dict:
+    for existing in swarm["members"]:
+        if existing.get("name") == member.get("name") and existing.get("role") == member.get("role"):
+            configured = bool(existing.get("configured") or member.get("configured"))
+            running = bool(existing.get("running") or member.get("running"))
+            launchable = bool(existing.get("launchable") or member.get("launchable"))
+            existing.update({k: v for k, v in member.items() if v is not None})
+            existing["configured"] = configured
+            existing["running"] = running
+            existing["launchable"] = launchable
+            return existing
+    swarm["members"].append(member)
+    return member
+
+
 def _derive_swarms(include_remote: bool = True) -> list[dict]:
     swarms: dict[str, dict] = {}
+    for swarm_name, members in _configured_swarm_members().items():
+        swarm = swarms.setdefault(swarm_name, {"name": swarm_name, "main": None, "members": [], "warnings": []})
+        for member in members:
+            merged = _merge_swarm_member(swarm, member)
+            if merged.get("role") == "main":
+                swarm["main"] = merged
+
     for agent_name, info in _agents_for_swarm_derivation(include_remote).items():
         for membership in agent_handlers.normalize_swarms(info.get("swarms", [])):
             swarm_name = membership["name"]
             role = membership["role"]
             swarm = swarms.setdefault(swarm_name, {"name": swarm_name, "main": None, "members": [], "warnings": []})
-            member = _swarm_member_row(agent_name, info, role)
-            swarm["members"].append(member)
+            member = _merge_swarm_member(swarm, _swarm_member_row(agent_name, info, role))
             if role == "main":
                 swarm["main"] = member
     for swarm in swarms.values():
@@ -342,13 +446,37 @@ def handle_get_group_timeline(params: dict) -> dict:
     return {"messages": messages}
 
 
+def _merge_timeline_messages(*message_lists: list[dict], last_n: int = 200) -> list[dict]:
+    by_id = {}
+    without_id = []
+    for messages in message_lists:
+        for message in messages:
+            message_id = message.get("message_id")
+            if message_id:
+                by_id[message_id] = message
+            else:
+                without_id.append(message)
+    merged = list(by_id.values()) + without_id
+    merged.sort(key=lambda e: e.get("timestamp") or "")
+    return merged[-last_n:]
+
+
 def handle_get_swarm_timeline(params: dict) -> dict:
     swarm_name = _validate_swarm_name(params.get("swarm"))
     last_n = params.get("last_n", 200)
-    if last_n is not None:
+    if last_n is None:
+        last_n = 200
+    else:
         last_n = _validate_positive_int(last_n, "last_n")
     group_id = _swarm_group_id(swarm_name)
-    return {"group_id": group_id, "messages": state.read_group_timeline(group_id, last_n)}
+    group_messages = state.read_group_timeline(group_id, last_n)
+    journal_messages = message_journal.read_swarm_timeline(swarm_name, last_n)
+    try:
+        registry_messages = [message_journal.registry_event_to_timeline_row(event) for event in registry_client.fetch_message_events(swarm_name, last_n)]
+    except Exception as e:
+        logging.warning("failed to fetch registry message-events for swarm timeline %s: %s", swarm_name, e)
+        registry_messages = []
+    return {"group_id": group_id, "messages": _merge_timeline_messages(group_messages, journal_messages, registry_messages, last_n=last_n)}
 
 
 def handle_watch_swarm(params: dict) -> dict:

@@ -269,12 +269,19 @@ func (c *Client) SendMessageFrom(ctx context.Context, senderName, target, body s
 }
 
 func (c *Client) SendMessageWithID(ctx context.Context, senderName, target, body, messageID string, attachments []Attachment) error {
+	return c.SendMessageWithContext(ctx, senderName, target, body, messageID, "", attachments)
+}
+
+func (c *Client) SendMessageWithContext(ctx context.Context, senderName, target, body, messageID, swarmContext string, attachments []Attachment) error {
 	params := map[string]any{"message": body}
 	if senderName != "" {
 		params["sender_name"] = senderName
 	}
 	if messageID != "" {
 		params["message_id"] = messageID
+	}
+	if swarmContext != "" {
+		params["swarm_context"] = swarmContext
 	}
 	for key, value := range messageTargetParams(target) {
 		params[key] = value
@@ -370,15 +377,5 @@ func (c *Client) GetSwarmTimeline(ctx context.Context, swarmName string, lastN i
 	}
 	var result SwarmTimelineResult
 	err := c.call(ctx, "get_swarm_timeline", params, 5*time.Second, &result)
-	return result, err
-}
-
-func (c *Client) WatchSwarm(ctx context.Context, swarmName string, leaseSeconds int) (WatchSwarmResult, error) {
-	params := map[string]any{"swarm": swarmName}
-	if leaseSeconds > 0 {
-		params["lease_seconds"] = leaseSeconds
-	}
-	var result WatchSwarmResult
-	err := c.call(ctx, "watch_swarm", params, 5*time.Second, &result)
 	return result, err
 }

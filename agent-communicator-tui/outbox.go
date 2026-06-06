@@ -20,6 +20,7 @@ type outboxRecord struct {
 	TargetScope     string `json:"target_scope"`
 	TargetAgentID   string `json:"target_agent_id,omitempty"`
 	TargetTrackerID string `json:"target_tracker_id,omitempty"`
+	SwarmContext    string `json:"swarm_context,omitempty"`
 	Body            string `json:"body"`
 	Delivered       bool   `json:"delivered,omitempty"`
 	Notified        bool   `json:"notified,omitempty"`

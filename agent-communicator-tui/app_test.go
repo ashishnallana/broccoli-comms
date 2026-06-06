@@ -14,30 +14,33 @@ import (
 )
 
 type fakeLocal struct {
-	agents        map[string]tracker.Agent
-	inbox         []tracker.Message
-	lastLimit     int
-	lastSenderID  string
-	lastTracker   string
-	lastSender    string
-	sentTo        string
-	sentBody      string
-	sentSender    string
-	sentID        string
-	sendErr       error
-	directText    string
-	directSubmit  bool
-	directKeys    []string
-	directTarget  string
-	directErr     error
-	events        tracker.WaitEventsResult
-	unreadCounts  map[string]int
-	swarms        []tracker.Swarm
-	swarmMessages []tracker.SwarmTimelineMessage
-	lastSwarmName string
-	ensureName    string
-	ensureErr     error
-	listOptions   tracker.ListOptions
+	agents                map[string]tracker.Agent
+	inbox                 []tracker.Message
+	lastLimit             int
+	lastSenderID          string
+	lastTracker           string
+	lastSender            string
+	sentTo                string
+	sentBody              string
+	sentSender            string
+	sentID                string
+	sentSwarmContext      string
+	sendErr               error
+	directText            string
+	directSubmit          bool
+	directKeys            []string
+	directTarget          string
+	directErr             error
+	events                tracker.WaitEventsResult
+	unreadCounts          map[string]int
+	swarms                []tracker.Swarm
+	swarmMessages         []tracker.SwarmTimelineMessage
+	lastSwarmName         string
+	listSwarmsCalls       int
+	getSwarmTimelineCalls int
+	ensureName            string
+	ensureErr             error
+	listOptions           tracker.ListOptions
 }
 
 func (f *fakeLocal) EnsureMailbox(_ context.Context, agentName string) (tracker.EnsureMailboxResult, error) {
@@ -82,6 +85,10 @@ func (f *fakeLocal) SendMessageWithID(_ context.Context, sender, target, body, i
 	f.sentSender, f.sentTo, f.sentBody, f.sentID = sender, target, body, id
 	return f.sendErr
 }
+func (f *fakeLocal) SendMessageWithContext(_ context.Context, sender, target, body, id, swarmContext string, _ []tracker.Attachment) error {
+	f.sentSender, f.sentTo, f.sentBody, f.sentID, f.sentSwarmContext = sender, target, body, id, swarmContext
+	return f.sendErr
+}
 func (f *fakeLocal) SendText(_ context.Context, target, text string, submit bool) error {
 	f.directTarget, f.directText, f.directSubmit = target, text, submit
 	return f.directErr
@@ -100,14 +107,13 @@ func (f *fakeLocal) PublishTrackerEvent(context.Context, string, string, any) er
 	return nil
 }
 func (f *fakeLocal) ListSwarms(context.Context) (tracker.ListSwarmsResult, error) {
+	f.listSwarmsCalls++
 	return tracker.ListSwarmsResult{Swarms: f.swarms}, nil
 }
 func (f *fakeLocal) GetSwarmTimeline(_ context.Context, swarmName string, _ int) (tracker.SwarmTimelineResult, error) {
+	f.getSwarmTimelineCalls++
 	f.lastSwarmName = swarmName
 	return tracker.SwarmTimelineResult{Messages: f.swarmMessages}, nil
-}
-func (f *fakeLocal) WatchSwarm(context.Context, string, int) (tracker.WatchSwarmResult, error) {
-	return tracker.WatchSwarmResult{OK: true}, nil
 }
 
 func TestRunPrintsVersion(t *testing.T) {
@@ -302,6 +308,9 @@ func TestWrappedSendUsesCommunicatorSenderIdentity(t *testing.T) {
 	}
 	if local.sentBody != "hi\n\n(PS: Reply in markdown format.)" {
 		t.Fatalf("sent body = %q", local.sentBody)
+	}
+	if local.sentSwarmContext != "" {
+		t.Fatalf("simple chat should not include swarm context: %q", local.sentSwarmContext)
 	}
 }
 

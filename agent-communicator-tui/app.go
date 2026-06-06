@@ -251,7 +251,7 @@ func (m model) currentSendTarget() (agentRow, bool) {
 		return row, rowTarget(row) != ""
 	case swarmView:
 		swarm, ok := m.selectedSwarmRow()
-		if !ok || swarm.MainMissing || rowTarget(swarm.Main) == "" {
+		if !ok || !swarmCanSendToMain(swarm) {
 			return agentRow{}, false
 		}
 		return swarm.Main, true

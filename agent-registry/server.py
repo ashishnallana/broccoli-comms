@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import threading
 import time
 import uuid
@@ -34,8 +35,14 @@ STATE_PATH = config.get("paths", "registry_state", os.path.join(os.environ.get("
 
 
 class Store:
-    def __init__(self, state_path=None):
+    def __init__(self, state_path=None, message_events_path=None):
         self.state_path = state_path if state_path is not None else STATE_PATH
+        if message_events_path is not None:
+            self.message_events_path = message_events_path
+        elif self.state_path:
+            self.message_events_path = os.path.join(os.path.dirname(self.state_path) or ".", "message-events.sqlite")
+        else:
+            self.message_events_path = None
         self.trackers = {}
         self.agents = {}
         self.deliveries = {}
@@ -44,6 +51,7 @@ class Store:
         self.lock = threading.RLock()
         self.cv = threading.Condition(self.lock)
         self._load_locked()
+        self._init_message_events_store()
 
     def _load_locked(self):
         with self.lock:
@@ -75,6 +83,103 @@ class Store:
                 len(self.agents),
                 len(self.deliveries),
             )
+
+    def _init_message_events_store(self):
+        if not self.message_events_path:
+            return
+        db_dir = os.path.dirname(self.message_events_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        conn = None
+        try:
+            conn = sqlite3.connect(self.message_events_path)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS message_events (
+                    message_id TEXT PRIMARY KEY,
+                    timestamp TEXT,
+                    event_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_message_events_timestamp ON message_events(timestamp)")
+            conn.commit()
+        except Exception as e:
+            LOG.warning("failed to initialize message events store %s: %s", self.message_events_path, e)
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _message_event_connection(self):
+        self._init_message_events_store()
+        return sqlite3.connect(self.message_events_path)
+
+    def append_message_event(self, event):
+        message_id = event.get("message_id")
+        if not isinstance(message_id, str) or not message_id:
+            raise ValueError("message_id is required")
+        swarms = event.get("swarms")
+        if not isinstance(swarms, list):
+            raise ValueError("swarms must be a list")
+        normalized = {
+            "schema_version": event.get("schema_version") or 1,
+            "message_id": message_id,
+            "timestamp": event.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+            "sender_tracker_id": event.get("sender_tracker_id"),
+            "sender_hostname": event.get("sender_hostname"),
+            "sender_agent_id": event.get("sender_agent_id"),
+            "sender_agent_name": event.get("sender_agent_name"),
+            "recipient_tracker_id": event.get("recipient_tracker_id"),
+            "recipient_hostname": event.get("recipient_hostname"),
+            "recipient_agent_id": event.get("recipient_agent_id"),
+            "recipient_agent_name": event.get("recipient_agent_name"),
+            "swarms": swarms,
+            "message": event.get("message"),
+            "attachments": event.get("attachments") or [],
+        }
+        for key in ("membership_snapshot", "direction", "source"):
+            if key in event:
+                normalized[key] = event.get(key)
+        encoded = json.dumps(normalized, sort_keys=True)
+        conn = None
+        with self.lock:
+            try:
+                conn = self._message_event_connection()
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO message_events(message_id, timestamp, event_json, created_at) VALUES (?, ?, ?, ?)",
+                    (message_id, normalized["timestamp"], encoded, time.time()),
+                )
+                inserted = cur.rowcount > 0
+                conn.commit()
+            finally:
+                if conn is not None:
+                    conn.close()
+        if inserted:
+            LOG.info("stored registry message event message_id=%s swarms=%s", message_id, [s.get("name") for s in swarms if isinstance(s, dict)])
+        return inserted, normalized
+
+    def query_message_events(self, swarm_name, limit=200):
+        if not isinstance(swarm_name, str) or not swarm_name:
+            raise ValueError("swarm is required")
+        limit = max(1, min(int(limit), 1000))
+        conn = None
+        with self.lock:
+            try:
+                conn = self._message_event_connection()
+                rows = conn.execute(
+                    "SELECT event_json FROM message_events ORDER BY timestamp ASC, created_at ASC"
+                ).fetchall()
+            finally:
+                if conn is not None:
+                    conn.close()
+        events = []
+        for (encoded,) in rows:
+            try:
+                event = json.loads(encoded)
+            except json.JSONDecodeError:
+                continue
+            if any(isinstance(item, dict) and item.get("name") == swarm_name for item in event.get("swarms") or []):
+                events.append(event)
+        return events[-limit:]
 
     def _persist_locked(self):
         if not self.state_path:
@@ -640,6 +745,15 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 public_keys = ("agent_id", "name", "aliases", "tracker_id", "hostname", "status", "agent_type", "agent_cmd", "model_type", "cwd", "swarms", "last_seen")
                 agents = [{k: agent[k] for k in public_keys if k in agent} for agent in agents]
                 return self._json(200, {"agents": agents})
+            if parts == ["message-events"]:
+                swarm = (query.get("swarm") or [None])[0]
+                if not swarm:
+                    return self._json(400, {"error": "invalid_request", "message": "swarm query parameter is required"})
+                try:
+                    limit = int((query.get("limit") or [200])[0])
+                except (TypeError, ValueError):
+                    return self._json(400, {"error": "invalid_request", "message": "limit must be an integer"})
+                return self._json(200, {"events": store.query_message_events(swarm, limit)})
             if len(parts) == 2 and parts[0] == "agents":
                 agent = store.get_agent(parts[1])
                 return self._json(200, agent) if agent else self._json(404, {"error": "agent_not_found", "message": "no agent with that ID is registered"})
@@ -730,6 +844,12 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 if store.ack_tracker_event(tracker_id, event_id):
                     return self._json(200, {"ok": True})
                 return self._json(404, {"error": "event_not_found", "message": "no queued event with that event_id"})
+            if parts == ["message-events"]:
+                try:
+                    inserted, event = store.append_message_event(body)
+                except ValueError as e:
+                    return self._json(400, {"error": "invalid_request", "message": str(e)})
+                return self._json(201 if inserted else 200, {"ok": True, "inserted": inserted, "message_id": event["message_id"]})
             if parts == ["tracker-events"]:
                 required = {"event_type", "source_tracker_id", "target_tracker_id", "payload"}
                 if not required.issubset(body) or not isinstance(body.get("payload"), dict):
@@ -862,6 +982,9 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                     "sender_agent_cmd": body.get("sender_agent_cmd"),
                     "kind": body.get("kind"),
                     "message_id": body.get("message_id"),
+                    "swarms": body.get("swarms") or [],
+                    "membership_snapshot": body.get("membership_snapshot") or {},
+                    "swarm_context": body.get("swarm_context") or body.get("swarm"),
                     "sent_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
                 })
                 _fanout_remote_message_delivered(store, target["tracker_id"], target, entry)

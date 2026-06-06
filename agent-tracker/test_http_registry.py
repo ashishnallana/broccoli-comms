@@ -14,6 +14,7 @@ import unittest.mock as mock
 from http.server import ThreadingHTTPServer
 
 import http_sidecar
+import message_journal
 import registry_client
 import rpc_handler
 import state
@@ -53,6 +54,9 @@ class TestHttpAndRegistry(unittest.TestCase):
         state.name_index = {}
         state.pane_index = {}
         state.INBOX_DIR = "/tmp/test-agent-http-inboxes"
+        self.env_patch = mock.patch.dict(os.environ, {"AGENT_REGISTRIES_JSON": "[]"}, clear=False)
+        self.env_patch.start()
+        self.addCleanup(mock.patch.stopall)
 
     def test_sidecar_requires_auth_and_returns_snapshot(self):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1"})
@@ -245,6 +249,92 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.assertEqual(post(f"{base}/trackers/t2/deliveries/{message_id}/ack", {}, token="secret")[0], 200)
             self.assertEqual(get(f"{base}/trackers/t2/deliveries?wait=0", token="secret")[1]["deliveries"], [])
 
+    def test_registry_message_events_post_query_dedupe_and_persist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "registry-state.json")
+            store = registry_server.Store(state_path=state_path)
+            server, base = start(registry_server.make_handler(store=store, token="secret"))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            event = {
+                "message_id": "event-1",
+                "timestamp": "2026-06-06T10:00:00Z",
+                "sender_tracker_id": "t1",
+                "sender_hostname": "host1",
+                "sender_agent_id": "a1",
+                "sender_agent_name": "planner",
+                "recipient_tracker_id": "t2",
+                "recipient_hostname": "host2",
+                "recipient_agent_id": "a2",
+                "recipient_agent_name": "coder",
+                "swarms": [{"name": "backend-fix"}],
+                "message": "durable registry event",
+                "attachments": [],
+            }
+            other_event = {**event, "message_id": "event-2", "swarms": [{"name": "frontend-fix"}], "message": "other swarm"}
+
+            code, body = post(f"{base}/message-events", event, token="secret")
+            self.assertEqual(code, 201)
+            self.assertTrue(body["inserted"])
+            duplicate_code, duplicate_body = post(f"{base}/message-events", {**event, "message": "changed duplicate"}, token="secret")
+            self.assertEqual(duplicate_code, 200)
+            self.assertFalse(duplicate_body["inserted"])
+            self.assertEqual(post(f"{base}/message-events", other_event, token="secret")[0], 201)
+
+            code, body = get(f"{base}/message-events?swarm=backend-fix&limit=10", token="secret")
+            self.assertEqual(code, 200)
+            self.assertEqual(len(body["events"]), 1)
+            self.assertEqual(body["events"][0]["message_id"], "event-1")
+            self.assertEqual(body["events"][0]["message"], "durable registry event")
+
+            reloaded = registry_server.Store(state_path=state_path)
+            self.assertEqual(reloaded.query_message_events("backend-fix", 10)[0]["message_id"], "event-1")
+            self.assertEqual(reloaded.query_message_events("frontend-fix", 10)[0]["message_id"], "event-2")
+
+    def test_registry_message_events_require_auth_and_valid_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            server, base = start(registry_server.make_handler(store=store, token="secret", auth_required=True))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/message-events", {"message_id": "event-1", "swarms": []})
+            self.assertEqual(ctx.exception.code, 401)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                post(f"{base}/message-events", {"swarms": []}, token="secret")
+            self.assertEqual(ctx.exception.code, 400)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                get(f"{base}/message-events", token="secret")
+            self.assertEqual(ctx.exception.code, 400)
+
+    def test_registry_messages_preserve_swarm_metadata_in_queued_delivery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            source = {"tracker_id": "t1", "hostname": "host1", "address": "host1", "http_port": 19875, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            target = {"tracker_id": "t2", "hostname": "host2", "address": "host2", "http_port": 19876, "agents": [{"agent_id": "a2", "name": "agent2", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            store.put_tracker(source)
+            store.put_tracker(target)
+            server, base = start(registry_server.make_handler(store=store, token="secret"))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            code, body = post(f"{base}/messages", {
+                "sender_tracker_id": "t1",
+                "sender_agent_id": "a1",
+                "sender_agent_name": "agent1",
+                "target_agent_id": "a2",
+                "message": "hello swarm remote",
+                "message_id": "remote-meta-1",
+                "swarms": [{"name": "backend-fix"}],
+                "membership_snapshot": {"backend-fix": {"sender_role": "main", "recipient_role": "subagent"}},
+                "swarm_context": "backend-fix",
+            }, token="secret")
+            self.assertEqual(code, 202)
+            delivery = store.wait_for_deliveries("t2", 0)[0]
+            self.assertEqual(delivery["message_id"], body["message_id"])
+            self.assertEqual(delivery["swarms"], [{"name": "backend-fix"}])
+            self.assertEqual(delivery["membership_snapshot"]["backend-fix"]["recipient_role"], "subagent")
+            self.assertEqual(delivery["swarm_context"], "backend-fix")
+
     def test_registry_tracker_events_queue_ack_and_persist(self):
         with tempfile.TemporaryDirectory() as tmp:
             state_path = os.path.join(tmp, "registry-state.json")
@@ -320,6 +410,120 @@ class TestHttpAndRegistry(unittest.TestCase):
         self.assertEqual(delivered_payload["sender_agent_cmd"], "pi")
         self.assertEqual(delivered_payload["kind"], "text")
         ack.assert_called_once_with("m1")
+
+    def test_inbound_remote_delivery_with_swarm_metadata_is_journaled_locally(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_journal = message_journal.JOURNAL_PATH
+            old_inbox = state.INBOX_DIR
+            message_journal.JOURNAL_PATH = os.path.join(tmp, "message_journal.jsonl")
+            state.INBOX_DIR = os.path.join(tmp, "inboxes")
+            self.addCleanup(setattr, message_journal, "JOURNAL_PATH", old_journal)
+            self.addCleanup(setattr, state, "INBOX_DIR", old_inbox)
+            state.set_agent("agent2", {
+                "agent_id": "a2",
+                "status": "idle",
+                "tmux_pane": "%2",
+                "tmux_socket": "sock",
+                "no_notify_with_send_keys": True,
+                "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            })
+            delivery = {
+                "message_id": "remote-swarm-1",
+                "target_agent_id": "a2",
+                "sender_name": "agent1",
+                "sender_agent_id": "a1",
+                "sender_tracker_id": "t1",
+                "sender_tracker": "host1",
+                "sender_hostname": "host1",
+                "message": "remote swarm hello",
+                "sent_at": "2026-05-17T00:00:00+00:00",
+                "swarms": [{"name": "backend-fix"}],
+                "membership_snapshot": {"backend-fix": {"sender_role": "main", "recipient_role": "subagent"}},
+            }
+            with mock.patch.object(registry_client, "fetch_deliveries", side_effect=[(200, {"deliveries": [delivery]}), SystemExit]), \
+                 mock.patch.object(registry_client, "ack_delivery") as ack, \
+                 mock.patch.object(registry_client, "fetch_message_events", return_value=[]):
+                with self.assertRaises(SystemExit):
+                    registry_client._delivery_loop()
+
+            ack.assert_called_once_with("remote-swarm-1")
+            timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+            self.assertEqual(len(timeline["messages"]), 1)
+            self.assertEqual(timeline["messages"][0]["message_id"], "remote-swarm-1")
+            self.assertEqual(timeline["messages"][0]["message"], "remote swarm hello")
+            self.assertEqual(timeline["messages"][0]["sender_hostname"], "host1")
+            self.assertEqual(timeline["messages"][0]["sender_tracker_id"], "t1")
+            self.assertEqual(timeline["messages"][0]["recipient_hostname"], registry_client.HOSTNAME)
+            self.assertEqual(timeline["messages"][0]["direction"], "inbound")
+            self.assertEqual(timeline["messages"][0]["journal_source"], "registry_delivery")
+            self.assertEqual(timeline["messages"][0]["membership_snapshot"]["backend-fix"]["sender_role"], "main")
+
+    def test_duplicate_inbound_remote_delivery_does_not_duplicate_swarm_timeline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_journal = message_journal.JOURNAL_PATH
+            old_inbox = state.INBOX_DIR
+            message_journal.JOURNAL_PATH = os.path.join(tmp, "message_journal.jsonl")
+            state.INBOX_DIR = os.path.join(tmp, "inboxes")
+            self.addCleanup(setattr, message_journal, "JOURNAL_PATH", old_journal)
+            self.addCleanup(setattr, state, "INBOX_DIR", old_inbox)
+            state.set_agent("agent2", {
+                "agent_id": "a2",
+                "status": "idle",
+                "tmux_pane": "%2",
+                "tmux_socket": "sock",
+                "no_notify_with_send_keys": True,
+                "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            })
+            delivery = {
+                "message_id": "remote-swarm-dup",
+                "target_agent_id": "a2",
+                "sender_name": "agent1",
+                "sender_tracker": "host1",
+                "message": "remote swarm duplicate",
+                "sent_at": "2026-05-17T00:00:00+00:00",
+                "swarms": [{"name": "backend-fix"}],
+            }
+            with mock.patch.object(registry_client, "fetch_deliveries", side_effect=[(200, {"deliveries": [delivery, delivery]}), SystemExit]), \
+                 mock.patch.object(registry_client, "ack_delivery"), \
+                 mock.patch.object(registry_client, "fetch_message_events", return_value=[]):
+                with self.assertRaises(SystemExit):
+                    registry_client._delivery_loop()
+
+            timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+            self.assertEqual([msg["message_id"] for msg in timeline["messages"]], ["remote-swarm-dup"])
+
+    def test_non_swarm_inbound_remote_delivery_is_excluded_from_swarm_timeline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_journal = message_journal.JOURNAL_PATH
+            old_inbox = state.INBOX_DIR
+            message_journal.JOURNAL_PATH = os.path.join(tmp, "message_journal.jsonl")
+            state.INBOX_DIR = os.path.join(tmp, "inboxes")
+            self.addCleanup(setattr, message_journal, "JOURNAL_PATH", old_journal)
+            self.addCleanup(setattr, state, "INBOX_DIR", old_inbox)
+            state.set_agent("agent2", {
+                "agent_id": "a2",
+                "status": "idle",
+                "tmux_pane": "%2",
+                "tmux_socket": "sock",
+                "no_notify_with_send_keys": True,
+                "swarms": [{"name": "backend-fix", "role": "subagent"}],
+            })
+            delivery = {
+                "message_id": "remote-non-swarm-1",
+                "target_agent_id": "a2",
+                "sender_name": "agent1",
+                "sender_tracker": "host1",
+                "message": "remote simple hello",
+                "sent_at": "2026-05-17T00:00:00+00:00",
+            }
+            with mock.patch.object(registry_client, "fetch_deliveries", side_effect=[(200, {"deliveries": [delivery]}), SystemExit]), \
+                 mock.patch.object(registry_client, "ack_delivery"), \
+                 mock.patch.object(registry_client, "fetch_message_events", return_value=[]):
+                with self.assertRaises(SystemExit):
+                    registry_client._delivery_loop()
+
+            timeline = rpc_handler.handle_get_swarm_timeline({"swarm": "backend-fix", "last_n": 10})
+            self.assertEqual(timeline["messages"], [])
 
     def test_registry_client_delivery_loop_retries_missing_target_until_available(self):
         delivery = {

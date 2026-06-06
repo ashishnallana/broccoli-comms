@@ -261,6 +261,19 @@ func TestSendMessageFromIncludesSenderName(t *testing.T) {
 	}
 }
 
+func TestSendMessageWithContextIncludesSwarmContext(t *testing.T) {
+	client := fakeClient(t, func(req rpcRequest) any {
+		params := req.Params.(map[string]any)
+		if params["sender_name"] != "agent-communicator" || params["agent_name"] != "planner" || params["message_id"] != "sent-1" || params["swarm_context"] != "backend-fix" {
+			t.Fatalf("params = %+v", params)
+		}
+		return true
+	})
+	if err := client.SendMessageWithContext(context.Background(), "agent-communicator", "planner", "hello", "sent-1", "backend-fix", nil); err != nil {
+		t.Fatalf("SendMessageWithContext: %v", err)
+	}
+}
+
 func TestSendMessageUsesLocalTargetAddressForUUIDTarget(t *testing.T) {
 	target := "123e4567-e89b-12d3-a456-426614174000"
 	client := fakeClient(t, func(req rpcRequest) any {

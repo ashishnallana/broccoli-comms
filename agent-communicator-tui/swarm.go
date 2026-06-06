@@ -66,7 +66,11 @@ func swarmMemberToAgentRow(member tracker.SwarmMember) agentRow {
 	return agentRow{
 		Name:          name,
 		AgentName:     fallback(member.AgentName, name),
-		TargetAddress: fallback(member.TargetAddress, name),
+		TargetAddress: member.TargetAddress,
+		Configured:    member.Configured,
+		Running:       member.Running,
+		Launchable:    member.Launchable,
+		Role:          member.Role,
 		Scope:         fallback(member.Scope, "local"),
 		Status:        member.Status,
 		Hostname:      member.Hostname,
@@ -77,6 +81,59 @@ func swarmMemberToAgentRow(member tracker.SwarmMember) agentRow {
 		AgentType:     member.AgentType,
 		AgentCmd:      member.AgentCmd,
 	}
+}
+
+func swarmCanSendToMain(swarm swarmRow) bool {
+	return !swarm.MainMissing && swarm.Main.TargetAddress != "" && !boolPtrFalse(swarm.Main.Running)
+}
+
+func boolPtrTrue(value *bool) bool {
+	return value != nil && *value
+}
+
+func boolPtrFalse(value *bool) bool {
+	return value != nil && !*value
+}
+
+func swarmMemberStateText(member agentRow) string {
+	parts := []string{}
+	if member.Running != nil {
+		if *member.Running {
+			parts = append(parts, "running")
+		} else if boolPtrTrue(member.Configured) {
+			parts = append(parts, "configured offline")
+		} else {
+			parts = append(parts, "offline")
+		}
+	} else if boolPtrTrue(member.Configured) && member.TargetAddress == "" {
+		parts = append(parts, "configured offline")
+	} else if boolPtrTrue(member.Configured) {
+		parts = append(parts, "configured")
+	} else if member.Status != "" {
+		parts = append(parts, member.Status)
+	}
+
+	if member.Launchable != nil {
+		if *member.Launchable {
+			parts = append(parts, "launchable")
+		} else {
+			parts = append(parts, "non-launchable")
+		}
+	} else if member.Scope == "remote" {
+		parts = append(parts, "remote")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func swarmMemberLabel(member agentRow, role string) string {
+	label := member.Name
+	if role != "" {
+		label += " · " + role
+	}
+	if state := swarmMemberStateText(member); state != "" {
+		label += " · " + state
+	}
+	return label
 }
 
 func (m model) selectedSwarmRow() (swarmRow, bool) {
@@ -125,7 +182,10 @@ func (m model) swarmLines(width int) []string {
 	if swarm.MainMissing {
 		lines = append(lines, wrapBackgroundStyledText("No main agent configured/running. Swarm messaging will be enabled after a main agent is available.", width, colors.Warning, colors.BaseBg)...)
 	} else {
-		lines = append(lines, wrapBackgroundStyledText("main · "+swarm.Main.Name, width, colors.TextSubtle, colors.BaseBg)...)
+		lines = append(lines, wrapBackgroundStyledText("main · "+swarmMemberLabel(swarm.Main, ""), width, colors.TextSubtle, colors.BaseBg)...)
+		if !swarmCanSendToMain(swarm) {
+			lines = append(lines, wrapBackgroundStyledText("Main agent is offline or has no target address. Swarm messaging is disabled until it is running.", width, colors.Warning, colors.BaseBg)...)
+		}
 	}
 	messages := m.swarmDisplayMessages()
 	if len(messages) == 0 {
@@ -160,7 +220,7 @@ func (m model) swarmDisplayMessages() []swarmDisplayMessage {
 		messages = append(messages, swarmDisplayMessage{ID: msg.MessageID, Message: tracker.Message{Sender: label, Body: body, Timestamp: msg.Timestamp, ContentType: msg.ContentType, MessageID: msg.MessageID}})
 	}
 	swarm, ok := m.selectedSwarmRow()
-	if !ok || swarm.MainMissing || rowTarget(swarm.Main) == "" {
+	if !ok || swarm.MainMissing || swarm.Main.TargetAddress == "" {
 		return messages
 	}
 	appendSent := func(msg tracker.Message) {
@@ -230,7 +290,13 @@ func (m model) swarmCurrentPanel(width, height int) string {
 			main = swarm.Main.Name
 		}
 		body += "\n" + fgOnBg(colors.SelectedFg, colors.SelectedBg).Bold(true).Render(truncateCells(swarm.Name, max(1, width-4)))
-		body += "\n" + mutedStyle.Render(truncateCells("main · "+main, max(1, width-4)))
+		mainLine := "main · " + main
+		if !swarm.MainMissing {
+			if state := swarmMemberStateText(swarm.Main); state != "" {
+				mainLine += " · " + state
+			}
+		}
+		body += "\n" + mutedStyle.Render(truncateCells(mainLine, max(1, width-4)))
 		body += "\n" + mutedStyle.Render(fmt.Sprintf("members · %d", len(swarm.Members)))
 		if swarm.Warning != "" {
 			body += "\n" + fgOnBg(colors.Warning, colors.RightColumnBg).Render(truncateCells(swarm.Warning, max(1, width-4)))
@@ -259,7 +325,7 @@ func (m model) swarmListPanel(width, height int) string {
 			lines = append(lines, fgOnBg(fg, bg).Bold(i == m.selectedSwarm).Render(truncateCells(prefix+swarm.Name, max(1, width-4))))
 			main := "main missing"
 			if !swarm.MainMissing {
-				main = "main " + swarm.Main.Name
+				main = "main " + swarmMemberLabel(swarm.Main, "")
 			}
 			lines = append(lines, fgOnBg(colors.Muted, bg).Render(truncateCells("  "+main, max(1, width-4))))
 		}
@@ -267,11 +333,11 @@ func (m model) swarmListPanel(width, height int) string {
 	if swarm, ok := m.selectedSwarmRow(); ok && len(swarm.Members) > 0 {
 		lines = append(lines, "", sectionHeaderStyle.Render("Members"))
 		for _, member := range swarm.Members {
-			role := "subagent"
-			if member.Name == swarm.Main.Name && !swarm.MainMissing {
+			role := fallback(member.Role, "subagent")
+			if role == "subagent" && member.Name == swarm.Main.Name && !swarm.MainMissing {
 				role = "main"
 			}
-			lines = append(lines, mutedStyle.Render(truncateCells("• "+member.Name+" · "+role, max(1, width-4))))
+			lines = append(lines, mutedStyle.Render(truncateCells("• "+swarmMemberLabel(member, role), max(1, width-4))))
 		}
 	}
 	body := header + "\n" + strings.Join(lines, "\n")

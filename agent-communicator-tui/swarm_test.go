@@ -8,6 +8,8 @@ import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
+func boolPtr(v bool) *bool { return &v }
+
 func TestSwarmModeCtrlNCtrlPSwitchesSwarms(t *testing.T) {
 	m := model{mode: swarmView, swarms: []swarmRow{{Name: "backend-fix"}, {Name: "frontend-fix"}}, local: &fakeLocal{}}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
@@ -46,6 +48,55 @@ func TestSwarmEmptyStateRendersSetupGuidance(t *testing.T) {
 	}
 }
 
+func TestLoadSelectedSwarmTimelineUsesDurableTimelineAPI(t *testing.T) {
+	local := &fakeLocal{swarmMessages: []tracker.SwarmTimelineMessage{{Sender: "planner", Recipient: "coder-a", Body: "durable event"}}}
+	msg := loadSelectedSwarmTimeline(local, "backend-fix")()
+	loaded, ok := msg.(swarmTimelineLoaded)
+	if !ok || loaded.Err != nil {
+		t.Fatalf("timeline msg = %#v", msg)
+	}
+	if local.getSwarmTimelineCalls != 1 || local.lastSwarmName != "backend-fix" || len(loaded.Messages) != 1 || loaded.Messages[0].Body != "durable event" {
+		t.Fatalf("timeline calls=%d swarm=%q messages=%+v", local.getSwarmTimelineCalls, local.lastSwarmName, loaded.Messages)
+	}
+}
+
+func TestLoadSwarmTabLoadsSwarmsAndTimelineWithoutWatchLease(t *testing.T) {
+	local := &fakeLocal{
+		swarms:        []tracker.Swarm{{Name: "backend-fix", Main: tracker.SwarmMember{Name: "planner", TargetAddress: "planner"}}},
+		swarmMessages: []tracker.SwarmTimelineMessage{{Sender: "planner", Recipient: "coder-a", Body: "durable event"}},
+	}
+	cmd := loadSwarmTab(model{mode: swarmView, local: local, swarms: []swarmRow{{Name: "backend-fix"}}})
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("loadSwarmTab msg = %#v", batch)
+	}
+	for _, child := range batch {
+		_ = child()
+	}
+	if local.listSwarmsCalls != 1 || local.getSwarmTimelineCalls != 1 || local.lastSwarmName != "backend-fix" {
+		t.Fatalf("list calls=%d timeline calls=%d swarm=%q", local.listSwarmsCalls, local.getSwarmTimelineCalls, local.lastSwarmName)
+	}
+}
+
+func TestSwarmConfiguredOfflineMembersRenderState(t *testing.T) {
+	main := agentRow{Name: "planner", TargetAddress: "planner", Role: "main", Running: boolPtr(true)}
+	m := model{mode: swarmView, swarms: []swarmRow{{
+		Name: "backend-fix",
+		Main: main,
+		Members: []agentRow{
+			main,
+			{Name: "coder-a", Role: "subagent", Configured: boolPtr(true), Running: boolPtr(false), Launchable: boolPtr(true)},
+			{Name: "dawnstar/reviewer", Role: "subagent", Scope: "remote", TargetAddress: "dawnstar/reviewer", Running: boolPtr(true), Launchable: boolPtr(false)},
+		},
+	}}}
+	sidebar := m.swarmSidebarView(120, 24)
+	for _, want := range []string{"coder-a", "configured offline", "launchable", "dawnstar/reviewer", "non-launchable"} {
+		if !strings.Contains(sidebar, want) {
+			t.Fatalf("swarm sidebar missing %q:\n%s", want, sidebar)
+		}
+	}
+}
+
 func TestSwarmComposerSendsToMainAgentOnly(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	local := &fakeLocal{}
@@ -70,6 +121,9 @@ func TestSwarmComposerSendsToMainAgentOnly(t *testing.T) {
 	if local.sentTo != "planner" || !strings.Contains(local.sentBody, "hello main") {
 		t.Fatalf("swarm submit target/body = %q/%q", local.sentTo, local.sentBody)
 	}
+	if local.sentSwarmContext != "backend-fix" {
+		t.Fatalf("swarm context = %q, want backend-fix", local.sentSwarmContext)
+	}
 }
 
 func TestSwarmMissingMainDoesNotSubmitAndPreservesDraft(t *testing.T) {
@@ -83,6 +137,28 @@ func TestSwarmMissingMainDoesNotSubmitAndPreservesDraft(t *testing.T) {
 	panel := m.conversationPanel(80, 20)
 	if !strings.Contains(panel, "no main agent") || strings.Contains(panel, "/msg") {
 		t.Fatalf("missing-main composer should be disabled with warning:\n%s", panel)
+	}
+}
+
+func TestSwarmOfflineMainDoesNotSubmitAndPreservesDraft(t *testing.T) {
+	local := &fakeLocal{}
+	m := model{mode: swarmView, local: local, composer: []rune("keep draft"), swarms: []swarmRow{{
+		Name:    "backend-fix",
+		Main:    agentRow{Name: "planner", Role: "main", Configured: boolPtr(true), Running: boolPtr(false), Launchable: boolPtr(true)},
+		Members: []agentRow{{Name: "planner", Role: "main", Configured: boolPtr(true), Running: boolPtr(false), Launchable: boolPtr(true)}},
+	}}}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd != nil || string(m.composer) != "keep draft" || local.sentTo != "" {
+		t.Fatalf("offline-main submit cmd=%v composer=%q sentTo=%q", cmd, string(m.composer), local.sentTo)
+	}
+	panel := m.conversationPanel(100, 20)
+	if !strings.Contains(panel, "main agent offline/no target") || strings.Contains(panel, "/msg") {
+		t.Fatalf("offline-main composer should be disabled with warning:\n%s", panel)
+	}
+	view := strings.Join(m.messageLinesForWidth(100), "\n")
+	if !strings.Contains(view, "configured offline") || !strings.Contains(view, "Swarm messaging is disabled") {
+		t.Fatalf("offline-main view missing state/warning:\n%s", view)
 	}
 }
 
@@ -154,14 +230,20 @@ func TestSwarmSwitchReloadsAndChangesTimeline(t *testing.T) {
 func TestSwarmRowsFromTrackerMapsMainMembersAndWarnings(t *testing.T) {
 	rows := swarmRowsFromTracker([]tracker.Swarm{{
 		Name: "backend-fix",
-		Main: tracker.SwarmMember{Name: "planner", Role: "main", TargetAddress: "planner"},
+		Main: tracker.SwarmMember{Name: "planner", Role: "main", TargetAddress: "planner", Configured: boolPtr(true), Running: boolPtr(true), Launchable: boolPtr(true)},
 		Members: []tracker.SwarmMember{
-			{Name: "planner", Role: "main", TargetAddress: "planner"},
-			{Name: "coder-a", Role: "subagent", TargetAddress: "coder-a"},
+			{Name: "planner", Role: "main", TargetAddress: "planner", Configured: boolPtr(true), Running: boolPtr(true), Launchable: boolPtr(true)},
+			{Name: "coder-a", Role: "subagent", Configured: boolPtr(true), Running: boolPtr(false), Launchable: boolPtr(true)},
 		},
 		Warnings: []string{"duplicate main"},
 	}})
 	if len(rows) != 1 || rows[0].Main.Name != "planner" || len(rows[0].Members) != 2 || !strings.Contains(rows[0].Warning, "duplicate main") {
 		t.Fatalf("rows=%+v", rows)
+	}
+	if rows[0].Main.TargetAddress != "planner" || !boolPtrTrue(rows[0].Main.Running) || !boolPtrTrue(rows[0].Main.Launchable) {
+		t.Fatalf("main launchability fields not mapped: %+v", rows[0].Main)
+	}
+	if rows[0].Members[1].TargetAddress != "" || !boolPtrTrue(rows[0].Members[1].Configured) || !boolPtrFalse(rows[0].Members[1].Running) || !boolPtrTrue(rows[0].Members[1].Launchable) {
+		t.Fatalf("offline member fields not mapped: %+v", rows[0].Members[1])
 	}
 }

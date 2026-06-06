@@ -283,6 +283,9 @@ func (m model) handleComposerSubmit() (model, tea.Cmd) {
 			return m, nil
 		}
 		record := makeOutboxRecord(m.ownName, row, action.Body)
+		if m.mode == swarmView {
+			record.SwarmContext = m.selectedSwarmName()
+		}
 		m.composer = nil
 		unhideCmd := m.unhideAgent(row)
 		m.clearUnread(row)

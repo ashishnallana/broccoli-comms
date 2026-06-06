@@ -143,8 +143,13 @@ func (m model) composerPlaceholder() string {
 
 func (m model) disabledComposerText() string {
 	if m.mode == swarmView {
-		if swarm, ok := m.selectedSwarmRow(); ok && (swarm.MainMissing || rowTarget(swarm.Main) == "") {
-			return "Swarm Mode · no main agent configured/running"
+		if swarm, ok := m.selectedSwarmRow(); ok {
+			if swarm.MainMissing {
+				return "Swarm Mode · no main agent configured/running"
+			}
+			if !swarmCanSendToMain(swarm) {
+				return "Swarm Mode · main agent offline/no target"
+			}
 		}
 		return "Swarm Mode · no swarm selected"
 	}

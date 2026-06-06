@@ -131,6 +131,20 @@ agent_communicator_tui = "/config/agent-communicator"
             {"name": "review", "role": "subagent"},
         ])
 
+    def test_normalize_config_accepts_top_level_swarms(self):
+        cfg = broccoli_comms_app.normalize_config({
+            "agents": {"planner": {"cwd": "/repo", "command": "pi"}},
+            "swarms": {"backend-fix": {"members": [{"agent": "planner", "role": "main"}]}},
+        })
+        self.assertEqual(cfg["swarms"]["backend-fix"]["members"], [{"agent": "planner", "role": "main"}])
+
+    def test_normalize_config_rejects_invalid_top_level_swarm_role(self):
+        with self.assertRaises(ValueError):
+            broccoli_comms_app.normalize_config({
+                "agents": {"planner": {}},
+                "swarms": {"backend-fix": {"members": [{"agent": "planner", "role": "worker"}]}},
+            })
+
     def test_managed_launch_command_includes_swarm_flags(self):
         with mock.patch.object(broccoli_comms_app, "broccoli_comms_launcher_argv", return_value=["broccoli-comms"]), \
              mock.patch.object(broccoli_comms_app, "managed_track_env_assignments", return_value=[]):
