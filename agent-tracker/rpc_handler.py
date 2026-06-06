@@ -401,13 +401,25 @@ def _swarm_member_row(agent_name: str, info: dict, role: str) -> dict:
 
 
 def _agents_for_swarm_derivation(include_remote: bool = True) -> dict:
+    local_agents = state.get_all_agents()
     agents = {
         name: {**info, "scope": "local"}
-        for name, info in state.get_all_agents().items()
+        for name, info in local_agents.items()
     }
     if include_remote:
+        local_agent_ids = {
+            info.get("agent_id") or info.get("uuid")
+            for info in local_agents.values()
+            if info.get("agent_id") or info.get("uuid")
+        }
         try:
-            agents.update(agent_handlers._fetch_registry_agents_for_list())
+            for name, info in agent_handlers._fetch_registry_agents_for_list().items():
+                agent_id = info.get("agent_id") or info.get("uuid")
+                if agent_id and agent_id in local_agent_ids:
+                    continue
+                if info.get("tracker_id") == registry_client.TRACKER_ID:
+                    continue
+                agents[name] = info
         except Exception as e:
             logging.warning("failed to fetch remote agents for swarm derivation: %s", e)
     return agents

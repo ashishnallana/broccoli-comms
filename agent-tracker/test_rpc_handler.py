@@ -1816,6 +1816,56 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual([member["name"] for member in swarm["members"]], ["planner", "coder"])
         self.assertEqual(swarm["warnings"], [])
 
+    def test_list_swarms_filters_self_registry_copies(self):
+        class FakeRegistryClient:
+            name = "corp"
+
+            def fetch_agents(self):
+                return 200, {"agents": [
+                    {
+                        "agent_id": "id-main",
+                        "hostname": "zephyrus",
+                        "name": "planner",
+                        "tracker_id": "local-tracker",
+                        "swarms": [{"name": "backend-fix", "role": "main"}],
+                    },
+                    {
+                        "agent_id": "stale-local-id",
+                        "hostname": "zephyrus",
+                        "name": "stale-local-copy",
+                        "tracker_id": "local-tracker",
+                        "swarms": [{"name": "backend-fix", "role": "subagent"}],
+                    },
+                    {
+                        "agent_id": "remote-id",
+                        "hostname": "remote-host",
+                        "name": "remote-coder",
+                        "tracker_id": "remote-tracker",
+                        "swarms": [{"name": "backend-fix", "role": "subagent"}],
+                    },
+                ]}
+
+        state.set_agent("planner", {
+            "agent_id": "id-main",
+            "swarms": [{"name": "backend-fix", "role": "main"}],
+        })
+        state.set_agent("coder", {
+            "agent_id": "id-sub",
+            "swarms": [{"name": "backend-fix", "role": "subagent"}],
+        })
+
+        with (
+            mock.patch.object(registry_client, "HOSTNAME", "zephyrus"),
+            mock.patch.object(registry_client, "TRACKER_ID", "local-tracker"),
+            mock.patch.object(registry_client, "load_registry_clients", return_value=[FakeRegistryClient()]),
+        ):
+            result = rpc_handler.handle_list_swarms({"include_remote": True})
+
+        swarm = result["swarms"][0]
+        self.assertEqual([member["name"] for member in swarm["members"]], ["planner", "coder", "remote-host/remote-coder"])
+        self.assertEqual(swarm["warnings"], [])
+        self.assertEqual(swarm["main"]["name"], "planner")
+
     def test_list_swarms_agent_in_multiple_swarms(self):
         state.set_agent("reviewer", {
             "agent_id": "id-reviewer",
