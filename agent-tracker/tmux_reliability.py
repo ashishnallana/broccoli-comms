@@ -92,8 +92,8 @@ def send_keys_reliable(
 
     exit_copy_mode_if_needed(pane_id, socket_path)
 
-    # Send the keys followed by Enter (C-m)
-    run_tmux(["send-keys", "-t", pane_id, text, "C-m"], socket_path)
+    # Send the keys followed by Enter (tmux literal key name)
+    run_tmux(["send-keys", "-t", pane_id, text, "Enter"], socket_path)
 
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -129,7 +129,7 @@ def execute_command_reliable(
     # Use string concatenation in shell (RESULT_""SENTINEL""_EXIT) to prevent input matching
     wrapped_command = f"{command}; echo RESULT_\"\"{sentinel_marker}\"\"_EXIT=$?"
 
-    run_tmux(["send-keys", "-t", pane_id, wrapped_command, "C-m"], socket_path)
+    run_tmux(["send-keys", "-t", pane_id, wrapped_command, "Enter"], socket_path)
 
     expected_output_prefix = f"RESULT_{sentinel_marker}_EXIT="
     start_time = time.time()
