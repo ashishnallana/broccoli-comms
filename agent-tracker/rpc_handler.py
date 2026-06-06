@@ -908,7 +908,11 @@ def _apply_pane_output_event(agent_id: str, event: dict) -> None:
                     **_agent_event_payload(event.get("agent_name") or agent_id, new_info),
                     "old_status": old_status,
                 })
-    state.publish_event("agent_output_event", _observer_safe_output_event(agent_id, event))
+    local_event = state.publish_event("agent_output_event", _observer_safe_output_event(agent_id, event))
+    try:
+        registry_client.publish_pane_output_event(local_event)
+    except Exception as exc:
+        logging.debug("failed to publish registry pane-output event metadata agent_id=%s reason=%s", agent_id, type(exc).__name__)
 
 
 def _process_pane_output_parser(agent_id: str, pipe_instance_id: str, chunk: str, now: float) -> int:

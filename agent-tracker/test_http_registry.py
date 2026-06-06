@@ -291,6 +291,104 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.assertEqual(reloaded.query_message_events("backend-fix", 10)[0]["message_id"], "event-1")
             self.assertEqual(reloaded.query_message_events("frontend-fix", 10)[0]["message_id"], "event-2")
 
+    def test_registry_pane_output_events_validate_dedupe_query_and_fanout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, "registry-state.json")
+            store = registry_server.Store(state_path=state_path)
+            source = {"tracker_id": "t1", "hostname": "host1", "address": "host1", "http_port": 19875, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            watcher = {"tracker_id": "t2", "hostname": "host2", "address": "host2", "http_port": 19876, "agents": [{"agent_id": "a2", "name": "agent2", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]}
+            store.put_tracker(source)
+            store.put_tracker(watcher)
+            store.put_watch_lease("t2", "client-1", ["host1/agent1"], 60)
+            server, base = start(registry_server.make_handler(store=store, token="secret"))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            local_event = {
+                "seq": 1,
+                "agent_id": "a1",
+                "agent_name": "agent1",
+                "event_type": "progress",
+                "confidence": 0.8,
+                "payload": {"summary": "safe"},
+            }
+            event = registry_server.pane_output_registry.from_local_event(local_event, source_tracker_id="t1", source_hostname="host1", ttl_seconds=60, now=time.time())
+
+            code, body = post(f"{base}/pane-output-events", event, token="secret")
+            self.assertEqual(code, 201)
+            self.assertTrue(body["inserted"])
+            duplicate_code, duplicate_body = post(f"{base}/pane-output-events", event, token="secret")
+            self.assertEqual(duplicate_code, 200)
+            self.assertFalse(duplicate_body["inserted"])
+
+            query_code, query_body = get(f"{base}/pane-output-events?limit=10", token="secret")
+            self.assertEqual(query_code, 200)
+            self.assertEqual(len(query_body["events"]), 1)
+            self.assertEqual(query_body["events"][0]["event_id"], event["event_id"])
+            encoded = json.dumps(query_body).lower()
+            self.assertNotIn("raw", encoded)
+            self.assertNotIn("token", encoded)
+            self.assertNotIn("tmux", encoded)
+
+            fanout_code, fanout_body = get(f"{base}/trackers/t2/events?wait=0", token="secret")
+            self.assertEqual(fanout_code, 200)
+            self.assertEqual(fanout_body["events"][0]["event_type"], "pane_output_event")
+            self.assertEqual(fanout_body["events"][0]["payload"]["event_id"], event["event_id"])
+
+    def test_registry_pane_output_events_clamp_far_future_expiry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            store.put_tracker({"tracker_id": "t1", "hostname": "host1", "address": "host1", "http_port": 19875, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]})
+            server, base = start(registry_server.make_handler(store=store, token="secret"))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            created_at = time.time()
+            event = registry_server.pane_output_registry.from_local_event({
+                "seq": 1,
+                "agent_id": "a1",
+                "agent_name": "agent1",
+                "event_type": "progress",
+                "payload": {"summary": "safe"},
+            }, source_tracker_id="t1", source_hostname="host1", ttl_seconds=60, now=created_at)
+            event["expires_at"] = created_at + 10_000_000
+
+            self.assertEqual(post(f"{base}/pane-output-events", event, token="secret")[0], 201)
+            stored = get(f"{base}/pane-output-events?limit=10", token="secret")[1]["events"][0]
+
+            self.assertEqual(stored["ttl_seconds"], float(registry_server.pane_output_registry.MAX_TTL_SECONDS))
+            self.assertEqual(stored["expires_at"], stored["created_at"] + registry_server.pane_output_registry.MAX_TTL_SECONDS)
+            encoded = json.dumps(stored).lower()
+            self.assertNotIn("raw", encoded)
+            self.assertNotIn("token", encoded)
+            self.assertNotIn("tmux", encoded)
+
+    def test_registry_pane_output_events_reject_spoof_and_raw_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            store.put_tracker({"tracker_id": "t1", "hostname": "host1", "address": "host1", "http_port": 19875, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"}]})
+            store.put_tracker({"tracker_id": "t2", "hostname": "host2", "address": "host2", "http_port": 19876, "agents": []})
+            server, base = start(registry_server.make_handler(store=store, token="secret"))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            good = registry_server.pane_output_registry.from_local_event({
+                "seq": 1,
+                "agent_id": "a1",
+                "agent_name": "agent1",
+                "event_type": "progress",
+                "payload": {"summary": "safe"},
+            }, source_tracker_id="t1", source_hostname="host1", now=time.time())
+
+            with self.assertRaises(urllib.error.HTTPError) as spoof_ctx:
+                post(f"{base}/pane-output-events", {**good, "source_tracker_id": "t2"}, token="secret")
+            self.assertEqual(spoof_ctx.exception.code, 403)
+
+            bad = {**good, "payload": {"raw_output": "RAW_SECRET_VALUE"}}
+            with self.assertRaises(urllib.error.HTTPError) as raw_ctx:
+                post(f"{base}/pane-output-events", bad, token="secret")
+            self.assertEqual(raw_ctx.exception.code, 400)
+            body = json.loads(raw_ctx.exception.read().decode())
+            self.assertNotIn("RAW_SECRET_VALUE", json.dumps(body))
+            self.assertEqual(get(f"{base}/pane-output-events?limit=10", token="secret")[1]["events"], [])
+
     def test_registry_message_events_require_auth_and_valid_payload(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
@@ -765,6 +863,34 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.assertEqual(event["payload"]["command"], "pi custom --args")
             self.assertEqual(event["payload"]["description"], "custom desc")
             self.assertEqual(event["payload"]["cwd"], "/custom/cwd")
+
+    def test_registry_client_ingests_pane_output_event_once_as_observer_only(self):
+        registry_client._pane_output_event_dedupe = {}
+        registry_event = registry_client.pane_output_registry.from_local_event({
+            "seq": 1,
+            "agent_id": "remote-a1",
+            "agent_name": "remote-agent",
+            "event_type": "progress",
+            "confidence": 0.8,
+            "payload": {"summary": "safe"},
+            "state_patch": {"current_task": "remote task"},
+        }, source_tracker_id="remote-t1", source_hostname="remote-host", now=time.time())
+        state.set_agent("local-agent", {"agent_id": "local-1", "status": "idle", "tmux_pane": "%1"})
+
+        first = registry_client._ingest_registry_pane_output_event(registry_event)
+        second = registry_client._ingest_registry_pane_output_event(registry_event)
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        output_events = [event for event in state.events if event["type"] == "agent_output_event"]
+        self.assertEqual(len(output_events), 1)
+        self.assertEqual(output_events[0]["source"], "registry-pane-output")
+        self.assertEqual(output_events[0]["target_agent_id"], "remote-host/remote-a1")
+        self.assertEqual(output_events[0]["target_agent_name"], "remote-host/remote-agent")
+        self.assertEqual(state.get_agent("local-1")["status"], "idle")
+        encoded = json.dumps(output_events[0]).lower()
+        self.assertNotIn("raw", encoded)
+        self.assertNotIn("token", encoded)
 
     def test_registry_client_event_loop_handles_save_request(self):
         event = {

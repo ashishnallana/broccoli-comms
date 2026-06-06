@@ -19,6 +19,7 @@ from pathlib import Path
 _repo_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_repo_root / "agent-tracker"))
 import config
+import pane_output_registry
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 LOG = logging.getLogger("agent-registry")
 
@@ -35,7 +36,7 @@ STATE_PATH = config.get("paths", "registry_state", os.path.join(os.environ.get("
 
 
 class Store:
-    def __init__(self, state_path=None, message_events_path=None):
+    def __init__(self, state_path=None, message_events_path=None, pane_output_events_path=None):
         self.state_path = state_path if state_path is not None else STATE_PATH
         if message_events_path is not None:
             self.message_events_path = message_events_path
@@ -43,6 +44,12 @@ class Store:
             self.message_events_path = os.path.join(os.path.dirname(self.state_path) or ".", "message-events.sqlite")
         else:
             self.message_events_path = None
+        if pane_output_events_path is not None:
+            self.pane_output_events_path = pane_output_events_path
+        elif self.state_path:
+            self.pane_output_events_path = os.path.join(os.path.dirname(self.state_path) or ".", "pane-output-events.sqlite")
+        else:
+            self.pane_output_events_path = None
         self.trackers = {}
         self.agents = {}
         self.deliveries = {}
@@ -52,6 +59,7 @@ class Store:
         self.cv = threading.Condition(self.lock)
         self._load_locked()
         self._init_message_events_store()
+        self._init_pane_output_events_store()
 
     def _load_locked(self):
         with self.lock:
@@ -112,6 +120,38 @@ class Store:
     def _message_event_connection(self):
         self._init_message_events_store()
         return sqlite3.connect(self.message_events_path)
+
+    def _init_pane_output_events_store(self):
+        if not self.pane_output_events_path:
+            return
+        db_dir = os.path.dirname(self.pane_output_events_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        conn = None
+        try:
+            conn = sqlite3.connect(self.pane_output_events_path)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pane_output_events (
+                    event_id TEXT PRIMARY KEY,
+                    source_tracker_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    event_json TEXT NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_pane_output_events_expires ON pane_output_events(expires_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_pane_output_events_created ON pane_output_events(created_at)")
+            conn.commit()
+        except Exception as e:
+            LOG.warning("failed to initialize pane output events store %s: %s", self.pane_output_events_path, e)
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _pane_output_event_connection(self):
+        self._init_pane_output_events_store()
+        return sqlite3.connect(self.pane_output_events_path)
 
     def append_message_event(self, event):
         message_id = event.get("message_id")
@@ -180,6 +220,84 @@ class Store:
             if any(isinstance(item, dict) and item.get("name") == swarm_name for item in event.get("swarms") or []):
                 events.append(event)
         return events[-limit:]
+
+    def append_pane_output_event(self, event):
+        normalized = pane_output_registry.validate_registry_event(event)
+        agent = self.get_agent(normalized["agent_id"])
+        if not agent:
+            raise ValueError("agent_not_found")
+        if agent.get("tracker_id") != normalized["source_tracker_id"]:
+            raise PermissionError("wrong_tracker")
+        tracker = self.get_tracker(normalized["source_tracker_id"]) or {}
+        if tracker.get("hostname") != normalized["source_hostname"]:
+            raise PermissionError("wrong_tracker")
+        encoded = json.dumps(normalized, sort_keys=True)
+        inserted = False
+        conn = None
+        with self.lock:
+            try:
+                conn = self._pane_output_event_connection()
+                now = time.time()
+                conn.execute("DELETE FROM pane_output_events WHERE expires_at <= ?", (now,))
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO pane_output_events(event_id, source_tracker_id, agent_id, created_at, expires_at, event_json) VALUES (?, ?, ?, ?, ?, ?)",
+                    (normalized["event_id"], normalized["source_tracker_id"], normalized["agent_id"], normalized["created_at"], normalized["expires_at"], encoded),
+                )
+                inserted = cur.rowcount > 0
+                conn.commit()
+            finally:
+                if conn is not None:
+                    conn.close()
+        if inserted:
+            LOG.info("stored pane-output event metadata event_id=%s source_tracker_id=%s agent_id=%s event_type=%s", normalized["event_id"], normalized["source_tracker_id"], normalized["agent_id"], normalized["event_type"])
+            self._fanout_pane_output_event(normalized, agent)
+        return inserted, normalized
+
+    def query_pane_output_events(self, limit=200):
+        limit = max(1, min(int(limit), 1000))
+        now = time.time()
+        conn = None
+        with self.lock:
+            try:
+                conn = self._pane_output_event_connection()
+                conn.execute("DELETE FROM pane_output_events WHERE expires_at <= ?", (now,))
+                rows = conn.execute(
+                    "SELECT event_json FROM pane_output_events WHERE expires_at > ? ORDER BY created_at ASC LIMIT ?",
+                    (now, limit),
+                ).fetchall()
+                conn.commit()
+            finally:
+                if conn is not None:
+                    conn.close()
+        events = []
+        for (encoded,) in rows:
+            try:
+                events.append(json.loads(encoded))
+            except json.JSONDecodeError:
+                continue
+        return events
+
+    def _fanout_pane_output_event(self, event, agent):
+        now = time.time()
+        target_tracker_id = event["source_tracker_id"]
+        with self.lock:
+            leases = self.remote_watch_leases.get(target_tracker_id) or {}
+            for (watcher_tracker_id, client_id), lease in list(leases.items()):
+                if lease["expires_at"] < now:
+                    continue
+                matched = False
+                for watched in lease.get("watch_targets") or []:
+                    if "/" not in watched:
+                        continue
+                    host, agent_ref = watched.split("/", 1)
+                    if ":" in host:
+                        _, host = host.split(":", 1)
+                    if host == agent.get("hostname") and agent_ref in {agent.get("agent_id"), agent.get("name"), event.get("agent_id"), event.get("agent_name")}:
+                        matched = True
+                        break
+                if matched:
+                    self.enqueue_tracker_event(watcher_tracker_id, "pane_output_event", "registry", event)
+                    LOG.info("fanned out pane-output event metadata event_id=%s watcher_tracker_id=%s client_id=%s", event.get("event_id"), watcher_tracker_id, client_id)
 
     def _persist_locked(self):
         if not self.state_path:
@@ -258,6 +376,19 @@ class Store:
             if tracker_events != self.tracker_events:
                 self.tracker_events = tracker_events
                 changed = True
+            if self.pane_output_events_path:
+                conn = None
+                try:
+                    conn = self._pane_output_event_connection()
+                    cur = conn.execute("DELETE FROM pane_output_events WHERE expires_at <= ?", (now,))
+                    if cur.rowcount:
+                        LOG.info("registry sweep removed expired pane-output events count=%s", cur.rowcount)
+                    conn.commit()
+                except Exception as e:
+                    LOG.debug("failed to sweep pane-output events: %s", e)
+                finally:
+                    if conn is not None:
+                        conn.close()
             if changed:
                 LOG.info("registry sweep updated state trackers=%s agents=%s queued_trackers=%s", len(self.trackers), len(self.agents), len(self.deliveries))
                 self._persist_locked()
@@ -754,6 +885,12 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 except (TypeError, ValueError):
                     return self._json(400, {"error": "invalid_request", "message": "limit must be an integer"})
                 return self._json(200, {"events": store.query_message_events(swarm, limit)})
+            if parts == ["pane-output-events"]:
+                try:
+                    limit = int((query.get("limit") or [200])[0])
+                except (TypeError, ValueError):
+                    return self._json(400, {"error": "invalid_request", "message": "limit must be an integer"})
+                return self._json(200, {"events": store.query_pane_output_events(limit)})
             if len(parts) == 2 and parts[0] == "agents":
                 agent = store.get_agent(parts[1])
                 return self._json(200, agent) if agent else self._json(404, {"error": "agent_not_found", "message": "no agent with that ID is registered"})
@@ -850,6 +987,19 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 except ValueError as e:
                     return self._json(400, {"error": "invalid_request", "message": str(e)})
                 return self._json(201 if inserted else 200, {"ok": True, "inserted": inserted, "message_id": event["message_id"]})
+            if parts == ["pane-output-events"]:
+                try:
+                    inserted, event = store.append_pane_output_event(body)
+                except PermissionError:
+                    return self._json(403, {"error": "wrong_tracker", "message": "source tracker does not own this agent"})
+                except ValueError as e:
+                    code = str(e) or "invalid_request"
+                    if code == "agent_not_found":
+                        return self._json(404, {"error": "agent_not_found", "message": "agent not in registry cache; wait for next heartbeat"})
+                    return self._json(400, {"error": "invalid_request", "message": pane_output_registry.safe_error_code(e)})
+                except pane_output_registry.RegistryEventValidationError as e:
+                    return self._json(400, {"error": "invalid_request", "message": pane_output_registry.safe_error_code(e)})
+                return self._json(201 if inserted else 200, {"ok": True, "inserted": inserted, "event_id": event["event_id"]})
             if parts == ["tracker-events"]:
                 required = {"event_type", "source_tracker_id", "target_tracker_id", "payload"}
                 if not required.issubset(body) or not isinstance(body.get("payload"), dict):

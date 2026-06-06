@@ -2800,6 +2800,29 @@ class TestRpcHandler(unittest.TestCase):
         self.assertNotIn("token", json.dumps(output_events[0]).lower())
         push_update.assert_called_once_with("id-1", "working")
 
+    @mock.patch("registry_client.publish_pane_output_event")
+    def test_pane_output_structured_event_publishes_registry_safe_event(self, publish_pane_output_event):
+        self._setup_pane_output_agent()
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"progress","payload":{"summary":"safe"}}\n'
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": chunk,
+        })
+
+        self.assertTrue(result["accepted"])
+        publish_pane_output_event.assert_called_once()
+        event = publish_pane_output_event.call_args.args[0]
+        self.assertEqual(event["type"], "agent_output_event")
+        self.assertEqual(event["event_type"], "progress")
+        self.assertEqual(event["payload"], {"summary": "safe"})
+        self.assertNotIn("chunk", json.dumps(event).lower())
+        self.assertNotIn("token", json.dumps(event).lower())
+
     def test_pane_output_wait_events_watchlist_matches_output_event_target(self):
         self._setup_pane_output_agent()
         chunk = '@@BROCCOLI_EVENT@@ {"event_type":"progress","payload":{"summary":"safe"}}\n'

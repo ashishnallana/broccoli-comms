@@ -2,6 +2,7 @@ import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error,
 import state
 import rpc_handler
 import config
+import pane_output_registry
 
 LOG = logging.getLogger("agent-tracker.registry")
 
@@ -15,6 +16,9 @@ DELIVERY_TARGET_GRACE_SECONDS = config.get("registry", "delivery_target_grace_se
 REMOTE_PANE_INPUT_MAX_TEXT_BYTES = config.get("registry", "remote_pane_input_max_text_bytes", 4096)
 REMOTE_PANE_INPUT_MAX_KEYS = config.get("registry", "remote_pane_input_max_keys", 16)
 STATUS_PATH = os.path.join(state.CACHE_DIR, "registry-status.json")
+PANE_OUTPUT_EVENT_DEDUPE_MAX = int(os.environ.get("AGENT_PANE_OUTPUT_EVENT_DEDUPE_MAX", "1000"))
+_pane_output_event_dedupe = {}
+_pane_output_event_dedupe_lock = threading.Lock()
 
 
 class RegistryClient:
@@ -83,6 +87,13 @@ class RegistryClient:
 
     def publish_message_event(self, event):
         return self.request("POST", "/message-events", event)
+
+    def publish_pane_output_event(self, event):
+        return self.request("POST", "/pane-output-events", event)
+
+    def fetch_pane_output_events(self, limit=200):
+        query = urllib.parse.urlencode({"limit": int(limit)})
+        return self.request("GET", f"/pane-output-events?{query}")
 
     def fetch_message_events(self, swarm_name, limit=200):
         query = urllib.parse.urlencode({"swarm": swarm_name, "limit": int(limit)})
@@ -262,6 +273,14 @@ def remote_pane_input_send_enabled():
     return _env_truthy("AGENT_TRACKER_REMOTE_PANE_INPUT_SEND_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED")
 
 
+def pane_output_registry_events_enabled():
+    if os.environ.get("AGENT_PANE_OUTPUT_REGISTRY_EVENTS_ENABLED") is not None:
+        return _env_truthy("AGENT_PANE_OUTPUT_REGISTRY_EVENTS_ENABLED")
+    if os.environ.get("BROCCOLI_COMMS_PANE_OUTPUT_REGISTRY_EVENTS_ENABLED") is not None:
+        return _env_truthy("BROCCOLI_COMMS_PANE_OUTPUT_REGISTRY_EVENTS_ENABLED")
+    return bool(config.get("registry", "pane_output_events_enabled", True))
+
+
 def remote_pane_input_receive_enabled():
     return _env_truthy("AGENT_TRACKER_REMOTE_PANE_INPUT_RECEIVE_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_RECEIVE_ENABLED") or _env_truthy("BROCCOLI_COMMS_REMOTE_PANE_INPUT_ENABLED")
 
@@ -356,6 +375,67 @@ def publish_message_event(event, registry_name=None):
             LOG.warning("registry[%s] message-event publish failed: %s", client.name, e)
             results.append((client.name, None, None))
     return results
+
+
+def _remember_pane_output_event(event_id: str) -> bool:
+    if not event_id:
+        return False
+    now = time.time()
+    with _pane_output_event_dedupe_lock:
+        expired = [eid for eid, expires_at in _pane_output_event_dedupe.items() if expires_at <= now]
+        for eid in expired:
+            _pane_output_event_dedupe.pop(eid, None)
+        if event_id in _pane_output_event_dedupe:
+            return False
+        if len(_pane_output_event_dedupe) >= PANE_OUTPUT_EVENT_DEDUPE_MAX:
+            for eid, _expires_at in sorted(_pane_output_event_dedupe.items(), key=lambda item: item[1])[:100]:
+                _pane_output_event_dedupe.pop(eid, None)
+        _pane_output_event_dedupe[event_id] = now + pane_output_registry.MAX_TTL_SECONDS
+        return True
+
+
+def publish_pane_output_event(local_event: dict, registry_name=None):
+    """Publishes a normalized, registry-safe pane output event for a local agent."""
+    if not pane_output_registry_events_enabled():
+        return []
+    agent_id = (local_event or {}).get("agent_id") or (local_event or {}).get("target_agent_id")
+    info = state.get_agent(agent_id) if agent_id else None
+    if not info or info.get("scope") == "remote":
+        LOG.debug("skipping pane-output registry publish for non-local agent metadata agent_id=%s", agent_id)
+        return []
+    registry_event = pane_output_registry.from_local_event(
+        local_event,
+        source_tracker_id=TRACKER_ID,
+        source_hostname=HOSTNAME,
+        ttl_seconds=config.get("registry", "pane_output_event_ttl_seconds", pane_output_registry.DEFAULT_TTL_SECONDS),
+    )
+    clients = [client for client in load_registry_clients() if registry_name is None or client.name == registry_name]
+    results = []
+    for client in clients:
+        try:
+            status, body = client.publish_pane_output_event(registry_event)
+            results.append((client.name, status, body))
+            if status not in {200, 201, 202}:
+                LOG.warning("registry[%s] pane-output event publish returned status=%s reason=%s", client.name, status, (body or {}).get("error") if isinstance(body, dict) else None)
+        except Exception as e:
+            LOG.warning("registry[%s] pane-output event publish failed metadata event_id=%s error=%s", client.name, registry_event.get("event_id"), e)
+            results.append((client.name, None, None))
+    return results
+
+
+def _ingest_registry_pane_output_event(event: dict) -> bool:
+    try:
+        if event.get("source_tracker_id") == TRACKER_ID:
+            return False
+        observer_event = pane_output_registry.to_remote_observer_event(event)
+    except Exception as exc:
+        LOG.info("rejected registry pane-output event metadata reason=%s", pane_output_registry.safe_error_code(exc))
+        return False
+    event_id = observer_event.get("registry_event_id")
+    if not _remember_pane_output_event(event_id):
+        return False
+    state.publish_event("agent_output_event", observer_event)
+    return True
 
 
 def fetch_message_events(swarm_name, limit=200):
@@ -807,6 +887,10 @@ def _event_loop(client=None):
                 sender_name, local_payload = _local_tracker_event_payload(event.get("event_type"), payload)
                 LOG.info("mapping remote %s sender=%s message_id=%s target=%s", event.get("event_type"), sender_name, payload.get("message_id"), local_payload.get("target_agent_name"))
                 state.publish_event(event.get("event_type"), local_payload)
+            elif event.get("event_type") == "pane_output_event":
+                payload = event.get("payload") or {}
+                if _ingest_registry_pane_output_event(payload):
+                    LOG.info("ingested registry pane-output event metadata event_id=%s source_tracker_id=%s", payload.get("event_id"), payload.get("source_tracker_id"))
             elif event.get("event_type") == "remote_agent_event":
                 payload = event.get("payload") or {}
                 LOG.info("publishing remote_agent_event locally: %s", payload)
