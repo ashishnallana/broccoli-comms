@@ -2738,9 +2738,94 @@ class TestRpcHandler(unittest.TestCase):
         self.assertIn("last_activity", info)
         output_events = [event for event in state.events if event["type"] == "agent_output_event"]
         self.assertEqual(len(output_events), 1)
+        self.assertEqual(output_events[0]["schema_version"], 1)
+        self.assertEqual(output_events[0]["target_agent_id"], "id-1")
+        self.assertEqual(output_events[0]["target_agent_name"], "agent1")
+        self.assertEqual(output_events[0]["source"], "pipe-pane")
         self.assertEqual(output_events[0]["event_type"], "status_update")
+        self.assertIn("payload", output_events[0])
         self.assertNotIn("chunk", json.dumps(output_events[0]))
+        self.assertNotIn("token", json.dumps(output_events[0]).lower())
         push_update.assert_called_once_with("id-1", "working")
+
+    def test_pane_output_wait_events_watchlist_matches_output_event_target(self):
+        self._setup_pane_output_agent()
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"progress","payload":{"summary":"safe"}}\n'
+
+        rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": chunk,
+        })
+
+        by_id = rpc_handler.handle_wait_events({"cursor": 0, "timeout": 0, "client_id": "watcher", "watch_list": ["id-1"]})
+        by_name = rpc_handler.handle_wait_events({"cursor": 0, "timeout": 0, "client_id": "watcher2", "watch_list": ["agent1"]})
+        filtered = rpc_handler.handle_wait_events({"cursor": 0, "timeout": 0, "target_agent_id": "id-1"})
+        self.assertTrue(any(event["type"] == "agent_output_event" for event in by_id["events"]))
+        self.assertTrue(any(event["type"] == "agent_output_event" for event in by_name["events"]))
+        self.assertTrue(any(event["type"] == "agent_output_event" for event in filtered["events"]))
+
+    @mock.patch("registry_client.publish_tracker_event")
+    @mock.patch("registry_client.push_agent_update")
+    def test_pane_output_non_status_event_does_not_call_registry(self, push_update, publish_tracker_event):
+        self._setup_pane_output_agent()
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"progress","payload":{"summary":"safe"}}\n'
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": chunk,
+        })
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(state.get_agent("id-1")["status"], "idle")
+        push_update.assert_not_called()
+        publish_tracker_event.assert_not_called()
+
+    @mock.patch("registry_client.push_agent_update")
+    def test_pane_output_same_status_patch_no_status_changed_or_registry_push(self, push_update):
+        self._setup_pane_output_agent()
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"status_update","payload":{"reason":"same"},"state_patch":{"status":"idle"}}\n'
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": chunk,
+        })
+
+        self.assertTrue(result["accepted"])
+        self.assertFalse(any(event["type"] == "agent_status_changed" for event in state.events))
+        push_update.assert_not_called()
+
+    @mock.patch("registry_client.push_agent_update")
+    def test_pane_output_waiting_current_task_patch_without_status_does_not_push_registry(self, push_update):
+        self._setup_pane_output_agent()
+        chunk = '@@BROCCOLI_EVENT@@ {"event_type":"task_update","payload":{"summary":"safe"},"state_patch":{"waiting_approval":true,"current_task":"reviewing"}}\n'
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": chunk,
+        })
+
+        self.assertTrue(result["accepted"])
+        info = state.get_agent("id-1")
+        self.assertEqual(info["status"], "idle")
+        self.assertTrue(info["waiting_approval"])
+        self.assertEqual(info["current_task"], "reviewing")
+        push_update.assert_not_called()
 
     def test_pane_output_malformed_structured_event_does_not_mutate_state(self):
         self._setup_pane_output_agent()

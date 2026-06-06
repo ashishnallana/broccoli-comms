@@ -880,6 +880,17 @@ def _pane_output_rate_limited(info: dict, now: float) -> tuple[bool, float, int]
     return window_chunks >= PANE_OUTPUT_MAX_ACCEPTED_CHUNKS_PER_WINDOW, window_started, window_chunks
 
 
+def _observer_safe_output_event(agent_id: str, event: dict) -> dict:
+    """Adds stable local observer routing metadata to a validated parser event."""
+    agent_name = event.get("agent_name") or state.get_agent_name_by_id(agent_id)
+    return {
+        **event,
+        "schema_version": 1,
+        "target_agent_id": agent_id,
+        "target_agent_name": agent_name,
+    }
+
+
 def _apply_pane_output_event(agent_id: str, event: dict) -> None:
     """Publishes a local normalized parser event and applies validated patches."""
     patch = event.get("state_patch") if isinstance(event.get("state_patch"), dict) else {}
@@ -894,10 +905,10 @@ def _apply_pane_output_event(agent_id: str, event: dict) -> None:
                 except Exception as exc:
                     logging.debug("failed to push parser-derived status update for %s: %s", agent_id, exc)
                 state.publish_event("agent_status_changed", {
-                    **_agent_event_payload(new_info.get("name") or event.get("agent_name") or agent_id, new_info),
+                    **_agent_event_payload(event.get("agent_name") or agent_id, new_info),
                     "old_status": old_status,
                 })
-    state.publish_event("agent_output_event", event)
+    state.publish_event("agent_output_event", _observer_safe_output_event(agent_id, event))
 
 
 def _process_pane_output_parser(agent_id: str, pipe_instance_id: str, chunk: str, now: float) -> int:
