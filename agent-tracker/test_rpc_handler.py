@@ -2425,6 +2425,31 @@ class TestRpcHandler(unittest.TestCase):
         name = rpc_handler._generate_unique_agent_name("test-agent")
         self.assertEqual(name, "test-agent-1")
 
+    @mock.patch("pane_output_lifecycle.cleanup_pane_output_best_effort")
+    def test_unregister_best_effort_cleans_pane_output(self, cleanup):
+        state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+
+        self.assertTrue(rpc_handler.handle_unregister({"agent_id": "id-1"}))
+
+        cleanup.assert_called_once_with("agent1")
+        self.assertIsNone(state.get_agent("id-1"))
+
+    def test_unregister_cleanup_uses_registered_tmux_socket(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "uuid": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+        state.configure_pane_output("id-1", pipe_instance_id="pipe-1", pipe_token="token", tmux_pane="%1")
+        calls = []
+        def fake_tmux(args):
+            calls.append(args)
+            if args[:5] == ["-S", "sock", "display-message", "-p", "-t"]:
+                return "1|pipe-1"
+            return ""
+
+        with mock.patch("tmux_util.run_tmux_cmd", side_effect=fake_tmux):
+            self.assertTrue(rpc_handler.handle_unregister({"agent_id": "id-1"}))
+
+        self.assertIn(["-S", "sock", "pipe-pane", "-t", "%1"], calls)
+        self.assertIsNone(state.get_agent("id-1"))
+
     def _setup_pane_output_agent(self, token="secret-token"):
         state.set_agent("agent1", {
             "agent_id": "id-1",

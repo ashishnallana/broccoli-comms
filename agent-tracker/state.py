@@ -34,6 +34,8 @@ PANE_OUTPUT_DEFAULTS = {
     "pipe_last_chunk_at": None,
     "pipe_rate_window_started_at": None,
     "pipe_rate_window_chunks": 0,
+    "pipe_attached_at": None,
+    "pipe_broccoli_owned": False,
 }
 
 state = {}  # keyed by stable agent_id
@@ -296,6 +298,16 @@ def pane_output_metadata(info: dict) -> dict:
 def _reset_pane_output_metadata(info: dict) -> None:
     """Disables stale pipe-pane sidecar metadata after pane identity changes."""
     info.update(PANE_OUTPUT_DEFAULTS)
+
+
+def clear_pane_output(name_or_id: str) -> bool:
+    """Clears local-only pane-output metadata for an agent."""
+    with state_lock:
+        agent_id = _resolve_agent_id(name_or_id)
+        if not agent_id or agent_id not in state:
+            return False
+        _reset_pane_output_metadata(state[agent_id])
+        return True
 
 
 def set_agent(name: str, info: dict) -> None:

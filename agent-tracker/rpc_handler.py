@@ -6,6 +6,7 @@ import tmux_util
 import message_journal
 import registry_client
 import permission_detection
+import pane_output_lifecycle
 import datetime
 import time
 import threading
@@ -113,6 +114,11 @@ def handle_rename(params: dict, caller_pid: int = None) -> bool:
 
 
 def handle_unregister(params: dict, caller_pid: int = None) -> bool:
+    agent_name = _identify_agent(params, caller_pid) if caller_pid or params else None
+    if not agent_name and params.get("tmux_pane"):
+        agent_name = state.get_agent_name_by_pane(params.get("tmux_pane"))
+    if agent_name:
+        pane_output_lifecycle.cleanup_pane_output_best_effort(agent_name)
     return agent_handlers.handle_unregister(params, caller_pid, _identify_agent)
 
 
@@ -959,6 +965,30 @@ def handle_pane_output(params: dict) -> dict:
     )
 
 
+def _resolve_pane_output_control_target(params: dict) -> str:
+    target = params.get("agent_id") or params.get("agent_name") or params.get("name")
+    if not isinstance(target, str) or not target:
+        raise ValueError("agent_id or agent_name is required")
+    return target
+
+
+def handle_enable_pane_output(params: dict) -> dict:
+    if not isinstance(params, dict):
+        raise ValueError("Invalid params")
+    if params.get("target_address") and "/" in str(params.get("target_address")):
+        raise ValueError("remote agents cannot be piped locally")
+    rotate = bool(params.get("rotate", True))
+    return pane_output_lifecycle.enable_pane_output(_resolve_pane_output_control_target(params), rotate=rotate)
+
+
+def handle_disable_pane_output(params: dict) -> dict:
+    if not isinstance(params, dict):
+        raise ValueError("Invalid params")
+    if params.get("target_address") and "/" in str(params.get("target_address")):
+        raise ValueError("remote agents cannot be piped locally")
+    return pane_output_lifecycle.disable_pane_output(_resolve_pane_output_control_target(params))
+
+
 def handle_publish_tracker_event(params: dict) -> dict:
     target_tracker_id = params.get("target_tracker_id")
     event_type = params.get("event_type")
@@ -1005,6 +1035,8 @@ dispatcher = {
     "list_trackers": handle_list_trackers,
     "capture_pane": handle_capture_pane,
     "pane_output": handle_pane_output,
+    "enable_pane_output": handle_enable_pane_output,
+    "disable_pane_output": handle_disable_pane_output,
 }
 
 def handle_client(conn: socket.socket) -> None:
