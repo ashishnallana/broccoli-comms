@@ -19,6 +19,23 @@ GROUP_TIMELINE_DIR = os.path.join(CACHE_DIR, "group_timelines")
 PANE_INPUT_DEDUPE_PATH = os.path.join(CACHE_DIR, "pane-input-dedupe.json")
 PANE_INPUT_DEDUPE_MAX = int(os.environ.get("AGENT_PANE_INPUT_DEDUPE_MAX", "1000"))
 
+PANE_OUTPUT_DEFAULTS = {
+    "pipe_output_enabled": False,
+    "pipe_instance_id": None,
+    "pipe_token_hash": None,
+    "pipe_tmux_pane": None,
+    "pipe_started_at": None,
+    "pipe_last_seq": 0,
+    "pipe_chunks_accepted": 0,
+    "pipe_bytes_accepted": 0,
+    "pipe_chunks_dropped": 0,
+    "pipe_last_drop_reason": None,
+    "pipe_last_drop_at": None,
+    "pipe_last_chunk_at": None,
+    "pipe_rate_window_started_at": None,
+    "pipe_rate_window_chunks": 0,
+}
+
 state = {}  # keyed by stable agent_id
 name_index = {}  # agent_name/alias -> agent_id
 pane_index = {}  # tmux pane id -> agent_id
@@ -233,6 +250,54 @@ def get_agent_name_by_pane(tmux_pane: str) -> str | None:
         return info.get("name") if info else None
 
 
+def hash_pipe_token(token: str) -> str:
+    """Returns a stable one-way hash for a pane-output pipe token."""
+    if not isinstance(token, str) or not token:
+        raise ValueError("pipe_token must be a non-empty string")
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def configure_pane_output(
+    name_or_id: str,
+    *,
+    pipe_instance_id: str,
+    pipe_token: str | None = None,
+    pipe_token_hash: str | None = None,
+    tmux_pane: str | None = None,
+    enabled: bool = True,
+) -> bool:
+    """Configures local-only pane-output metadata without storing raw pipe tokens."""
+    if not isinstance(pipe_instance_id, str) or not pipe_instance_id:
+        raise ValueError("pipe_instance_id must be a non-empty string")
+    if not pipe_token_hash:
+        pipe_token_hash = hash_pipe_token(pipe_token)
+    now = time.time()
+    with state_lock:
+        agent_id = _resolve_agent_id(name_or_id)
+        if not agent_id or agent_id not in state:
+            return False
+        info = state[agent_id]
+        info.update({
+            **PANE_OUTPUT_DEFAULTS,
+            "pipe_output_enabled": bool(enabled),
+            "pipe_instance_id": pipe_instance_id,
+            "pipe_token_hash": pipe_token_hash,
+            "pipe_tmux_pane": tmux_pane or info.get("tmux_pane"),
+            "pipe_started_at": now,
+        })
+        return True
+
+
+def pane_output_metadata(info: dict) -> dict:
+    """Returns non-secret pane-output metadata with defaults applied."""
+    return {key: info.get(key, default) for key, default in PANE_OUTPUT_DEFAULTS.items()}
+
+
+def _reset_pane_output_metadata(info: dict) -> None:
+    """Disables stale pipe-pane sidecar metadata after pane identity changes."""
+    info.update(PANE_OUTPUT_DEFAULTS)
+
+
 def set_agent(name: str, info: dict) -> None:
     """Sets or upserts an agent keyed by stable agent_id."""
     with state_lock:
@@ -255,6 +320,8 @@ def set_agent(name: str, info: dict) -> None:
             if existing.get("name") and existing.get("name") != name:
                 if existing["name"] not in normalized["aliases"]:
                     normalized["aliases"].append(existing["name"])
+            if existing.get("tmux_pane") != normalized.get("tmux_pane"):
+                _reset_pane_output_metadata(normalized)
 
         existing_id_for_name = name_index.get(name)
         if existing_id_for_name and existing_id_for_name != agent_id:
@@ -291,6 +358,7 @@ def update_agent(name_or_id: str, **kwargs) -> bool:
             info["model_type"] = normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd"))
         new_pane = info.get("tmux_pane")
         if old_pane != new_pane:
+            _reset_pane_output_metadata(info)
             if old_pane and pane_index.get(old_pane) == agent_id:
                 pane_index.pop(old_pane, None)
             if new_pane:

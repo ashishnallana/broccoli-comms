@@ -12,6 +12,8 @@ import threading
 import uuid
 import struct
 import os
+import hmac
+import hashlib
 from pathlib import Path
 
 import config
@@ -21,6 +23,10 @@ from handlers import agent_handlers
 from handlers import messaging_handlers
 
 BUFFER_SIZE = 4096
+PANE_OUTPUT_MAX_CHUNK_BYTES = int(os.environ.get("AGENT_PANE_OUTPUT_MAX_CHUNK_BYTES", "65536"))
+PANE_OUTPUT_MAX_SEQUENCE_GAP = int(os.environ.get("AGENT_PANE_OUTPUT_MAX_SEQUENCE_GAP", "1000"))
+PANE_OUTPUT_RATE_WINDOW_SECONDS = float(os.environ.get("AGENT_PANE_OUTPUT_RATE_WINDOW_SECONDS", "1.0"))
+PANE_OUTPUT_MAX_ACCEPTED_CHUNKS_PER_WINDOW = int(os.environ.get("AGENT_PANE_OUTPUT_MAX_ACCEPTED_CHUNKS_PER_WINDOW", "200"))
 LOCAL_HOSTNAME = config.get("tracker", "hostname", socket.gethostname())
 REMOTE_BROAD_WATCH_ENABLED = config.get("tracker", "broad_watch_enabled", False)
 
@@ -38,6 +44,32 @@ class RPCStructuredError(ValueError):
 
 def _utc_now_isoformat() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _redacted_chunk_marker(chunk) -> str:
+    if isinstance(chunk, str):
+        byte_count = len(chunk.encode("utf-8"))
+    elif isinstance(chunk, (bytes, bytearray)):
+        byte_count = len(chunk)
+    else:
+        byte_count = 0
+    return f"<redacted {byte_count} bytes>"
+
+
+def _sanitize_request_for_logging(req: dict) -> dict:
+    """Redacts sensitive pane-output payloads before generic JSON-RPC logging."""
+    if not isinstance(req, dict) or req.get("method") != "pane_output":
+        return req
+    sanitized = dict(req)
+    params = sanitized.get("params")
+    if isinstance(params, dict):
+        safe_params = dict(params)
+        if "chunk" in safe_params:
+            safe_params["chunk"] = _redacted_chunk_marker(safe_params.get("chunk"))
+        if "pipe_token" in safe_params:
+            safe_params["pipe_token"] = "<redacted>"
+        sanitized["params"] = safe_params
+    return sanitized
 
 
 def _is_uuid(value: str) -> bool:
@@ -722,6 +754,211 @@ def handle_capture_pane(params: dict, caller_pid: int = None) -> dict:
     )
 
 
+def _pane_output_response(agent_id: str, *, accepted: bool, reason: str | None, tmux_pane: str, pipe_instance_id: str, seq: int | None, chunk_bytes: int) -> dict:
+    info = state.get_agent(agent_id) or {}
+    response = {
+        "accepted": accepted,
+        "dropped": not accepted,
+        "agent_id": agent_id,
+        "agent_name": state.get_agent_name_by_id(agent_id),
+        "tmux_pane": tmux_pane,
+        "pipe_instance_id": pipe_instance_id,
+        "seq": seq,
+        "chunk_bytes": chunk_bytes,
+        "pipe_last_seq": int(info.get("pipe_last_seq") or 0),
+        "pipe_chunks_accepted": int(info.get("pipe_chunks_accepted") or 0),
+        "pipe_chunks_dropped": int(info.get("pipe_chunks_dropped") or 0),
+    }
+    if reason:
+        response["drop_reason"] = reason
+    return response
+
+
+def _reject_pane_output_no_mutation(agent_id: str, *, reason: str, tmux_pane: str, pipe_instance_id: str, seq: int | None = None, chunk_bytes: int = 0) -> dict:
+    logging.info(
+        "rejected pane_output agent_id=%s pane=%s pipe_instance_id=%s seq=%s reason=%s chunk_bytes=%s",
+        agent_id,
+        tmux_pane,
+        pipe_instance_id,
+        seq,
+        reason,
+        chunk_bytes,
+    )
+    return _pane_output_response(
+        agent_id,
+        accepted=False,
+        reason=reason,
+        tmux_pane=tmux_pane,
+        pipe_instance_id=pipe_instance_id,
+        seq=seq,
+        chunk_bytes=chunk_bytes,
+    )
+
+
+def _drop_pane_output(agent_id: str, info: dict, *, reason: str, tmux_pane: str, pipe_instance_id: str, seq: int | None, chunk_bytes: int) -> dict:
+    now = time.time()
+    state.update_agent(
+        agent_id,
+        pipe_chunks_dropped=int(info.get("pipe_chunks_dropped") or 0) + 1,
+        pipe_last_drop_reason=reason,
+        pipe_last_drop_at=now,
+    )
+    logging.info(
+        "dropped pane_output agent_id=%s pane=%s pipe_instance_id=%s seq=%s reason=%s chunk_bytes=%s",
+        agent_id,
+        tmux_pane,
+        pipe_instance_id,
+        seq,
+        reason,
+        chunk_bytes,
+    )
+    return _pane_output_response(
+        agent_id,
+        accepted=False,
+        reason=reason,
+        tmux_pane=tmux_pane,
+        pipe_instance_id=pipe_instance_id,
+        seq=seq,
+        chunk_bytes=chunk_bytes,
+    )
+
+
+def _expected_pipe_token_hash(info: dict) -> str | None:
+    token_hash = info.get("pipe_token_hash") or info.get("pipe_token_sha256")
+    if token_hash:
+        return str(token_hash)
+    raw_token = info.get("pipe_token")
+    if isinstance(raw_token, str) and raw_token:
+        return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    return None
+
+
+def _authorized_pane_output_or_reject(agent_id: str, tmux_pane: str, pipe_instance_id: str, pipe_token: str) -> tuple[dict | None, dict | None]:
+    """Validates spoof-resistance metadata before any per-agent counter mutation."""
+    info = state.get_agent(agent_id) or {}
+    current_pane = info.get("tmux_pane")
+    configured_pane = info.get("pipe_tmux_pane")
+    expected_token_hash = _expected_pipe_token_hash(info)
+
+    if not info.get("pipe_output_enabled", False) or not info.get("pipe_instance_id") or not configured_pane or not expected_token_hash:
+        return None, _reject_pane_output_no_mutation(agent_id, reason="pipe_output_disabled", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id)
+    if tmux_pane != current_pane:
+        return None, _reject_pane_output_no_mutation(agent_id, reason="pane_mismatch", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id)
+    if configured_pane != current_pane or configured_pane != tmux_pane:
+        return None, _reject_pane_output_no_mutation(agent_id, reason="stale_pipe_metadata", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id)
+    if pipe_instance_id != info.get("pipe_instance_id"):
+        return None, _reject_pane_output_no_mutation(agent_id, reason="stale_pipe_instance", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id)
+
+    provided_token_hash = hashlib.sha256(pipe_token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(provided_token_hash, expected_token_hash):
+        return None, _reject_pane_output_no_mutation(agent_id, reason="token_mismatch", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id)
+    return info, None
+
+
+def _pane_output_rate_limited(info: dict, now: float) -> tuple[bool, float, int]:
+    window_started = info.get("pipe_rate_window_started_at")
+    try:
+        window_started = float(window_started) if window_started is not None else now
+    except (TypeError, ValueError):
+        window_started = now
+    try:
+        window_chunks = int(info.get("pipe_rate_window_chunks") or 0)
+    except (TypeError, ValueError):
+        window_chunks = 0
+
+    if now - window_started >= PANE_OUTPUT_RATE_WINDOW_SECONDS:
+        window_started = now
+        window_chunks = 0
+    return window_chunks >= PANE_OUTPUT_MAX_ACCEPTED_CHUNKS_PER_WINDOW, window_started, window_chunks
+
+
+def handle_pane_output(params: dict) -> dict:
+    """Internal Phase-1 tmux pipe-pane ingestion path.
+
+    This validates local pipe metadata and records only safe counters/timestamps.
+    Raw chunks are never logged, published, or persisted by this handler.
+    """
+    if not isinstance(params, dict):
+        raise ValueError("Invalid params")
+
+    agent_id = params.get("agent_id")
+    tmux_pane = params.get("tmux_pane")
+    pipe_instance_id = params.get("pipe_instance_id")
+    pipe_token = params.get("pipe_token")
+    chunk = params.get("chunk")
+
+    if not isinstance(agent_id, str) or not agent_id:
+        raise ValueError("agent_id is required")
+    if not state.get_agent_name_by_id(agent_id):
+        raise ValueError("agent_id does not resolve to a local agent")
+    if not isinstance(tmux_pane, str) or not tmux_pane:
+        raise ValueError("tmux_pane is required")
+    if not isinstance(pipe_instance_id, str) or not pipe_instance_id:
+        raise ValueError("pipe_instance_id is required")
+    if not isinstance(pipe_token, str) or not pipe_token:
+        raise ValueError("pipe_token is required")
+
+    info, rejection = _authorized_pane_output_or_reject(agent_id, tmux_pane, pipe_instance_id, pipe_token)
+    if rejection is not None:
+        return rejection
+    info = info or {}
+
+    seq = None
+    try:
+        seq = int(params.get("seq"))
+        if seq <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return _drop_pane_output(agent_id, info, reason="invalid_sequence", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id, seq=None, chunk_bytes=0)
+
+    if not isinstance(chunk, str):
+        return _drop_pane_output(agent_id, info, reason="invalid_chunk", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id, seq=seq, chunk_bytes=0)
+    chunk_bytes = len(chunk.encode("utf-8"))
+
+    if chunk_bytes > PANE_OUTPUT_MAX_CHUNK_BYTES:
+        return _drop_pane_output(agent_id, info, reason="chunk_too_large", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id, seq=seq, chunk_bytes=chunk_bytes)
+
+    last_seq = int(info.get("pipe_last_seq") or 0)
+    if seq <= last_seq:
+        reason = "duplicate_sequence" if seq == last_seq else "out_of_order_sequence"
+        return _drop_pane_output(agent_id, info, reason=reason, tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id, seq=seq, chunk_bytes=chunk_bytes)
+    if seq - last_seq > PANE_OUTPUT_MAX_SEQUENCE_GAP:
+        return _drop_pane_output(agent_id, info, reason="sequence_gap_exceeded", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id, seq=seq, chunk_bytes=chunk_bytes)
+
+    now = time.time()
+    rate_limited, window_started, window_chunks = _pane_output_rate_limited(info, now)
+    if rate_limited:
+        return _drop_pane_output(agent_id, info, reason="rate_limited", tmux_pane=tmux_pane, pipe_instance_id=pipe_instance_id, seq=seq, chunk_bytes=chunk_bytes)
+
+    state.update_agent(
+        agent_id,
+        pipe_last_seq=seq,
+        pipe_chunks_accepted=int(info.get("pipe_chunks_accepted") or 0) + 1,
+        pipe_bytes_accepted=int(info.get("pipe_bytes_accepted") or 0) + chunk_bytes,
+        pipe_last_chunk_at=now,
+        pipe_last_timestamp=params.get("timestamp"),
+        pipe_rate_window_started_at=window_started,
+        pipe_rate_window_chunks=window_chunks + 1,
+    )
+    logging.info(
+        "accepted pane_output agent_id=%s pane=%s pipe_instance_id=%s seq=%s chunk_bytes=%s",
+        agent_id,
+        tmux_pane,
+        pipe_instance_id,
+        seq,
+        chunk_bytes,
+    )
+    return _pane_output_response(
+        agent_id,
+        accepted=True,
+        reason=None,
+        tmux_pane=tmux_pane,
+        pipe_instance_id=pipe_instance_id,
+        seq=seq,
+        chunk_bytes=chunk_bytes,
+    )
+
+
 def handle_publish_tracker_event(params: dict) -> dict:
     target_tracker_id = params.get("target_tracker_id")
     event_type = params.get("event_type")
@@ -766,7 +1003,8 @@ dispatcher = {
     "unregister": handle_unregister,
     "publish_tracker_event": handle_publish_tracker_event,
     "list_trackers": handle_list_trackers,
-    "capture_pane": handle_capture_pane
+    "capture_pane": handle_capture_pane,
+    "pane_output": handle_pane_output,
 }
 
 def handle_client(conn: socket.socket) -> None:
@@ -795,7 +1033,7 @@ def handle_client(conn: socket.socket) -> None:
             
         try:
             req = json.loads(data.decode())
-            logging.info("JSON-RPC Request: %s", req)
+            logging.info("JSON-RPC Request: %s", _sanitize_request_for_logging(req))
         except json.JSONDecodeError:
             return
             

@@ -2425,6 +2425,300 @@ class TestRpcHandler(unittest.TestCase):
         name = rpc_handler._generate_unique_agent_name("test-agent")
         self.assertEqual(name, "test-agent-1")
 
+    def _setup_pane_output_agent(self, token="secret-token"):
+        state.set_agent("agent1", {
+            "agent_id": "id-1",
+            "status": "idle",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+        })
+        configured = state.configure_pane_output(
+            "id-1",
+            pipe_instance_id="pipe-1",
+            pipe_token=token,
+            tmux_pane="%1",
+        )
+        self.assertTrue(configured)
+
+    def test_pane_output_valid_chunk_accepted(self):
+        self._setup_pane_output_agent()
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": "hello",
+        })
+
+        self.assertTrue(result["accepted"])
+        self.assertFalse(result["dropped"])
+        self.assertEqual(result["pipe_last_seq"], 1)
+        self.assertEqual(result["pipe_chunks_accepted"], 1)
+        info = state.get_agent("id-1")
+        self.assertEqual(info["pipe_bytes_accepted"], 5)
+        self.assertNotIn("pipe_token", info)
+
+    def test_pane_output_stale_pipe_instance_rejected(self):
+        self._setup_pane_output_agent()
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "old-pipe",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": "hello",
+        })
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["drop_reason"], "stale_pipe_instance")
+        self.assertEqual(result["pipe_chunks_dropped"], 0)
+        self.assertIsNone(state.get_agent("id-1").get("pipe_last_drop_reason"))
+
+    def test_pane_output_token_mismatch_rejected(self):
+        self._setup_pane_output_agent()
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "wrong-token",
+            "seq": 1,
+            "chunk": "hello",
+        })
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["drop_reason"], "token_mismatch")
+        self.assertEqual(result["pipe_chunks_dropped"], 0)
+        self.assertIsNone(state.get_agent("id-1").get("pipe_last_drop_reason"))
+
+    def test_pane_output_pane_mismatch_rejected(self):
+        self._setup_pane_output_agent()
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%2",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": "hello",
+        })
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["drop_reason"], "pane_mismatch")
+        self.assertEqual(result["pipe_chunks_dropped"], 0)
+        self.assertIsNone(state.get_agent("id-1").get("pipe_last_drop_reason"))
+
+    def test_pane_output_huge_chunk_rejected(self):
+        self._setup_pane_output_agent()
+
+        with mock.patch.object(rpc_handler, "PANE_OUTPUT_MAX_CHUNK_BYTES", 4):
+            result = rpc_handler.handle_pane_output({
+                "agent_id": "id-1",
+                "tmux_pane": "%1",
+                "pipe_instance_id": "pipe-1",
+                "pipe_token": "secret-token",
+                "seq": 1,
+                "chunk": "hello",
+            })
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["drop_reason"], "chunk_too_large")
+        self.assertEqual(result["chunk_bytes"], 5)
+
+    def test_pane_output_duplicate_and_out_of_order_sequences_dropped(self):
+        self._setup_pane_output_agent()
+        base = {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "chunk": "hello",
+        }
+
+        self.assertTrue(rpc_handler.handle_pane_output({**base, "seq": 1})["accepted"])
+        duplicate = rpc_handler.handle_pane_output({**base, "seq": 1})
+        self.assertEqual(duplicate["drop_reason"], "duplicate_sequence")
+        self.assertTrue(rpc_handler.handle_pane_output({**base, "seq": 2})["accepted"])
+        out_of_order = rpc_handler.handle_pane_output({**base, "seq": 1})
+
+        self.assertEqual(out_of_order["drop_reason"], "out_of_order_sequence")
+        self.assertEqual(out_of_order["pipe_last_seq"], 2)
+        self.assertEqual(out_of_order["pipe_chunks_dropped"], 2)
+
+    def test_pane_output_sequence_gap_dropped(self):
+        self._setup_pane_output_agent()
+
+        with mock.patch.object(rpc_handler, "PANE_OUTPUT_MAX_SEQUENCE_GAP", 2):
+            result = rpc_handler.handle_pane_output({
+                "agent_id": "id-1",
+                "tmux_pane": "%1",
+                "pipe_instance_id": "pipe-1",
+                "pipe_token": "secret-token",
+                "seq": 3,
+                "chunk": "hello",
+            })
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["drop_reason"], "sequence_gap_exceeded")
+
+    def test_pane_output_unauthorized_malformed_request_does_not_mutate_counters(self):
+        self._setup_pane_output_agent()
+        before = state.get_agent("id-1")
+        self.assertEqual(before["pipe_chunks_dropped"], 0)
+        self.assertIsNone(before.get("pipe_last_drop_reason"))
+
+        bad_pane = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%bad",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": "not-an-int",
+            "chunk": object(),
+        })
+        bad_instance = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "stale-pipe",
+            "pipe_token": "secret-token",
+            "seq": "not-an-int",
+            "chunk": object(),
+        })
+        bad_token = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "wrong-token",
+            "seq": "not-an-int",
+            "chunk": object(),
+        })
+
+        self.assertEqual(bad_pane["drop_reason"], "pane_mismatch")
+        self.assertEqual(bad_instance["drop_reason"], "stale_pipe_instance")
+        self.assertEqual(bad_token["drop_reason"], "token_mismatch")
+        after = state.get_agent("id-1")
+        self.assertEqual(after["pipe_chunks_dropped"], 0)
+        self.assertIsNone(after.get("pipe_last_drop_reason"))
+
+    def test_pane_output_authorized_invalid_seq_and_chunk_mutate_drop_counters(self):
+        self._setup_pane_output_agent()
+        base = {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+        }
+
+        bad_seq = rpc_handler.handle_pane_output({**base, "seq": "not-an-int", "chunk": "hello"})
+        bad_chunk = rpc_handler.handle_pane_output({**base, "seq": 1, "chunk": object()})
+
+        self.assertEqual(bad_seq["drop_reason"], "invalid_sequence")
+        self.assertEqual(bad_chunk["drop_reason"], "invalid_chunk")
+        info = state.get_agent("id-1")
+        self.assertEqual(info["pipe_chunks_dropped"], 2)
+        self.assertEqual(info["pipe_last_drop_reason"], "invalid_chunk")
+
+    def test_pane_output_pane_move_invalidates_previous_pipe_metadata(self):
+        self._setup_pane_output_agent()
+        self.assertTrue(state.get_agent("id-1")["pipe_output_enabled"])
+
+        state.update_agent("id-1", tmux_pane="%2")
+        moved = state.get_agent("id-1")
+        self.assertFalse(moved["pipe_output_enabled"])
+        self.assertIsNone(moved["pipe_instance_id"])
+        self.assertIsNone(moved["pipe_token_hash"])
+
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": "hello",
+        })
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["drop_reason"], "pipe_output_disabled")
+        self.assertEqual(state.get_agent("id-1")["pipe_chunks_dropped"], 0)
+
+    def test_pane_output_reregister_pane_move_invalidates_previous_pipe_metadata(self):
+        self._setup_pane_output_agent()
+
+        state.set_agent("agent1", {
+            **state.get_agent("id-1"),
+            "agent_id": "id-1",
+            "tmux_pane": "%2",
+        })
+
+        moved = state.get_agent("id-1")
+        self.assertEqual(moved["tmux_pane"], "%2")
+        self.assertFalse(moved["pipe_output_enabled"])
+        self.assertIsNone(moved["pipe_instance_id"])
+        result = rpc_handler.handle_pane_output({
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": "hello",
+        })
+        self.assertEqual(result["drop_reason"], "pipe_output_disabled")
+        self.assertEqual(state.get_agent("id-1")["pipe_chunks_dropped"], 0)
+
+    def test_pane_output_rate_limiter_drops_after_window_quota(self):
+        self._setup_pane_output_agent()
+        base = {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "chunk": "hello",
+        }
+
+        with mock.patch.object(rpc_handler, "PANE_OUTPUT_MAX_ACCEPTED_CHUNKS_PER_WINDOW", 1), \
+             mock.patch.object(rpc_handler, "PANE_OUTPUT_RATE_WINDOW_SECONDS", 60.0), \
+             mock.patch("time.time", return_value=1000.0):
+            first = rpc_handler.handle_pane_output({**base, "seq": 1})
+            second = rpc_handler.handle_pane_output({**base, "seq": 2})
+
+        self.assertTrue(first["accepted"])
+        self.assertFalse(second["accepted"])
+        self.assertEqual(second["drop_reason"], "rate_limited")
+        info = state.get_agent("id-1")
+        self.assertEqual(info["pipe_chunks_accepted"], 1)
+        self.assertEqual(info["pipe_chunks_dropped"], 1)
+        self.assertEqual(info["pipe_last_seq"], 1)
+
+    def test_pane_output_never_exposes_raw_chunk_in_result_logs_or_events(self):
+        self._setup_pane_output_agent()
+        secret_chunk = "RAW-SECRET-CHUNK"
+        params = {
+            "agent_id": "id-1",
+            "tmux_pane": "%1",
+            "pipe_instance_id": "pipe-1",
+            "pipe_token": "secret-token",
+            "seq": 1,
+            "chunk": secret_chunk,
+        }
+
+        with mock.patch("state.publish_event") as publish_event, \
+             mock.patch("registry_client.publish_tracker_event") as publish_tracker_event, \
+             mock.patch("logging.info") as logging_info:
+            result = rpc_handler.handle_pane_output(params)
+
+        self.assertTrue(result["accepted"])
+        self.assertNotIn(secret_chunk, json.dumps(result))
+        publish_event.assert_not_called()
+        publish_tracker_event.assert_not_called()
+        self.assertNotIn(secret_chunk, str(logging_info.call_args_list))
+
+        sanitized = rpc_handler._sanitize_request_for_logging({"method": "pane_output", "params": params})
+        sanitized_json = json.dumps(sanitized)
+        self.assertNotIn(secret_chunk, sanitized_json)
+        self.assertNotIn("secret-token", sanitized_json)
+        self.assertIn("redacted", sanitized_json)
 
 
 if __name__ == "__main__":
