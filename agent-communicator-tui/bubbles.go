@@ -18,7 +18,7 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	colorKey := m.messageColorKey(msg)
 	body := msg.Body
 	innerWidth := max(8, width-8)
-	useBg := !isSentMessage(msg) && width >= 70
+	useBg := shouldRenderIncomingBubbleBackground(m.mode, msg) && width >= 70
 	displayBody, isPaneCapture := paneCaptureDisplayBody(body)
 	bodyBg := colors.BaseBg
 	if useBg {
@@ -48,16 +48,23 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 		wrapWidth = max(6, innerWidth-(bubblePadX*2))
 	}
 
-	renderIncomingBubbleLine := func(content string) string {
+	renderIncomingStyledBubbleLine := func(content string) string {
 		if content == "" {
 			return bgSpaces(innerWidth, bodyBg)
+		}
+		return bgSpaces(bubblePadX, bodyBg) + padStyledLine(content, wrapWidth, bodyBg) + bgSpaces(bubblePadX, bodyBg)
+	}
+
+	renderIncomingBubbleLine := func(content string) string {
+		if content == "" {
+			return renderIncomingStyledBubbleLine("")
 		}
 		fg := colors.Text
 		if isPaneCapture {
 			fg = colors.Success
 		}
 		content = fgOnBg(fg, bodyBg).Render(content)
-		return bgSpaces(bubblePadX, bodyBg) + padStyledLine(content, wrapWidth, bodyBg) + bgSpaces(bubblePadX, bodyBg)
+		return renderIncomingStyledBubbleLine(content)
 	}
 
 	headerBg := colors.BaseBg
@@ -84,8 +91,14 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 		}
 		out = append(out, padStyledLine(rail+indent+line, width, rowBg))
 	}
-	if receipt := sentReceiptLine(msg, colors.BaseBg); receipt != "" {
-		out = append(out, padStyledLine(rail+indent+receipt, width, colors.BaseBg))
+	if receipt := sentReceiptLine(msg, bodyBg); receipt != "" {
+		if useBg {
+			receipt = renderIncomingStyledBubbleLine(receipt)
+			out = append(out, padStyledLine(rail+indent+receipt, width, rowBg))
+		} else {
+			receipt = sentReceiptLine(msg, colors.BaseBg)
+			out = append(out, padStyledLine(rail+indent+receipt, width, colors.BaseBg))
+		}
 	}
 	if useBg {
 		blank := renderIncomingBubbleLine("")
@@ -178,6 +191,13 @@ func bubbleBodyLines(body string, wrapWidth int) []string {
 
 func isSentMessage(msg tracker.Message) bool {
 	return msg.Sender == "You" || strings.Contains(msg.Sender, "→") || strings.HasPrefix(msg.Sender, "to ")
+}
+
+func shouldRenderIncomingBubbleBackground(mode viewMode, msg tracker.Message) bool {
+	if mode == swarmView {
+		return true
+	}
+	return !isSentMessage(msg)
 }
 
 func (m model) messageColorKey(msg tracker.Message) string {

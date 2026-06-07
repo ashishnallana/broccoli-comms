@@ -181,7 +181,39 @@ func TestSwarmTimelineRendersSenderRecipientLabels(t *testing.T) {
 	}
 }
 
+func TestSwarmTimelineMessagesUseIncomingBubbleBackground(t *testing.T) {
+	forceTrueColor(t)
+	m := model{mode: swarmView, swarms: []swarmRow{{Name: "backend-fix", Main: agentRow{Name: "planner", TargetAddress: "planner"}}}, swarmMessages: []tracker.SwarmTimelineMessage{{Sender: "planner", Recipient: "coder-a", Body: "please fix"}}}
+	view := strings.Join(m.messageLinesForWidth(100), "\n")
+
+	assertNoResetToRawSpace(t, "swarm incoming bubble", view)
+	assertVisibleCellsHaveBackground(t, "swarm incoming bubble", view)
+	assertContains(t, "swarm incoming bubble", view, "48;2;52;72;63", "planner → coder-a", "please fix")
+}
+
+func TestSwarmTimelineMarkdownIsRenderedWithBubbleBackground(t *testing.T) {
+	forceTrueColor(t)
+	m := model{mode: swarmView, swarms: []swarmRow{{Name: "backend-fix", Main: agentRow{Name: "planner", TargetAddress: "planner"}}}, swarmMessages: []tracker.SwarmTimelineMessage{{Sender: "planner", Recipient: "coder-a", Body: "See [docs](https://example.com/docs) and `code`", ContentType: "text/markdown"}}}
+	view := strings.Join(m.messageLinesForWidth(100), "\n")
+
+	assertNoResetToRawSpace(t, "swarm markdown bubble", view)
+	assertVisibleCellsHaveBackground(t, "swarm markdown bubble", view)
+	assertContains(t, "swarm markdown bubble", view, "48;2;52;72;63", "docs", "code")
+}
+
+func TestSwarmTimelineReceiptStaysInsideBubbleBackground(t *testing.T) {
+	forceTrueColor(t)
+	m := model{mode: swarmView, swarms: []swarmRow{{Name: "backend-fix", Main: agentRow{Name: "planner", TargetAddress: "planner"}}}, swarmMessages: []tracker.SwarmTimelineMessage{{Sender: "planner", Recipient: "coder-a", Body: "please fix"}}}
+	view := strings.Join(m.messageLinesForWidth(100), "\n")
+	receipt := renderedLineContaining(t, view, "sent")
+
+	assertContains(t, "swarm timeline receipt", receipt, "48;2;52;72;63", "sent")
+	assertNotContains(t, "swarm timeline receipt", receipt, "48;2;45;53;59", "48;2;44;52;59")
+	assertNoResetToRawSpace(t, "swarm timeline receipt", receipt)
+}
+
 func TestSwarmViewIncludesLocalSentToMainMessages(t *testing.T) {
+	forceTrueColor(t)
 	main := agentRow{Name: "planner", TargetAddress: "planner", Scope: "local"}
 	m := model{
 		mode:   swarmView,
@@ -197,6 +229,32 @@ func TestSwarmViewIncludesLocalSentToMainMessages(t *testing.T) {
 	if !strings.Contains(view, "┃") {
 		t.Fatalf("swarm sent message should reuse message bubble rail styling:\n%s", view)
 	}
+	assertNoResetToRawSpace(t, "swarm local sent bubble", view)
+	assertVisibleCellsHaveBackground(t, "swarm local sent bubble", view)
+	assertContains(t, "swarm local sent bubble", view, "48;2;52;72;63")
+	receipt := renderedLineContaining(t, view, "sent")
+	assertContains(t, "swarm local sent receipt", receipt, "48;2;52;72;63", "sent")
+	assertNotContains(t, "swarm local sent receipt", receipt, "48;2;45;53;59", "48;2;44;52;59")
+}
+
+func TestSwarmPaneCaptureKeepsCaptureBackground(t *testing.T) {
+	forceTrueColor(t)
+	m := model{mode: swarmView, swarms: []swarmRow{{Name: "backend-fix", Main: agentRow{Name: "planner", TargetAddress: "planner"}}}, swarmMessages: []tracker.SwarmTimelineMessage{{Sender: "planner", Recipient: "coder-a", Body: testPaneCaptureBody(12)}}}
+	view := strings.Join(m.messageLinesForWidth(100), "\n")
+
+	assertContains(t, "swarm pane capture", view, "planner → coder-a", "▣ pane capture", "48;2;60;72;77")
+	if strings.Contains(view, "48;2;52;72;63") {
+		t.Fatalf("swarm pane capture should preserve CapturePaneBg instead of normal incoming bubble background:\n%s", view)
+	}
+}
+
+func TestSwarmSelectionRailKeepsIncomingBubbleBackground(t *testing.T) {
+	forceTrueColor(t)
+	m := model{mode: swarmView, messageSelected: 0, swarms: []swarmRow{{Name: "backend-fix", Main: agentRow{Name: "planner", TargetAddress: "planner"}}}, swarmMessages: []tracker.SwarmTimelineMessage{{Sender: "planner", Recipient: "coder-a", Body: "selected body"}}}
+	view := strings.Join(m.messageLinesForWidth(100), "\n")
+
+	assertContains(t, "swarm selected rail", view, "┃", "48;2;52;72;63", "selected body")
+	assertNoResetToRawSpace(t, "swarm selected rail", view)
 }
 
 func TestSwarmTimelineShowsNewestMessageFirst(t *testing.T) {
