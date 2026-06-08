@@ -21,9 +21,13 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from learning_kernel import LearningKernel, agent_contract, parse_csv, parse_duration_seconds
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -116,7 +120,29 @@ def paths() -> dict[str, Path]:
         "registries_json": config / "registries.json",
         "tmux_conf": config / "tmux.conf",
         "config_json": config / "config.json",
+        "learning_db": cache / "learning-kernel.sqlite3",
     }
+
+
+def learning_kernel() -> LearningKernel:
+    return LearningKernel(paths()["learning_db"])
+
+
+def agent_contract_template() -> str | None:
+    template = get_toml_config("learning", "agent_contract_template", None)
+    if template:
+        return str(template)
+    template_path = get_toml_config("learning", "agent_contract_template_path", None)
+    if template_path:
+        return Path(str(template_path)).expanduser().read_text()
+    return None
+
+
+def _print_payload(payload: object, as_json: bool = False) -> None:
+    if as_json or isinstance(payload, (dict, list)):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(str(payload))
 
 
 def ensure_dirs() -> None:
@@ -630,13 +656,25 @@ def managed_track_env_assignments() -> list[str]:
     return [shell_env_assignment(key, env[key]) for key in keys if env.get(key)]
 
 
-def managed_agent_launch_command(name: str, cwd: str, command: str, swarms: list[dict[str, str]] | None = None) -> str:
-    track_prefix = [*broccoli_comms_launcher_argv(), "track", "--name", name, "--cwd", cwd]
+def ephemeral_agent_workspace(name: str) -> str:
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]", "-", name).strip("-._") or "agent"
+    base = Path(tempfile.gettempdir()) / "broccoli-agents" / safe_name
+    workspace = base / uuid.uuid4().hex[:12]
+    workspace.mkdir(parents=True, exist_ok=False)
+    (workspace / "AGENTS.md").write_text(agent_contract(name, f"{name}@pending", workspace, agent_contract_template()))
+    return str(workspace)
+
+
+def managed_agent_launch_command(name: str, cwd: str, command: str, swarms: list[dict[str, str]] | None = None, launch_cwd: str | None = None) -> str:
+    launch_cwd = launch_cwd or cwd
+    track_prefix = [*broccoli_comms_launcher_argv(), "track", "--name", name, "--cwd", launch_cwd]
     for swarm in normalize_swarms(swarms or []):
         track_prefix.extend(["--swarm", swarm["name"], "--role", swarm["role"]])
     track_prefix.append("--")
     return " ".join([
         *managed_track_env_assignments(),
+        f"BROCCOLI_COMMS_SOURCE_CWD={shlex.quote(str(cwd))}",
+        f"BROCCOLI_COMMS_EPHEMERAL_CWD={shlex.quote(str(launch_cwd))}",
         *(shlex.quote(part) for part in track_prefix),
         command,
     ])
@@ -657,8 +695,9 @@ def reconcile_agents(names: set[str] | None = None, *, autostart_only: bool = Fa
         if not os.path.isdir(cwd):
             raise SystemExit(f"configured cwd for agent {name!r} does not exist: {cwd}")
         command = spec.get("command") or "bash"
-        launch = managed_agent_launch_command(name, cwd, command, spec.get("swarms") or [])
-        result = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", SESSION, "-n", name, "-c", cwd, launch)
+        launch_cwd = ephemeral_agent_workspace(name)
+        launch = managed_agent_launch_command(name, cwd, command, spec.get("swarms") or [], launch_cwd=launch_cwd)
+        result = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", SESSION, "-n", name, "-c", launch_cwd, launch)
         window_id = result.stdout.strip()
         if window_id:
             tmux("set-option", "-w", "-t", window_id, MANAGED_AGENT_OPTION, name)
@@ -1820,6 +1859,158 @@ def agent_tracker(args: argparse.Namespace) -> None:
     os.execvpe(cmd[0], cmd, env)
 
 
+def task_create(args: argparse.Namespace) -> None:
+    try:
+        task = learning_kernel().task_create(
+            title=args.title,
+            description=args.description or "",
+            assigned_agent=args.agent,
+            scope=args.scope,
+            next_step=args.next_step,
+            acceptance_criteria=list(args.acceptance or []),
+            depends_on=parse_csv(args.depends_on),
+            priority=args.priority,
+            actor=os.environ.get("AGENT_NAME") or "user",
+        )
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(task, args.json)
+
+
+def task_show(args: argparse.Namespace) -> None:
+    try:
+        _print_payload(learning_kernel().task_show(args.task_id), args.json)
+    except KeyError:
+        raise SystemExit(f"task not found: {args.task_id}")
+
+
+def task_list(args: argparse.Namespace) -> None:
+    statuses = parse_csv(args.status)
+    _print_payload(learning_kernel().task_list(agent=args.agent, statuses=statuses or None, include_archived=args.include_archived, scope=args.scope), args.json)
+
+
+def duplicate_profile_instances(agent: str | None) -> list[dict]:
+    if not agent:
+        return []
+    matches = []
+    for name, info in tracker_agents().items():
+        if name == agent or str(name).startswith(f"{agent}@"):
+            item = {"name": name}
+            if isinstance(info, dict):
+                item.update({k: info.get(k) for k in ("agent_id", "uuid", "tmux_pane", "status") if info.get(k)})
+            matches.append(item)
+    return matches if len(matches) > 1 else []
+
+
+def task_next(args: argparse.Namespace) -> None:
+    agent = args.agent or os.environ.get("AGENT_NAME")
+    payload = learning_kernel().task_next(agent=agent, scope=args.scope, include_profile=args.include_profile)
+    conflicts = duplicate_profile_instances(agent)
+    if conflicts:
+        payload["profile_conflict"] = {"agent": agent, "instances": conflicts, "message": "duplicate same-profile instances detected; parallel different task chains are allowed, but same-chain auto-claiming should be coordinator-resolved"}
+    _print_payload(payload, args.json)
+
+
+def task_update(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().task_update(
+            args.task_id,
+            status=args.status,
+            next_step=args.next_step,
+            blocked_reason=args.blocked_reason,
+            result_summary=args.result_summary,
+            assigned_agent=args.assign_agent,
+            actor=os.environ.get("AGENT_NAME") or "user",
+        )
+    except KeyError:
+        raise SystemExit(f"task not found: {args.task_id}")
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def task_mark_result(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().mark_result(args.task_id, args.result, args.notes, actor=os.environ.get("AGENT_NAME") or "user", next_step=args.next_step, status=args.status)
+    except KeyError:
+        raise SystemExit(f"task not found: {args.task_id}")
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def task_bootstrap(args: argparse.Namespace) -> None:
+    agent = args.agent or os.environ.get("AGENT_NAME") or "agent"
+    cwd = Path(args.cwd or os.getcwd())
+    payload = learning_kernel().task_next(agent=agent, scope=args.scope, include_profile=True)
+    task = payload.get("task") if isinstance(payload, dict) else None
+    state = learning_kernel().state_show(task["task_id"], agent) if task else None
+    payload.update({"state": state, "agents_md": agent_contract(agent, args.instance, cwd, agent_contract_template())})
+    conflicts = duplicate_profile_instances(agent)
+    if conflicts:
+        payload["profile_conflict"] = {"agent": agent, "instances": conflicts, "message": "duplicate same-profile instances detected; parallel different task chains are allowed, but same-chain queue claiming should be coordinator-resolved"}
+    _print_payload(payload, args.json)
+
+
+def state_set(args: argparse.Namespace) -> None:
+    agent = args.agent or os.environ.get("AGENT_NAME")
+    if not agent:
+        raise SystemExit("state set requires --agent when AGENT_NAME is unavailable")
+    try:
+        payload = learning_kernel().state_set(
+            args.task_id,
+            agent,
+            status=args.status,
+            current_activity=args.current_activity,
+            next_step=args.next_step,
+            blockers=parse_csv(args.blockers),
+            notes=args.notes,
+            instance_id=args.instance,
+            task_chain_id=args.task_chain_id,
+            root_task_id=args.root_task_id,
+            clarification_count=args.clarification_count,
+            correction_count=args.correction_count,
+            need_improvements_count=args.need_improvements_count,
+            first_pass_success=args.first_pass_success,
+            stale_after_seconds=parse_duration_seconds(args.stale_after) if args.stale_after else None,
+        )
+    except KeyError:
+        raise SystemExit(f"task not found: {args.task_id}")
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def state_show(args: argparse.Namespace) -> None:
+    payload = learning_kernel().state_show(args.task_id, args.agent or os.environ.get("AGENT_NAME"))
+    _print_payload(payload, args.json)
+
+
+def state_list(args: argparse.Namespace) -> None:
+    try:
+        stale_after = parse_duration_seconds(args.stale_after) if args.stale_after else None
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(learning_kernel().state_list(agent=args.agent, task_id=args.task_id, stale_after=stale_after), args.json)
+
+
+def state_clear(args: argparse.Namespace) -> None:
+    _print_payload(learning_kernel().state_clear(args.task_id, args.agent or os.environ.get("AGENT_NAME"), actor=os.environ.get("AGENT_NAME") or "user"), args.json)
+
+
+def user_profile_show(args: argparse.Namespace) -> None:
+    profile = learning_kernel().user_profile()
+    if args.format == "markdown" and not args.json:
+        print(profile["body"])
+        print(f"\n> Warning: {profile['warning']}")
+    else:
+        _print_payload(profile, True)
+
+
+def events_list(args: argparse.Namespace) -> None:
+    _print_payload(learning_kernel().events(task_id=args.task_id, subject_id=args.subject_id, limit=args.limit), True)
+
+
 def doctor(args: argparse.Namespace) -> None:
     payload = doctor_payload()
     if getattr(args, "json", False):
@@ -1867,6 +2058,114 @@ def main() -> None:
     agent_tracker_parser = sub.add_parser("agent-tracker", help="Run agent-tracker-ctl against the Broccoli Comms private runtime", add_help=False)
     agent_tracker_parser.add_argument("tracker_args", nargs=argparse.REMAINDER)
     agent_tracker_parser.set_defaults(func=agent_tracker)
+
+    task = sub.add_parser("task", help="Manage durable local tasks")
+    task_sub = task.add_subparsers(dest="task_command", required=True)
+    task_create_parser = task_sub.add_parser("create")
+    task_create_parser.add_argument("--title", required=True)
+    task_create_parser.add_argument("--description")
+    task_create_parser.add_argument("--agent")
+    task_create_parser.add_argument("--scope")
+    task_create_parser.add_argument("--next-step")
+    task_create_parser.add_argument("--acceptance", action="append")
+    task_create_parser.add_argument("--depends-on", help="Comma-separated dependency task IDs")
+    task_create_parser.add_argument("--priority", default="normal")
+    task_create_parser.add_argument("--json", action="store_true")
+    task_create_parser.set_defaults(func=task_create)
+    task_show_parser = task_sub.add_parser("show")
+    task_show_parser.add_argument("task_id")
+    task_show_parser.add_argument("--json", action="store_true")
+    task_show_parser.set_defaults(func=task_show)
+    task_list_parser = task_sub.add_parser("list")
+    task_list_parser.add_argument("--agent")
+    task_list_parser.add_argument("--scope")
+    task_list_parser.add_argument("--status")
+    task_list_parser.add_argument("--include-archived", action="store_true")
+    task_list_parser.add_argument("--json", action="store_true")
+    task_list_parser.set_defaults(func=task_list)
+    task_next_parser = task_sub.add_parser("next")
+    task_next_parser.add_argument("--agent")
+    task_next_parser.add_argument("--scope")
+    task_next_parser.add_argument("--include-profile", action="store_true")
+    task_next_parser.add_argument("--json", action="store_true")
+    task_next_parser.set_defaults(func=task_next)
+    task_update_parser = task_sub.add_parser("update")
+    task_update_parser.add_argument("task_id")
+    task_update_parser.add_argument("--status", choices=sorted({"queued", "ready", "working", "blocked", "review", "done", "validated", "archived"}))
+    task_update_parser.add_argument("--next-step")
+    task_update_parser.add_argument("--blocked-reason")
+    task_update_parser.add_argument("--result-summary")
+    task_update_parser.add_argument("--assign-agent")
+    task_update_parser.add_argument("--json", action="store_true")
+    task_update_parser.set_defaults(func=task_update)
+    task_result_parser = task_sub.add_parser("mark-result")
+    task_result_parser.add_argument("task_id")
+    task_result_parser.add_argument("--result", required=True, choices=["good", "bad", "need_improvements"])
+    task_result_parser.add_argument("--notes")
+    task_result_parser.add_argument("--next-step", help="Required remediation/follow-up for bad or need_improvements")
+    task_result_parser.add_argument("--status", choices=["ready", "working", "blocked", "validated"], help="Optional resulting task status; non-good results allow ready/working/blocked")
+    task_result_parser.add_argument("--json", action="store_true")
+    task_result_parser.set_defaults(func=task_mark_result)
+    task_bootstrap_parser = task_sub.add_parser("bootstrap")
+    task_bootstrap_parser.add_argument("--agent")
+    task_bootstrap_parser.add_argument("--scope")
+    task_bootstrap_parser.add_argument("--cwd")
+    task_bootstrap_parser.add_argument("--instance")
+    task_bootstrap_parser.add_argument("--json", action="store_true")
+    task_bootstrap_parser.set_defaults(func=task_bootstrap)
+
+    state_cmd = sub.add_parser("state", help="Manage durable working state checkpoints")
+    state_sub = state_cmd.add_subparsers(dest="state_command", required=True)
+    state_set_parser = state_sub.add_parser("set")
+    state_set_parser.add_argument("--task", dest="task_id", required=True)
+    state_set_parser.add_argument("--agent")
+    state_set_parser.add_argument("--status", default="working", choices=["working", "blocked", "waiting", "review", "done"])
+    state_set_parser.add_argument("--current-activity")
+    state_set_parser.add_argument("--next-step")
+    state_set_parser.add_argument("--blockers")
+    state_set_parser.add_argument("--notes")
+    state_set_parser.add_argument("--instance")
+    state_set_parser.add_argument("--task-chain-id", help="Stable task chain identifier for parallel same-profile work")
+    state_set_parser.add_argument("--root-task-id", help="Root task ID for this task chain")
+    state_set_parser.add_argument("--clarification-count", type=int, help="Bounded count of user clarifications before validation")
+    state_set_parser.add_argument("--correction-count", type=int, help="Bounded count of user corrections before validation")
+    state_set_parser.add_argument("--need-improvements-count", type=int, help="Bounded count of need_improvements cycles")
+    state_set_parser.add_argument("--first-pass-success", action=argparse.BooleanOptionalAction, default=None, help="Whether no corrections were needed before good validation")
+    state_set_parser.add_argument("--stale-after")
+    state_set_parser.add_argument("--json", action="store_true")
+    state_set_parser.set_defaults(func=state_set)
+    state_show_parser = state_sub.add_parser("show")
+    state_show_parser.add_argument("--task", dest="task_id", required=True)
+    state_show_parser.add_argument("--agent")
+    state_show_parser.add_argument("--json", action="store_true")
+    state_show_parser.set_defaults(func=state_show)
+    state_list_parser = state_sub.add_parser("list")
+    state_list_parser.add_argument("--agent")
+    state_list_parser.add_argument("--task", dest="task_id")
+    state_list_parser.add_argument("--stale-after")
+    state_list_parser.add_argument("--json", action="store_true")
+    state_list_parser.set_defaults(func=state_list)
+    state_clear_parser = state_sub.add_parser("clear")
+    state_clear_parser.add_argument("--task", dest="task_id", required=True)
+    state_clear_parser.add_argument("--agent")
+    state_clear_parser.add_argument("--json", action="store_true")
+    state_clear_parser.set_defaults(func=state_clear)
+
+    user_profile = sub.add_parser("user-profile", help="Show read-only local user profile")
+    user_profile_sub = user_profile.add_subparsers(dest="user_profile_command", required=True)
+    user_profile_show_parser = user_profile_sub.add_parser("show")
+    user_profile_show_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    user_profile_show_parser.add_argument("--json", action="store_true")
+    user_profile_show_parser.set_defaults(func=user_profile_show)
+
+    events = sub.add_parser("events", help="Query append-only task/state event log")
+    events_sub = events.add_subparsers(dest="events_command", required=True)
+    events_list_parser = events_sub.add_parser("list")
+    events_list_parser.add_argument("--task", dest="task_id")
+    events_list_parser.add_argument("--subject-id")
+    events_list_parser.add_argument("--limit", type=int, default=100)
+    events_list_parser.add_argument("--json", action="store_true", help="Accepted for CLI consistency; events are always JSON")
+    events_list_parser.set_defaults(func=events_list)
 
     registry = sub.add_parser("registry", help="Manage a Broccoli Comms agent-registry process")
     registry_sub = registry.add_subparsers(dest="registry_command", required=True)

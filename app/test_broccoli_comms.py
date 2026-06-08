@@ -103,7 +103,7 @@ agent_communicator_tui = "/config/agent-communicator"
         )
 
     def test_agent_add_persists_normalized_swarms(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}, clear=False):
             broccoli_comms_app.agent_add(argparse.Namespace(
                 name="planner",
                 cwd=tmp,
@@ -156,7 +156,18 @@ agent_communicator_tui = "/config/agent-communicator"
             )
 
         self.assertIn("--swarm backend-fix --role main", command)
+        self.assertIn("BROCCOLI_COMMS_SOURCE_CWD='/work tree'", command)
         self.assertIn("-- pi --flag", command)
+
+    def test_ephemeral_agent_workspace_writes_agents_md_from_config_template(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text('[learning]\nagent_contract_template = "hello {agent} {cwd}"\n')
+            workspace = broccoli_comms_app.ephemeral_agent_workspace("planner")
+        body = (Path(workspace) / "AGENTS.md").read_text()
+        self.assertEqual(body, f"hello planner {workspace}")
+        self.assertIn("/broccoli-agents/planner/", workspace)
 
 
 if __name__ == "__main__":

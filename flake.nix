@@ -109,7 +109,7 @@
               export BROCCOLI_COMMS_AGENT_WRAPPER=${agentWrapper}/bin/agent-wrapper
               export BROCCOLI_COMMS_AGENT_REGISTRY=${agentRegistry}/bin/agent-registry
               export BROCCOLI_COMMS_AGENT_COMMUNICATOR_TUI=${agentCommunicator}/bin/agent-communicator
-              exec ${pkgs.python3}/bin/python3 ${./app/broccoli-comms.py} "$@"
+              exec ${pkgs.python3}/bin/python3 ${./app}/broccoli-comms.py "$@"
             '';
           };
         in {
@@ -142,7 +142,15 @@
           cp -R ${./agent-tracker} agent-tracker
           cp -R ${./agent-registry} agent-registry
           chmod -R u+w app agent-tracker agent-registry
-          ${pkgs.python3}/bin/python3 -m py_compile app/broccoli-comms.py agent-tracker/*.py agent-tracker/ctl_commands/*.py agent-registry/*.py
+          ${pkgs.python3}/bin/python3 -m py_compile app/*.py agent-tracker/*.py agent-tracker/ctl_commands/*.py agent-registry/*.py
+          touch $out
+        '';
+
+        app-unit = pkgs.runCommand "broccoli-comms-app-unit" { } ''
+          cp -R ${./app} app
+          chmod -R u+w app
+          cd app
+          ${pkgs.python3}/bin/python3 -m unittest test_broccoli_comms.py test_learning_kernel.py
           touch $out
         '';
 

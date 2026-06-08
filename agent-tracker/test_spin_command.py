@@ -26,14 +26,47 @@ class TestSpinCommand(unittest.TestCase):
              mock.patch("ctl_commands.spin.call_rpc", return_value="proj") as call_rpc, \
              mock.patch.object(ctl.sys, "argv", ["agent-tracker-ctl", "spin", tmp, "gemini", "--model", "flash"]):
             ctl.main()
-        call_rpc.assert_called_once()
-        method, params = call_rpc.call_args.args
-        self.assertEqual(method, "spin_agent")
-        self.assertEqual(params["directory"], tmp)
-        expected_name = ctl.spin_session_name(tmp)
-        self.assertEqual(params["session"], expected_name)
-        self.assertEqual(params["name"], expected_name)
-        self.assertEqual(params["command"], "bash -c 'export PATH=/mock/path; /mock/agent-wrapper gemini --model flash; zsh'")
+            call_rpc.assert_called_once()
+            method, params = call_rpc.call_args.args
+            self.assertEqual(method, "spin_agent")
+            expected_name = ctl.spin_session_name(tmp)
+            self.assertNotEqual(params["directory"], tmp)
+            self.assertIn(os.path.join("broccoli-agents", expected_name), params["directory"])
+            self.assertEqual(params["env"]["BROCCOLI_COMMS_SOURCE_CWD"], tmp)
+            self.assertEqual(params["env"]["BROCCOLI_COMMS_EPHEMERAL_CWD"], params["directory"])
+            self.assertEqual(params["session"], expected_name)
+            self.assertEqual(params["name"], expected_name)
+            self.assertEqual(params["command"], "bash -c 'export PATH=/mock/path; /mock/agent-wrapper gemini --model flash; zsh'")
+            contract = os.path.join(params["directory"], "AGENTS.md")
+            self.assertTrue(os.path.exists(contract))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "AGENTS.md")))
+            with open(contract) as f:
+                body = f.read()
+            self.assertIn(f"You are: {expected_name}", body)
+            self.assertIn("broccoli-comms task bootstrap", body)
+            self.assertIn("database names, table names, commands/tools used", body)
+            self.assertIn("task mark-result <task_id> --result good", body)
+            self.assertIn("clarification_count, correction_count, need_improvements_count", body)
+            self.assertIn("first_pass_success", body)
+            self.assertIn("derivable from `working_state_set` events", body)
+            self.assertIn("task_chain_id/root_task_id", body)
+            self.assertIn("Multiple active instances of the same profile", body)
+            self.assertIn("immutable or non-learning", body)
+            self.assertIn("do not write state checkpoints", body)
+            self.assertIn("correction-assisted", body)
+            self.assertIn("Never store raw terminal transcripts", body)
+            self.assertIn(params["directory"], body)
+
+    def test_spin_agents_contract_can_be_overridden_by_config_toml(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cfg_tmp, \
+             mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": cfg_tmp}, clear=True):
+            cfg_dir = os.path.join(cfg_tmp, "broccoli-comms")
+            os.makedirs(cfg_dir)
+            with open(os.path.join(cfg_dir, "config.toml"), "w") as f:
+                f.write('[learning]\nagent_contract_template = "configured {agent} {instance} {cwd}"\n')
+            spin_cmd.write_agents_contract(tmp, "agent-a", "agent-a@s1")
+            with open(os.path.join(tmp, "AGENTS.md")) as f:
+                self.assertEqual(f.read(), f"configured agent-a agent-a@s1 {tmp}")
 
     def test_spin_subcommand_with_no_fallback_still_wraps_raw_command(self):
         with tempfile.TemporaryDirectory() as tmp, \
@@ -83,7 +116,7 @@ class TestSpinCommand(unittest.TestCase):
                 return mock.Mock(returncode=0, stdout="")
             return mock.Mock(returncode=0, stdout="")
 
-        with mock.patch.object(tmux_util.subprocess, "run", fake_run):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(tmux_util.subprocess, "run", fake_run):
             pane_id = tmux_util.spin_agent("proj", "gemini --model flash", session="proj", directory="/tmp/proj")
 
         self.assertEqual(pane_id, "%9")
@@ -106,7 +139,7 @@ class TestSpinCommand(unittest.TestCase):
                 return mock.Mock(returncode=0, stdout="")
             return mock.Mock(returncode=0, stdout="")
 
-        with mock.patch.object(tmux_util.subprocess, "run", fake_run):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(tmux_util.subprocess, "run", fake_run):
             pane_id = tmux_util.spin_agent("proj", "gemini", session="proj", directory="/tmp/proj")
 
         self.assertEqual(pane_id, "%10")
@@ -126,7 +159,7 @@ class TestSpinCommand(unittest.TestCase):
                 return mock.Mock(returncode=0, stdout="%11\n")
             return mock.Mock(returncode=0, stdout="")
 
-        with mock.patch.object(tmux_util.subprocess, "run", fake_run):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(tmux_util.subprocess, "run", fake_run):
             tmux_util.spin_agent("proj", "gemini", session="proj", directory="/tmp/proj", env={"PATH": "/my/custom/path"})
 
         wrapped = "unset AGENT_ID AGENT_NAME AGENT_UUID; export SUGGESTED_AGENT_NAME=proj; exec gemini"
