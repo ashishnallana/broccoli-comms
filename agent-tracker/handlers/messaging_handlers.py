@@ -434,6 +434,9 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
     sender_info = state.get_agent(params.get("sender_id") or sender_name) or {}
     sender_id = sender_info.get("agent_id") or params.get("sender_id")
     sender_metadata = _sender_metadata(sender_name, sender_info, sender_id)
+    content_metadata = params.get("metadata")
+    if content_metadata is not None and not isinstance(content_metadata, dict):
+        raise ValueError("metadata must be an object")
 
     if target_address and "/" in target_address:
         registry_name = None
@@ -526,6 +529,23 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
         **sender_metadata,
         "sender_tracker_id": registry_client.TRACKER_ID,
     }
+    if content_metadata:
+        payload["metadata"] = content_metadata
+        for key in (
+            "content_type",
+            "kind",
+            "approval_id",
+            "task_id",
+            "task_chain_id",
+            "root_task_id",
+            "task_version_at_submission",
+            "created_event_seq",
+            "event_seq_at_submission",
+            "source",
+            "sender_source",
+        ):
+            if key in content_metadata:
+                payload[key] = content_metadata[key]
     if params.get("swarm_context") is not None:
         payload["swarm_context"] = params.get("swarm_context")
     elif params.get("swarm") is not None:

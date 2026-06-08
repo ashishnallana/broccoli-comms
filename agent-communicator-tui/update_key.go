@@ -266,9 +266,30 @@ func (m model) handleComposerSubmit() (model, tea.Cmd) {
 	if !m.activeTabCanCompose() {
 		return m, nil
 	}
-	if row, ok := m.currentSendTarget(); ok && !m.agentListStale && strings.TrimSpace(string(m.composer)) != "" {
+	if strings.TrimSpace(string(m.composer)) != "" {
 		input := string(m.composer)
 		action := composerActionForMode(input, m.inputMode)
+		if action.Kind == "approval_review" {
+			if action.Result == "" {
+				m.err = fmt.Errorf("/approval requires good|bad|need_improvements")
+				return m, nil
+			}
+			approvalID := action.ApprovalID
+			selected, hasSelected := selectedApprovalMessage(m)
+			if approvalID == "" && hasSelected {
+				approvalID = selected.ApprovalID
+			}
+			if approvalID == "" {
+				m.err = fmt.Errorf("approval id is required")
+				return m, nil
+			}
+			m.composer = nil
+			return m, approvalReviewCmd(approvalMessageForReview(approvalID, selected), action.Result)
+		}
+		row, ok := m.currentSendTarget()
+		if !ok || m.agentListStale {
+			return m, nil
+		}
 		if action.Kind == "broadcast" {
 			m.directInputStatus = "Broadcast mode is disabled in this milestone; no message was sent"
 			m.directInputStatusErr = true

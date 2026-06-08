@@ -14,6 +14,7 @@ SCHEMA_VERSION = 1
 TASK_STATUSES = {"queued", "ready", "working", "blocked", "review", "done", "validated", "archived"}
 STATE_STATUSES = {"working", "blocked", "waiting", "review", "done"}
 RESULT_STATUSES = {"good", "bad", "need_improvements"}
+APPROVAL_STATUSES = {"pending", "decided", "superseded"}
 DONE_STATUSES = {"done", "validated"}
 TEXT_LIMITS = {
     "title": 200,
@@ -158,6 +159,18 @@ class LearningKernel:
               payload TEXT NOT NULL DEFAULT '{}', refs TEXT NOT NULL DEFAULT '{}', visibility TEXT NOT NULL DEFAULT 'private',
               schema_version INTEGER NOT NULL DEFAULT 1
             );
+            CREATE TABLE IF NOT EXISTS task_approvals(
+              approval_id TEXT PRIMARY KEY, idempotency_key TEXT, task_id TEXT NOT NULL,
+              task_chain_id TEXT NOT NULL DEFAULT '', root_task_id TEXT, status TEXT NOT NULL,
+              result TEXT, created_event_seq INTEGER, decided_event_seq INTEGER,
+              task_version_at_submission INTEGER NOT NULL, event_seq_at_submission INTEGER NOT NULL DEFAULT 0,
+              submitter_profile TEXT NOT NULL, submitter_instance_id TEXT,
+              result_summary TEXT NOT NULL, acceptance_summary TEXT,
+              reusable_discoveries TEXT NOT NULL DEFAULT '[]', clarification_count INTEGER,
+              correction_count INTEGER, need_improvements_count INTEGER, first_pass_success INTEGER,
+              created_at TEXT NOT NULL, decided_at TEXT, version INTEGER NOT NULL DEFAULT 1,
+              UNIQUE(submitter_profile, idempotency_key)
+            );
             CREATE INDEX IF NOT EXISTS idx_tasks_next ON tasks(status, assigned_agent, scope, updated_at);
             CREATE INDEX IF NOT EXISTS idx_events_subject ON events(subject_type, subject_id, timestamp);
             """)
@@ -219,6 +232,7 @@ class LearningKernel:
             "INSERT INTO events(event_id,event_type,timestamp,actor_type,actor_id,subject_type,subject_id,task_id,scope,payload,refs,visibility,schema_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (ev["event_id"], ev["event_type"], ev["timestamp"], ev["actor_type"], ev["actor_id"], ev["subject_type"], ev["subject_id"], ev["task_id"], ev["scope"], json.dumps(ev["payload"], sort_keys=True), json.dumps(ev["refs"], sort_keys=True), ev["visibility"], ev["schema_version"]),
         )
+        ev["event_seq"] = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
         return ev
 
     def row_task(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -235,6 +249,26 @@ class LearningKernel:
         d = dict(row)
         d["blockers"] = json.loads(d.get("blockers") or "[]")
         return d
+
+    def row_approval(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if not row:
+            return None
+        d = dict(row)
+        d["reusable_discoveries"] = json.loads(d.get("reusable_discoveries") or "[]")
+        d["first_pass_success"] = None if d.get("first_pass_success") is None else bool(d["first_pass_success"])
+        return d
+
+    def _clean_discoveries(self, discoveries: list[dict[str, Any]] | None) -> list[dict[str, str]]:
+        cleaned = []
+        for item in (discoveries or [])[:20]:
+            if not isinstance(item, dict):
+                raise ValueError("discovery must be an object")
+            cleaned.append({
+                "label": clean_text(item.get("label"), "list_item", required=True) or "",
+                "value": clean_text(item.get("value"), "list_item", required=True) or "",
+                "reason": clean_text(item.get("reason") or "", "list_item") or "",
+            })
+        return cleaned
 
     def task_create(self, **kw: Any) -> dict[str, Any]:
         status = kw.get("status") or "ready"
@@ -333,7 +367,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return self.task_show(task_id)
 
-    def mark_result(self, task_id: str, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None) -> dict[str, Any]:
+    def _validated_result_fields(self, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None) -> tuple[str | None, str, str, str]:
         if result not in RESULT_STATUSES:
             raise ValueError("invalid result")
         notes = clean_text(notes, "result_notes")
@@ -350,14 +384,26 @@ class LearningKernel:
             status = status or ("blocked" if result == "bad" else "ready")
             if status not in allowed_statuses:
                 raise ValueError("non-good result status must be ready, working, or blocked")
+        return notes, next_step, actor, status
+
+    def _mark_result_in_tx(self, conn: sqlite3.Connection, task_id: str, result: str, notes: str | None, actor: str, next_step: str | None, status: str, approval_id: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+        conn.execute("UPDATE tasks SET result_status=?, result_notes=?, status=?, next_step=COALESCE(?, next_step), updated_by=?, updated_at=?, version=version+1 WHERE task_id=?", (result, notes, status, next_step, actor, now_iso(), task_id))
+        payload = {"result_status": result, "result_notes": notes, "status": status, "next_step": next_step}
+        if approval_id:
+            payload["approval_id"] = clean_text(approval_id, "list_item")
+        ev = self.event(conn, "task_result_marked", "user", actor, "task", task_id, payload, task_id)
+        task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
+        return task, ev
+
+    def mark_result(self, task_id: str, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None, approval_id: str | None = None) -> dict[str, Any]:
+        notes, next_step, actor, status = self._validated_result_fields(result, notes, actor, next_step, status)
         with closing(self.connect()) as conn:
             if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone():
                 raise KeyError(task_id)
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute("UPDATE tasks SET result_status=?, result_notes=?, status=?, next_step=COALESCE(?, next_step), updated_by=?, updated_at=?, version=version+1 WHERE task_id=?", (result, notes, status, next_step, actor, now_iso(), task_id))
-            self.event(conn, "task_result_marked", "user", actor, "task", task_id, {"result_status": result, "result_notes": notes, "status": status, "next_step": next_step}, task_id)
+            task, _ev = self._mark_result_in_tx(conn, task_id, result, notes, actor, next_step, status, approval_id)
             conn.execute("COMMIT")
-            return self.task_show(task_id)
+            return task
 
     def state_set(self, task_id: str, agent: str, **kw: Any) -> dict[str, Any]:
         status = kw.get("status") or "working"
@@ -444,6 +490,124 @@ class LearningKernel:
                 self.event(conn, "working_state_cleared", "user", actor, "working_state", st["state_id"], {"agent": st["agent"], "task_chain_id": st.get("task_chain_id"), "root_task_id": st.get("root_task_id"), "agent_instance_id": st.get("instance_id")}, task_id)
             conn.execute("COMMIT")
             return {"cleared": len(states), "task_id": task_id, "agent": agent}
+
+    def submit_completion(self, task_id: str, **kw: Any) -> dict[str, Any]:
+        if kw.get("non_learning"):
+            raise ValueError("immutable/non-learning instances cannot submit learning approvals")
+        agent = clean_text(kw.get("agent"), "agent", required=True) or "agent"
+        instance_id = clean_text(kw.get("agent_instance_id"), "agent")
+        root_task_id = clean_text(kw.get("root_task_id") or task_id, "list_item")
+        task_chain_id = clean_text(kw.get("task_chain_id") or root_task_id, "list_item")
+        result_summary = clean_text(kw.get("result_summary"), "result_summary", required=True) or ""
+        acceptance_summary = clean_text(kw.get("acceptance_summary"), "result_summary")
+        idempotency_key = clean_text(kw.get("idempotency_key"), "list_item")
+        discoveries = self._clean_discoveries(kw.get("reusable_discoveries") or [])
+        clarification_count = clean_nonnegative_int(kw.get("clarification_count"), "clarification_count")
+        correction_count = clean_nonnegative_int(kw.get("correction_count"), "correction_count")
+        need_improvements_count = clean_nonnegative_int(kw.get("need_improvements_count"), "need_improvements_count")
+        first_pass_success = clean_bool(kw.get("first_pass_success"))
+        ts = now_iso()
+        with closing(self.connect()) as conn:
+            task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
+            if not task:
+                raise KeyError(task_id)
+            payload_fingerprint = {
+                "task_id": task_id, "task_chain_id": task_chain_id, "root_task_id": root_task_id,
+                "agent_instance_id": instance_id, "result_summary": result_summary,
+                "acceptance_summary": acceptance_summary, "reusable_discoveries": discoveries,
+                "clarification_count": clarification_count, "correction_count": correction_count,
+                "need_improvements_count": need_improvements_count, "first_pass_success": first_pass_success,
+            }
+            if idempotency_key:
+                existing = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE submitter_profile=? AND idempotency_key=?", (agent, idempotency_key)).fetchone())
+                if existing:
+                    existing_fingerprint = {
+                        "task_id": existing["task_id"], "task_chain_id": existing.get("task_chain_id") or "", "root_task_id": existing.get("root_task_id") or existing["task_id"],
+                        "agent_instance_id": existing.get("submitter_instance_id"), "result_summary": existing.get("result_summary"),
+                        "acceptance_summary": existing.get("acceptance_summary"), "reusable_discoveries": existing.get("reusable_discoveries") or [],
+                        "clarification_count": existing.get("clarification_count"), "correction_count": existing.get("correction_count"),
+                        "need_improvements_count": existing.get("need_improvements_count"), "first_pass_success": existing.get("first_pass_success"),
+                    }
+                    if existing_fingerprint != payload_fingerprint:
+                        raise ValueError("idempotency key reuse with different completion payload")
+                    return {"approval": existing, "task": task, "idempotent": True, "notification": None}
+            conn.execute("BEGIN IMMEDIATE")
+            pending = conn.execute("SELECT approval_id FROM task_approvals WHERE task_id=? AND task_chain_id=? AND status='pending'", (task_id, task_chain_id)).fetchone()
+            if pending:
+                conn.execute("ROLLBACK")
+                raise ValueError(f"pending approval already exists for task={task_id} task_chain_id={task_chain_id}: {pending['approval_id']}")
+            conn.execute("UPDATE tasks SET status='review', result_summary=?, updated_by=?, updated_at=?, version=version+1 WHERE task_id=?", (result_summary, agent, ts, task_id))
+            approval_id = f"apr-{uuid.uuid4().hex[:12]}"
+            submitted = self.event(conn, "task_completion_submitted", "agent", agent, "task", task_id, {"approval_id": approval_id, "task_chain_id": task_chain_id, "root_task_id": root_task_id, "agent_profile": agent, "agent_instance_id": instance_id, "result_summary": result_summary, "acceptance_summary": acceptance_summary, "reusable_discoveries": discoveries, "clarification_count": clarification_count, "correction_count": correction_count, "need_improvements_count": need_improvements_count, "first_pass_success": first_pass_success}, task_id)
+            requested = self.event(conn, "task_approval_requested", "system", "task-kernel", "task_approval", approval_id, {"approval_id": approval_id, "task_id": task_id, "task_chain_id": task_chain_id, "root_task_id": root_task_id, "agent_profile": agent, "agent_instance_id": instance_id}, task_id)
+            conn.execute("""
+                INSERT INTO task_approvals(approval_id,idempotency_key,task_id,task_chain_id,root_task_id,status,created_event_seq,task_version_at_submission,event_seq_at_submission,submitter_profile,submitter_instance_id,result_summary,acceptance_summary,reusable_discoveries,clarification_count,correction_count,need_improvements_count,first_pass_success,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (approval_id, idempotency_key, task_id, task_chain_id, root_task_id, "pending", requested["event_seq"], task.get("version"), submitted["event_seq"], agent, instance_id, result_summary, acceptance_summary, json.dumps(discoveries), clarification_count, correction_count, need_improvements_count, None if first_pass_success is None else int(first_pass_success), ts))
+            conn.execute("COMMIT")
+            approval = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())
+            updated_task = self.task_show(task_id)
+            return {"approval": approval, "task": updated_task, "idempotent": False, "notification": None}
+
+    def record_approval_notification(self, approval_id: str, sent: bool, detail: str | None = None) -> dict[str, Any]:
+        with closing(self.connect()) as conn:
+            approval = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())
+            if not approval:
+                raise KeyError(approval_id)
+            conn.execute("BEGIN IMMEDIATE")
+            ev = self.event(conn, "task_approval_notification_sent" if sent else "task_approval_notification_failed", "system", "task-kernel", "task_approval", approval_id, {"approval_id": approval_id, "detail": clean_text(detail, "event_text")}, approval["task_id"])
+            conn.execute("COMMIT")
+            return ev
+
+    def review_completion(self, approval_id: str, result: str, **kw: Any) -> dict[str, Any]:
+        if result not in RESULT_STATUSES:
+            raise ValueError("invalid result")
+        next_step = clean_text(kw.get("next_step"), "next_step")
+        notes = clean_text(kw.get("notes"), "result_notes")
+        expected_version = kw.get("task_version_at_submission")
+        actor = clean_text(kw.get("actor") or "user", "agent") or "user"
+        with closing(self.connect()) as conn:
+            approval = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())
+            if not approval:
+                raise KeyError(approval_id)
+            task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (approval["task_id"],)).fetchone())
+            if not task:
+                raise KeyError(approval["task_id"])
+            if approval["status"] == "decided":
+                if approval.get("result") == result:
+                    return {"approval": approval, "task": task, "idempotent": True}
+                raise ValueError("approval already decided with a different result")
+            if expected_version is not None and int(expected_version) != int(approval["task_version_at_submission"]):
+                raise ValueError("refresh required: stale approval card")
+            expected_current_version = int(approval["task_version_at_submission"]) + 1
+            if task.get("status") != "review" or int(task.get("version") or 0) != expected_current_version:
+                raise ValueError("refresh required: task changed since approval submission")
+            notes, next_step, actor, status = self._validated_result_fields(result, notes, actor, next_step, kw.get("status"))
+            conn.execute("BEGIN IMMEDIATE")
+            latest = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())
+            latest_task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (approval["task_id"],)).fetchone())
+            if latest["status"] != "pending" or latest_task.get("status") != "review" or int(latest_task.get("version") or 0) != expected_current_version:
+                conn.execute("ROLLBACK")
+                raise ValueError("refresh required: approval or task changed")
+            updated_task, ev = self._mark_result_in_tx(conn, approval["task_id"], result, notes, actor, next_step, status, approval_id)
+            conn.execute("UPDATE task_approvals SET status='decided', result=?, decided_event_seq=?, decided_at=?, version=version+1 WHERE approval_id=?", (result, ev["event_seq"], now_iso(), approval_id))
+            conn.execute("COMMIT")
+        return {"approval": self.show_approval(approval_id), "task": updated_task, "idempotent": False}
+
+    def list_approvals(self, status: str | None = None) -> list[dict[str, Any]]:
+        clauses, args = [], []
+        if status:
+            clauses.append("status=?"); args.append(status)
+        with closing(self.connect()) as conn:
+            rows = conn.execute("SELECT * FROM task_approvals" + (" WHERE " + " AND ".join(clauses) if clauses else "") + " ORDER BY created_at, approval_id", args).fetchall()
+        return [self.row_approval(r) for r in rows]
+
+    def show_approval(self, approval_id: str) -> dict[str, Any]:
+        with closing(self.connect()) as conn:
+            approval = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())
+        if not approval:
+            raise KeyError(approval_id)
+        return approval
 
     def user_profile(self, raw: bool = False) -> dict[str, Any]:
         with closing(self.connect()) as conn:

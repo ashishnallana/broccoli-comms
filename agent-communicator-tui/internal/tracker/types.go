@@ -106,22 +106,31 @@ type SwarmTimelineResult struct {
 }
 
 type Message struct {
-	Sender          string       `json:"sender"`
-	SenderAgentID   string       `json:"sender_agent_id,omitempty"`
-	SenderTrackerID string       `json:"sender_tracker_id,omitempty"`
-	SenderHostname  string       `json:"sender_hostname,omitempty"`
-	SenderModelType string       `json:"sender_model_type,omitempty"`
-	SenderAgentType string       `json:"sender_agent_type,omitempty"`
-	SenderAgentCmd  string       `json:"sender_agent_cmd,omitempty"`
-	Kind            string       `json:"kind,omitempty"`
-	Timestamp       string       `json:"timestamp"`
-	Body            string       `json:"message"`
-	ContentType     string       `json:"content_type,omitempty"`
-	Attachments     []Attachment `json:"attachments,omitempty"`
-	Delivered       bool         `json:"delivered,omitempty"`
-	Notified        bool         `json:"notified,omitempty"`
-	Read            bool         `json:"read"`
-	MessageID       string       `json:"message_id,omitempty"`
+	Sender                  string       `json:"sender"`
+	SenderAgentID           string       `json:"sender_agent_id,omitempty"`
+	SenderTrackerID         string       `json:"sender_tracker_id,omitempty"`
+	SenderHostname          string       `json:"sender_hostname,omitempty"`
+	SenderModelType         string       `json:"sender_model_type,omitempty"`
+	SenderAgentType         string       `json:"sender_agent_type,omitempty"`
+	SenderAgentCmd          string       `json:"sender_agent_cmd,omitempty"`
+	Kind                    string       `json:"kind,omitempty"`
+	ApprovalID              string       `json:"approval_id,omitempty"`
+	TaskID                  string       `json:"task_id,omitempty"`
+	TaskChainID             string       `json:"task_chain_id,omitempty"`
+	RootTaskID              string       `json:"root_task_id,omitempty"`
+	TaskVersionAtSubmission int          `json:"task_version_at_submission,omitempty"`
+	CreatedEventSeq         int64        `json:"created_event_seq,omitempty"`
+	EventSeqAtSubmission    int64        `json:"event_seq_at_submission,omitempty"`
+	Source                  string       `json:"source,omitempty"`
+	SenderSource            string       `json:"sender_source,omitempty"`
+	Timestamp               string       `json:"timestamp"`
+	Body                    string       `json:"message"`
+	ContentType             string       `json:"content_type,omitempty"`
+	Attachments             []Attachment `json:"attachments,omitempty"`
+	Delivered               bool         `json:"delivered,omitempty"`
+	Notified                bool         `json:"notified,omitempty"`
+	Read                    bool         `json:"read"`
+	MessageID               string       `json:"message_id,omitempty"`
 }
 
 type Event struct {

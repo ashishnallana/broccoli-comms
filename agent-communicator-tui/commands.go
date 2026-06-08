@@ -296,12 +296,14 @@ func deletePreviousWord(value []rune) []rune {
 const markdownReplyInstruction = "PS: Reply in markdown format."
 
 type composerAction struct {
-	Kind     string
-	Body     string
-	Text     string
-	Submit   bool
-	Keys     []string
-	Original string
+	Kind       string
+	Body       string
+	Text       string
+	Submit     bool
+	Keys       []string
+	ApprovalID string
+	Result     string
+	Original   string
 }
 
 func parseComposerAction(input string) composerAction {
@@ -344,6 +346,38 @@ func parseComposerAction(input string) composerAction {
 		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/keys"))
 		return composerAction{Kind: "direct_keys", Keys: strings.Fields(rest), Original: input}
 	}
+	if trimmed == "/approval" {
+		return composerAction{Kind: "approval_review", Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/approval ") {
+		fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(trimmed, "/approval")))
+		action := composerAction{Kind: "approval_review", Original: input}
+		if len(fields) > 0 {
+			action.Result = normalizeApprovalReviewResult(fields[0])
+		}
+		if len(fields) > 1 {
+			action.ApprovalID = fields[1]
+		}
+		return action
+	}
+	if trimmed == "/approve" {
+		return composerAction{Kind: "approval_review", Result: "good", Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/approve ") {
+		return composerAction{Kind: "approval_review", Result: "good", ApprovalID: firstField(strings.TrimSpace(strings.TrimPrefix(trimmed, "/approve"))), Original: input}
+	}
+	if trimmed == "/reject" {
+		return composerAction{Kind: "approval_review", Result: "bad", Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/reject ") {
+		return composerAction{Kind: "approval_review", Result: "bad", ApprovalID: firstField(strings.TrimSpace(strings.TrimPrefix(trimmed, "/reject"))), Original: input}
+	}
+	if trimmed == "/needs" {
+		return composerAction{Kind: "approval_review", Result: "need_improvements", Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/needs ") {
+		return composerAction{Kind: "approval_review", Result: "need_improvements", ApprovalID: firstField(strings.TrimSpace(strings.TrimPrefix(trimmed, "/needs"))), Original: input}
+	}
 	if trimmed == "/broadcast" {
 		return composerAction{Kind: "broadcast", Original: input}
 	}
@@ -352,6 +386,27 @@ func parseComposerAction(input string) composerAction {
 		return composerAction{Kind: "broadcast", Body: rest, Original: input}
 	}
 	return action
+}
+
+func firstField(value string) string {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func normalizeApprovalReviewResult(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "good", "approve", "approved":
+		return "good"
+	case "bad", "reject", "rejected":
+		return "bad"
+	case "need_improvements", "needs", "improvements":
+		return "need_improvements"
+	default:
+		return ""
+	}
 }
 
 func sendCurrentMessage(local localClient, senderName string, row agentRow, body string) tea.Cmd {

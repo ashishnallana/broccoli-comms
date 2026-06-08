@@ -228,6 +228,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err
 	case agentConfigSpun:
 		m.err = msg.Err
+	case approvalReviewResult:
+		m.err = msg.Err
+		if msg.Err == nil {
+			return m, m.reloadMessages()
+		}
 	}
 	return m, nil
 }

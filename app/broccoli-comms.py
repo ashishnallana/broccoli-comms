@@ -2007,6 +2007,129 @@ def user_profile_show(args: argparse.Namespace) -> None:
         _print_payload(profile, True)
 
 
+def _parse_discoveries(values: list[str] | None) -> list[dict[str, str]]:
+    discoveries = []
+    for value in values or []:
+        if "=" not in value:
+            raise SystemExit("--discovery must be label=value or label=value:reason")
+        label, rest = value.split("=", 1)
+        val, sep, reason = rest.partition(":")
+        discoveries.append({"label": label, "value": val, "reason": reason if sep else ""})
+    return discoveries
+
+
+def immutable_learning_instance(agent: str | None, instance: str | None) -> bool:
+    immutable = get_toml_config("learning", "immutable_instances", []) or []
+    names = {str(item) for item in immutable if isinstance(item, str)} if isinstance(immutable, list) else set()
+    return bool((agent and agent in names) or (instance and instance in names))
+
+
+def approval_fallback_markdown(approval: dict) -> str:
+    lines = [
+        "## Approval required",
+        f"Approval: `{approval['approval_id']}`",
+        f"Task: `{approval['task_id']}`",
+        f"Agent: `{approval['submitter_profile']}` instance `{approval.get('submitter_instance_id') or 'unknown'}`",
+        f"Task chain: `{approval.get('task_chain_id') or approval.get('root_task_id') or approval['task_id']}`",
+        "",
+        "### Result summary",
+        str(approval.get("result_summary") or ""),
+    ]
+    if approval.get("acceptance_summary"):
+        lines.extend(["", "### Acceptance summary", str(approval["acceptance_summary"])])
+    discoveries = approval.get("reusable_discoveries") or []
+    if discoveries:
+        lines.extend(["", "### Reusable discoveries"])
+        for item in discoveries:
+            lines.append(f"- {item.get('label')}: {item.get('value')} ({item.get('reason') or 'no reason'})")
+    lines.extend(["", f"Counters: clarifications={approval.get('clarification_count') or 0}, corrections={approval.get('correction_count') or 0}, need_improvements={approval.get('need_improvements_count') or 0}, first_pass_success={approval.get('first_pass_success')}"])
+    lines.extend(["", "Use `broccoli-comms task approval review <approval_id> --result good|bad|need_improvements`."])
+    return "\n".join(lines)[:4000]
+
+
+def notify_approval_request(kernel: LearningKernel, approval: dict) -> dict:
+    message = approval_fallback_markdown(approval)
+    metadata = {
+        "content_type": "application/vnd.broccoli.task-approval+json",
+        "kind": "task_completion_approval_request",
+        "approval_id": approval["approval_id"],
+        "task_id": approval["task_id"],
+        "task_chain_id": approval.get("task_chain_id"),
+        "root_task_id": approval.get("root_task_id"),
+        "task_version_at_submission": approval.get("task_version_at_submission"),
+        "created_event_seq": approval.get("created_event_seq"),
+        "event_seq_at_submission": approval.get("event_seq_at_submission"),
+        "agent_profile": approval.get("submitter_profile"),
+        "agent_instance_id": approval.get("submitter_instance_id"),
+        "result_summary": approval.get("result_summary"),
+        "acceptance_summary": approval.get("acceptance_summary"),
+        "reusable_discoveries": approval.get("reusable_discoveries") or [],
+        "clarification_count": approval.get("clarification_count"),
+        "correction_count": approval.get("correction_count"),
+        "need_improvements_count": approval.get("need_improvements_count"),
+        "first_pass_success": approval.get("first_pass_success"),
+        "created_at": approval.get("created_at"),
+        "source": "system/task-kernel",
+        "sender_source": "system",
+    }
+    try:
+        result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": "task-kernel"})
+        if not result:
+            raise RuntimeError("tracker RPC send_message failed")
+        event = kernel.record_approval_notification(approval["approval_id"], True, "agent-communicator")
+        return {"sent": True, "result": result, "event": event}
+    except Exception as e:
+        event = kernel.record_approval_notification(approval["approval_id"], False, str(e))
+        return {"sent": False, "error": str(e), "event": event}
+
+
+def task_submit_completion(args: argparse.Namespace) -> None:
+    kernel = learning_kernel()
+    agent = args.agent or os.environ.get("AGENT_NAME") or "agent"
+    instance = args.instance or os.environ.get("AGENT_ID") or os.environ.get("AGENT_UUID")
+    try:
+        payload = kernel.submit_completion(
+            args.task_id,
+            agent=agent,
+            agent_instance_id=instance,
+            task_chain_id=args.task_chain_id,
+            root_task_id=args.root_task_id,
+            result_summary=args.summary,
+            acceptance_summary=args.acceptance_summary,
+            reusable_discoveries=_parse_discoveries(args.discovery),
+            clarification_count=args.clarification_count,
+            correction_count=args.correction_count,
+            need_improvements_count=args.need_improvements_count,
+            first_pass_success=args.first_pass_success,
+            idempotency_key=args.idempotency_key,
+            non_learning=immutable_learning_instance(agent, instance),
+        )
+        if not payload.get("idempotent"):
+            payload["notification"] = notify_approval_request(kernel, payload["approval"])
+    except (KeyError, ValueError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def task_approval_list(args: argparse.Namespace) -> None:
+    _print_payload(learning_kernel().list_approvals(status=args.status), True)
+
+
+def task_approval_show(args: argparse.Namespace) -> None:
+    try:
+        _print_payload(learning_kernel().show_approval(args.approval_id), True)
+    except KeyError:
+        raise SystemExit(f"approval not found: {args.approval_id}")
+
+
+def task_approval_review(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().review_completion(args.approval_id, args.result, next_step=args.next_step, notes=args.notes, status=args.status, task_version_at_submission=args.task_version_at_submission, actor=os.environ.get("AGENT_NAME") or "user")
+    except (KeyError, ValueError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
 def events_list(args: argparse.Namespace) -> None:
     _print_payload(learning_kernel().events(task_id=args.task_id, subject_id=args.subject_id, limit=args.limit), True)
 
@@ -2113,6 +2236,41 @@ def main() -> None:
     task_bootstrap_parser.add_argument("--instance")
     task_bootstrap_parser.add_argument("--json", action="store_true")
     task_bootstrap_parser.set_defaults(func=task_bootstrap)
+    task_submit_parser = task_sub.add_parser("submit-completion")
+    task_submit_parser.add_argument("task_id")
+    task_submit_parser.add_argument("--summary", required=True)
+    task_submit_parser.add_argument("--acceptance-summary")
+    task_submit_parser.add_argument("--discovery", action="append", help="Reusable discovery as label=value or label=value:reason")
+    task_submit_parser.add_argument("--agent")
+    task_submit_parser.add_argument("--instance")
+    task_submit_parser.add_argument("--task-chain-id")
+    task_submit_parser.add_argument("--root-task-id")
+    task_submit_parser.add_argument("--clarification-count", type=int)
+    task_submit_parser.add_argument("--correction-count", type=int)
+    task_submit_parser.add_argument("--need-improvements-count", type=int)
+    task_submit_parser.add_argument("--first-pass-success", action=argparse.BooleanOptionalAction, default=None)
+    task_submit_parser.add_argument("--idempotency-key")
+    task_submit_parser.add_argument("--json", action="store_true")
+    task_submit_parser.set_defaults(func=task_submit_completion)
+    task_approval_parser = task_sub.add_parser("approval")
+    task_approval_sub = task_approval_parser.add_subparsers(dest="approval_command", required=True)
+    approval_list_parser = task_approval_sub.add_parser("list")
+    approval_list_parser.add_argument("--status", choices=["pending", "decided", "superseded"])
+    approval_list_parser.add_argument("--json", action="store_true")
+    approval_list_parser.set_defaults(func=task_approval_list)
+    approval_show_parser = task_approval_sub.add_parser("show")
+    approval_show_parser.add_argument("approval_id")
+    approval_show_parser.add_argument("--json", action="store_true")
+    approval_show_parser.set_defaults(func=task_approval_show)
+    approval_review_parser = task_approval_sub.add_parser("review")
+    approval_review_parser.add_argument("approval_id")
+    approval_review_parser.add_argument("--result", required=True, choices=["good", "bad", "need_improvements"])
+    approval_review_parser.add_argument("--next-step")
+    approval_review_parser.add_argument("--notes")
+    approval_review_parser.add_argument("--status", choices=["ready", "working", "blocked", "validated"])
+    approval_review_parser.add_argument("--task-version-at-submission", type=int)
+    approval_review_parser.add_argument("--json", action="store_true")
+    approval_review_parser.set_defaults(func=task_approval_review)
 
     state_cmd = sub.add_parser("state", help="Manage durable working state checkpoints")
     state_sub = state_cmd.add_subparsers(dest="state_command", required=True)

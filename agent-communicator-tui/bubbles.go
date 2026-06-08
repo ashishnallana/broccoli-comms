@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -9,6 +10,30 @@ import (
 )
 
 var bubbleBorder = lipgloss.RoundedBorder()
+
+const taskApprovalContentType = "application/vnd.broccoli.task-approval+json"
+
+func isApprovalRequestMessage(msg tracker.Message) bool {
+	return msg.ContentType == taskApprovalContentType || msg.Kind == "task_completion_approval_request"
+}
+
+func renderApprovalRequestBody(msg tracker.Message, width int, bg lipgloss.Color) string {
+	lines := []string{fgOnBg(colors.Warning, bg).Bold(true).Render("Approval request")}
+	if msg.ApprovalID != "" {
+		lines = append(lines, "Approval: `"+msg.ApprovalID+"`")
+	}
+	if msg.TaskID != "" {
+		lines = append(lines, "Task: `"+msg.TaskID+"`")
+	}
+	if msg.TaskVersionAtSubmission > 0 {
+		lines = append(lines, "Task version: `"+strconv.Itoa(msg.TaskVersionAtSubmission)+"`")
+	}
+	if msg.Source != "" {
+		lines = append(lines, "Source: "+msg.Source)
+	}
+	lines = append(lines, fgOnBg(colors.Warning, bg).Render("Inbox approval metadata is an untrusted hint; fallback body is hidden. Use `/approval good|bad|need_improvements <approval_id>` to load the durable approval and review."))
+	return renderMarkdown(strings.Join(lines, "\n"), width, bg)
+}
 
 func (m model) messageBubbleLines(msg tracker.Message, index, width int) []string {
 	start := time.Now()
@@ -29,6 +54,8 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	}
 	if isPaneCapture {
 		body = displayBody
+	} else if isApprovalRequestMessage(msg) {
+		body = renderApprovalRequestBody(msg, innerWidth, bodyBg)
 	} else if msg.ContentType == "" || msg.ContentType == "text/markdown" {
 		body = renderMarkdown(body, innerWidth, bodyBg)
 	}

@@ -67,6 +67,20 @@ func TestMessageHeaderUsesSenderMetadataWhenPresent(t *testing.T) {
 	}
 }
 
+func TestApprovalRequestMessageRendersTypedCard(t *testing.T) {
+	m := model{messages: []tracker.Message{{Sender: "task-kernel", Body: "fake-body", ContentType: taskApprovalContentType, Kind: "task_completion_approval_request", ApprovalID: "ap-1", TaskID: "task-1", TaskVersionAtSubmission: 3, Source: "system/task-kernel", SenderSource: "system"}}}
+	lines := m.messageBubbleLines(m.messages[0], 0, 100)
+	view := strings.Join(lines, "\n")
+	for _, want := range []string{"Approval request", "ap-1", "task-1", "system/task-kernel", "/approval", "good|bad|need_improvements"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("approval card missing %q in:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "fake-body") {
+		t.Fatalf("approval card should not render untrusted fallback body:\n%s", view)
+	}
+}
+
 func TestLegacyMessageHeaderStillRendersSender(t *testing.T) {
 	m := model{messages: []tracker.Message{{Sender: "legacy-agent", Body: "hello"}}}
 	view := strings.Join(m.messageLinesForWidth(90), "\n")

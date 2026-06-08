@@ -1239,6 +1239,43 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    @mock.patch("tmux_util.send_keys")
+    def test_local_send_delivers_structured_metadata(self, send_keys):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
+            self.assertTrue(rpc_handler.handle_send_message({
+                "agent_name": "agent1",
+                "message": "approval fallback",
+                "sender_name": "task-kernel",
+                "metadata": {
+                    "content_type": "application/vnd.broccoli.task-approval+json",
+                    "kind": "task_completion_approval_request",
+                    "approval_id": "ap-1",
+                    "task_id": "task-1",
+                    "task_version_at_submission": 7,
+                    "source": "system/task-kernel",
+                    "sender_source": "system",
+                },
+            }))
+
+            with open(inbox_path) as f:
+                msg = json.loads(f.readline())
+            self.assertEqual(msg["sender"], "task-kernel")
+            self.assertEqual(msg["content_type"], "application/vnd.broccoli.task-approval+json")
+            self.assertEqual(msg["kind"], "task_completion_approval_request")
+            self.assertEqual(msg["approval_id"], "ap-1")
+            self.assertEqual(msg["task_id"], "task-1")
+            self.assertEqual(msg["task_version_at_submission"], 7)
+            self.assertEqual(msg["source"], "system/task-kernel")
+            self.assertEqual(msg["sender_source"], "system")
+            self.assertEqual(msg["metadata"]["approval_id"], "ap-1")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
     @mock.patch("registry_client.send_remote_message")
     @mock.patch("tmux_util.send_keys")
     def test_send_message_treats_local_target_address_as_local_only(self, send_keys, send_remote):
