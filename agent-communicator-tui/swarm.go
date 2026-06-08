@@ -264,9 +264,9 @@ func (m model) swarmEmptyLines(width int) []string {
 	text := []string{
 		"No swarms found.",
 		"Start agents with swarm metadata, for example:",
-		"broccoli-comms track --name planner --swarm backend-fix --role main -- pi",
-		"broccoli-comms track --name coder-a --swarm backend-fix --role subagent -- pi",
-		"or persist them with broccoli-comms agent add ... --swarm backend-fix --role main",
+		"broccoli-comms run planner --swarm backend-fix --role main -- pi",
+		"broccoli-comms run coder-a --swarm backend-fix --role subagent -- pi",
+		"persist via: broccoli-comms run ... -- <command> then broccoli-comms agent edit ... --swarm backend-fix --role main --command <command>",
 	}
 	for _, line := range text {
 		lines = append(lines, wrapBackgroundStyledText(line, width, colors.Muted, colors.BaseBg)...)

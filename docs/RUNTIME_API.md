@@ -332,7 +332,10 @@ Outbox records persist target agent/tracker IDs. Inbound messages carry sender a
 Managed agent config/window commands:
 
 ```sh
-broccoli-comms agent add <name> --cwd <dir> --command <cmd> [--autostart]
+# Configure and persist a live agent from a one-off run session.
+# (run creates the process, edit stores config and can set autostart.)
+broccoli-comms run <name> --cwd <dir> -- <cmd>
+broccoli-comms agent edit <name> --cwd <dir> --command <cmd> [--autostart]
 broccoli-comms agent focus <name>
 broccoli-comms agent attach <name>
 broccoli-comms agent remove <name>

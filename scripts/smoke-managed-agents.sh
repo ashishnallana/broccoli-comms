@@ -107,17 +107,8 @@ mkdir -p "$HOME" "$BROCCOLI_COMMS_RUNTIME_DIR" "$BROCCOLI_COMMS_CACHE_DIR" "$BRO
 
 printf 'Using temp runtime: %s\n' "$tmpdir"
 
-if broccoli track -- sleep 1 >"$tmpdir/track-outside-tmux.out" 2>"$tmpdir/track-outside-tmux.err"; then
-  echo "track unexpectedly succeeded outside tmux" >&2
-  exit 1
-fi
-if ! grep -q "must be run from within a tmux pane" "$tmpdir/track-outside-tmux.err"; then
-  echo "track outside tmux did not explain tmux requirement" >&2
-  cat "$tmpdir/track-outside-tmux.err" >&2
-  exit 1
-fi
-
-broccoli agent add "$manual_agent" --cwd "$tmpdir/project" --command "sleep 60"
+broccoli run "$manual_agent" --cwd "$tmpdir/project" -- sleep 60
+broccoli agent edit "$manual_agent" --cwd "$tmpdir/project" --command "sleep 60" --no-autostart
 list_json="$(broccoli agent list --json)"
 LIST_JSON="$list_json" python3 - "$manual_agent" <<'PY'
 import json, os, sys
@@ -126,6 +117,20 @@ agent = payload["agents"].get(sys.argv[1])
 if not agent or agent.get("autostart") is not False:
     raise SystemExit("manual agent should default to autostart=false")
 PY
+
+# Keep a managed config entry but ensure the scratch process is not running before
+# validating autostart-only startup behavior.
+manual_window="$(managed_window_id "$manual_agent")"
+if [[ -n "$manual_window" ]]; then
+  tmux_private kill-window -t "$manual_window"
+  for _ in {1..20}; do
+    if [[ "$(managed_count "$manual_agent")" == "0" ]]; then
+      break
+    fi
+    sleep 0.1
+  done
+fi
+
 broccoli start
 if [[ "$(managed_count "$manual_agent")" != "0" ]]; then
   echo "manual/non-autostart agent launched during start" >&2
@@ -154,7 +159,8 @@ if [[ "$(managed_count "$manual_agent")" != "0" ]]; then
   exit 1
 fi
 
-broccoli agent add "$agent_name" --cwd "$tmpdir/project" --command "sleep 60" --autostart
+broccoli run "$agent_name" --cwd "$tmpdir/project" -- sleep 60
+broccoli agent edit "$agent_name" --cwd "$tmpdir/project" --command "sleep 60" --autostart
 
 doctor_json="$(broccoli doctor --json)"
 DOCTOR_JSON="$doctor_json" python3 - "$agent_name" <<'PY'
@@ -269,14 +275,18 @@ fake_bin="$tmpdir/fake-bin"
 mkdir -p "$fake_bin" "$tmpdir/wrapped-project"
 cat > "$fake_bin/pi" <<'SH'
 #!/usr/bin/env bash
-exec /bin/broccoli-comms track --name pi -- sleep "$@"
+exec sleep "$@"
 SH
 chmod +x "$fake_bin/pi"
 export PATH="$fake_bin:$PATH"
-broccoli agent add "$wrapped_agent" --cwd "$tmpdir/wrapped-project" --command "pi 60" --autostart
+
+# Start an agent command that routes through an installed executable name,
+# then persist it as a managed agent.
+broccoli run "$wrapped_agent" --cwd "$tmpdir/wrapped-project" -- pi 60
+broccoli agent edit "$wrapped_agent" --cwd "$tmpdir/wrapped-project" --command "pi 60" --autostart
 broccoli start
 if [[ "$(managed_count "$wrapped_agent")" != "1" ]]; then
-  echo "expected wrapped track command to keep managed agent name" >&2
+  echo "expected wrapped command to keep managed agent name" >&2
   tmux_private list-windows -t "$session_name" -F $'#{window_id}\t#{window_name}\t#{@broccoli_managed_agent}\t#{pane_id}' >&2
   exit 1
 fi
@@ -288,9 +298,6 @@ payload = json.loads(os.environ["LIST_JSON"])
 name = sys.argv[1]
 if name not in payload:
     raise SystemExit("wrapped managed agent missing from tracker list")
-for unexpected in ("pi", "pi-1"):
-    if unexpected in payload:
-        raise SystemExit(f"nested track wrapper created unexpected agent {unexpected}")
 PY
 broccoli agent remove "$wrapped_agent"
 if [[ "$(managed_count "$wrapped_agent")" != "0" ]]; then
@@ -300,7 +307,8 @@ fi
 
 collision_agent="bash"
 mkdir -p "$tmpdir/collision-project"
-broccoli agent add "$collision_agent" --cwd "$tmpdir/collision-project" --command "sleep 60" --autostart
+broccoli run "$collision_agent" --cwd "$tmpdir/collision-project" -- sleep 60
+broccoli agent edit "$collision_agent" --cwd "$tmpdir/collision-project" --command "sleep 60" --autostart
 broccoli start
 if [[ "$(managed_count "$collision_agent")" != "1" ]]; then
   echo "expected one managed collision window" >&2

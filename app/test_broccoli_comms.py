@@ -1,5 +1,6 @@
 import argparse
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -165,20 +166,215 @@ agent_communicator_tui = "/config/agent-communicator"
             env,
         )
 
-    def test_agent_add_persists_normalized_swarms(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}, clear=False):
-            broccoli_comms_app.agent_add(argparse.Namespace(
-                name="planner",
-                cwd=tmp,
-                command="pi",
-                autostart=True,
-                force=False,
-                swarm=["s1"],
-                role=["main"],
-            ))
-            cfg = json.loads((Path(tmp) / "broccoli-comms" / "config.json").read_text())
+    def test_run_requires_command_after_double_dash(self):
+        with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+             mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+             mock.patch.object(broccoli_comms_app, "window_exists", return_value=False):
+            with mock.patch.object(broccoli_comms_app, "tmux", side_effect=lambda *cmd, **kw: mock.Mock(returncode=0, stdout="", stderr="")):
+                with self.assertRaises(SystemExit):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=None, scope=None, swarm=None, role=None, command=[]))
 
-        self.assertEqual(cfg["agents"]["planner"]["swarms"], [{"name": "s1", "role": "main"}])
+    def test_public_help_hides_legacy_launch_commands(self):
+        output = io.StringIO()
+        with mock.patch.object(broccoli_comms_app.sys, "argv", ["broccoli-comms", "--help"]), \
+             mock.patch.object(broccoli_comms_app.sys, "stdout", output):
+            with self.assertRaises(SystemExit):
+                broccoli_comms_app.main()
+        text = output.getvalue()
+        self.assertIn("run", text)
+        self.assertNotIn("broccoli-comms track", text)
+        self.assertNotIn("broccoli-comms agent add", text)
+
+    def test_agent_subcommand_help_lists_public_actions_only(self):
+        output = io.StringIO()
+        with mock.patch.object(broccoli_comms_app.sys, "argv", ["broccoli-comms", "agent", "--help"]), \
+             mock.patch.object(broccoli_comms_app.sys, "stdout", output):
+            with self.assertRaises(SystemExit):
+                broccoli_comms_app.main()
+        text = output.getvalue()
+        self.assertIn("list", text)
+        self.assertIn("edit", text)
+        self.assertIn("restart", text)
+        self.assertNotIn("usage: broccoli-comms agent add", text)
+
+    def test_unknown_legacy_track_command_fails_fast(self):
+        with mock.patch.object(broccoli_comms_app.sys, "argv", ["broccoli-comms", "track", "--name", "planner", "--", "pi"]):
+            with self.assertRaises(SystemExit):
+                broccoli_comms_app.main()
+
+    def test_run_accepts_options_after_name_before_separator(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append((list(cmd), dict(kwargs)))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=None, scope=None, swarm=None, role=None, command=["--cwd", tmp, "--scope", "repo:test", "--", "sleep", "60"]))
+
+        launched = [call for call, _ in calls if call and call[0] == "new-window"][0][-1]
+        self.assertIn("task bootstrap", launched)
+        self.assertIn("--scope repo:test", launched)
+        self.assertIn("sleep 60", launched)
+        self.assertNotIn("exec \\\"$@\\\"' _broccoli_agent_bootstrap --", launched)
+
+    def test_run_launches_in_managed_window_with_bootstrap_wrapper(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append((list(cmd), dict(kwargs)))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope="repo:test", swarm=None, role=None, command=["pi", "--flag"]))
+
+        new_window_calls = [call for call, _ in calls if call and call[0] == "new-window"]
+        self.assertEqual(len(new_window_calls), 1)
+        launched = new_window_calls[0][-1]
+        self.assertIn("bootstrap.json", launched)
+        self.assertIn("set -euo pipefail", launched)
+        self.assertIn("AGENT_TRACKER_SOCKET", launched)
+        self.assertIn("task bootstrap", launched)
+
+    def test_reconcile_agents_includes_scope_bootstrap_wrapper(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            cfg_path = cfg_dir / "config.json"
+            with cfg_path.open("w") as f:
+                json.dump({
+                    "agents": {
+                        "planner": {
+                            "cwd": tmp,
+                            "command": "pi --flag",
+                            "scope": "repo:demo",
+                        }
+                    }
+                }, f)
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "managed_track_env_assignments", return_value=[]), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux):
+                    broccoli_comms_app.reconcile_agents({"planner"})
+
+        new_window_calls = [call for call in calls if call and call[0] == "new-window"]
+        self.assertEqual(len(new_window_calls), 1)
+        launched = new_window_calls[0][-1]
+        self.assertIn("task bootstrap", launched)
+        self.assertIn("--scope repo:demo", launched)
+
+
+    def test_agent_edit_updates_live_agent_config_and_restarts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            cfg_path = cfg_dir / "config.json"
+            with cfg_path.open("w") as f:
+                json.dump({
+                    "agents": {
+                        "planner": {
+                            "cwd": tmp,
+                            "command": "pi --help",
+                            "autostart": True,
+                        }
+                    }
+                }, f)
+
+            calls = []
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "window_exists", return_value=True), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "kill_agent_window", side_effect=lambda name: calls.append(name) or True), \
+                     mock.patch.object(broccoli_comms_app, "reconcile_agents", return_value=["reviewer"]):
+                    broccoli_comms_app.agent_edit(argparse.Namespace(
+                        name="planner",
+                        rename="reviewer",
+                        cwd=tmp,
+                        scope="repo:test",
+                        swarm=["s1"],
+                        role=["main"],
+                        command=["pi", "--role", "reviewer"],
+                        autostart=None,
+                    ))
+
+            cfg = json.loads(cfg_path.read_text())
+        self.assertEqual(calls, ["planner"])
+        self.assertIn("reviewer", cfg["agents"])
+        self.assertNotIn("planner", cfg["agents"])
+        self.assertEqual(cfg["agents"]["reviewer"]["command"], "pi --role reviewer")
+        self.assertEqual(cfg["agents"]["reviewer"]["scope"], "repo:test")
+        self.assertEqual(cfg["agents"]["reviewer"]["swarms"], [{"name": "s1", "role": "main"}])
+
+    def test_agent_edit_accepts_options_after_name_and_command_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            cfg_path = cfg_dir / "config.json"
+            with cfg_path.open("w") as f:
+                json.dump({"agents": {"planner": {"cwd": tmp, "command": "sleep 1", "autostart": True}}}, f)
+
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "window_exists", return_value=True), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "kill_agent_window", return_value=True), \
+                     mock.patch.object(broccoli_comms_app, "reconcile_agents", return_value=["planner"]):
+                    broccoli_comms_app.agent_edit(argparse.Namespace(
+                        name="planner",
+                        rename=None,
+                        cwd=None,
+                        scope=None,
+                        swarm=None,
+                        role=None,
+                        command=["--cwd", tmp, "--command", "sleep 70", "--no-autostart"],
+                        command_string=None,
+                        autostart=None,
+                    ))
+
+            cfg = json.loads(cfg_path.read_text())
+        self.assertEqual(cfg["agents"]["planner"]["command"], "sleep 70")
+        self.assertIs(cfg["agents"]["planner"]["autostart"], False)
+
+    def test_agent_edit_requires_live_agent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with self.assertRaises(SystemExit):
+                    broccoli_comms_app.agent_edit(argparse.Namespace(
+                        name="planner",
+                        rename=None,
+                        cwd=tmp,
+                        scope=None,
+                        swarm=None,
+                        role=None,
+                        command=["pi"],
+                        autostart=None,
+                    ))
 
     def test_invalid_swarm_role_is_rejected(self):
         with self.assertRaises(SystemExit):
@@ -208,9 +404,10 @@ agent_communicator_tui = "/config/agent-communicator"
                 "swarms": {"backend-fix": {"members": [{"agent": "planner", "role": "worker"}]}},
             })
 
-    def test_managed_launch_command_includes_swarm_flags(self):
+    def test_managed_launch_command_builds_wrapper_invocation(self):
         with mock.patch.object(broccoli_comms_app, "broccoli_comms_launcher_argv", return_value=["broccoli-comms"]), \
-             mock.patch.object(broccoli_comms_app, "managed_track_env_assignments", return_value=[]):
+             mock.patch.object(broccoli_comms_app, "managed_track_env_assignments", return_value=[]), \
+             mock.patch.object(broccoli_comms_app, "wrapper_path", return_value="/usr/bin/agent-wrapper"):
             command = broccoli_comms_app.managed_agent_launch_command(
                 "planner",
                 "/work tree",
@@ -218,9 +415,42 @@ agent_communicator_tui = "/config/agent-communicator"
                 [{"name": "backend-fix", "role": "main"}],
             )
 
-        self.assertIn("--swarm backend-fix --role main", command)
-        self.assertIn("BROCCOLI_COMMS_SOURCE_CWD='/work tree'", command)
-        self.assertIn("-- pi --flag", command)
+        self.assertIn("/usr/bin/agent-wrapper", command)
+        self.assertIn("SUGGESTED_AGENT_NAME=planner", command)
+        self.assertIn('AGENT_SWARMS_JSON=\'[{"name":"backend-fix","role":"main"}]\'', command)
+        self.assertIn("pi --flag", command)
+
+    def test_managed_launch_command_wraps_command_when_scope_is_configured(self):
+        with mock.patch.object(broccoli_comms_app, "broccoli_comms_launcher_argv", return_value=["broccoli-comms"]), \
+             mock.patch.object(broccoli_comms_app, "managed_track_env_assignments", return_value=[]):
+            command = broccoli_comms_app.managed_agent_launch_command(
+                "planner",
+                "/work tree",
+                "pi --flag",
+                [],
+                launch_cwd="/tmp/ephemeral",
+                scope="repo:test",
+            )
+
+        self.assertIn("task bootstrap", command)
+        self.assertIn("--scope repo:test", command)
+        self.assertIn("exec \"$@\"", command)
+
+    def test_build_bootstrap_track_command_supports_multi_argv_launcher(self):
+        with mock.patch.object(broccoli_comms_app, "broccoli_comms_launcher_argv", return_value=["/usr/bin/python3", "/path with spaces/broccoli-comms"]):
+            command = broccoli_comms_app._build_bootstrap_track_command(
+                "planner",
+                "/src/tree",
+                "repo:test",
+                ["pi", "--flag"],
+                "/tmp/bootstrap.json",
+            )
+
+        self.assertEqual(command[:2], ["bash", "-lc"])
+        self.assertIn("/usr/bin/python3", command[2])
+        self.assertIn("'/path with spaces/broccoli-comms'", command[2])
+        self.assertIn("--scope", command[2])
+        self.assertIn("repo:test", command[2])
 
     def test_ephemeral_agent_workspace_writes_agents_md_from_config_template(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):

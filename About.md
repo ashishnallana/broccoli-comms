@@ -34,9 +34,10 @@ Example workflow:
 
 ```sh
 broccoli-comms start
-broccoli-comms agent add coder --cwd ~/project --command 'pi'
-broccoli-comms agent add reviewer --cwd ~/project --command 'pi'
-broccoli-comms start
+broccoli-comms run coder --cwd ~/project -- pi
+broccoli-comms agent edit coder --cwd ~/project --command "pi" --autostart
+broccoli-comms run reviewer --cwd ~/project -- pi
+broccoli-comms agent edit reviewer --cwd ~/project --command "pi" --autostart
 broccoli-comms ui
 ```
 
@@ -141,7 +142,11 @@ broccoli-comms start
 broccoli-comms ui
 broccoli-comms status --json
 broccoli-comms agent list --json
-broccoli-comms agent add coder --cwd ~/project --command 'pi'
+broccoli-comms run coder --cwd ~/project -- pi
+broccoli-comms agent edit coder --cwd ~/project --command "pi" --autostart
+broccoli-comms run reviewer --cwd ~/project -- pi
+broccoli-comms agent edit reviewer --cwd ~/project --command "pi" --autostart
+broccoli-comms start
 broccoli-comms agent-tracker list
 broccoli-comms registry list --json
 broccoli-comms stop
@@ -160,8 +165,10 @@ Broccoli Comms starts and manages its own private tracker. By default it creates
 You can configure named agents with a working directory and command. `broccoli-comms start` reconciles those agents into the private runtime.
 
 ```sh
-broccoli-comms agent add coder --cwd ~/project --command 'pi'
-broccoli-comms agent add reviewer --cwd ~/project --command 'pi'
+broccoli-comms run coder --cwd ~/project -- pi
+broccoli-comms agent edit coder --cwd ~/project --command "pi" --autostart
+broccoli-comms run reviewer --cwd ~/project -- pi
+broccoli-comms agent edit reviewer --cwd ~/project --command "pi" --autostart
 broccoli-comms start
 ```
 

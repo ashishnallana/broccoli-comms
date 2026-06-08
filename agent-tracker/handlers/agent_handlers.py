@@ -90,9 +90,9 @@ def handle_register(params: dict) -> str:
     wrapper_pid = params.get("wrapper_pid")
     tmux_socket = params.get("tmux_socket")
     name = params.get("name")
-    agent_type = params.get("agent_type", "unknown")
-    agent_cmd = params.get("agent_cmd", "unknown")
-    model_type = state.normalize_model_type(params.get("model_type"), agent_type, agent_cmd)
+    raw_agent_type = params.get("agent_type")
+    raw_agent_cmd = params.get("agent_cmd")
+    raw_model_type = params.get("model_type")
     agent_id = params.get("agent_id") or str(uuid.uuid4())
     no_notify_with_send_keys = bool(params.get("no_notify_with_send_keys", False))
     no_registry = bool(params.get("no_registry", False))
@@ -118,6 +118,10 @@ def handle_register(params: dict) -> str:
         agent_name = generate_unique_agent_name(name, session, is_register=True)
 
     existing_info = state.get_agent(existing_name_for_id) if existing_name_for_id else None
+    resolved_agent_type = raw_agent_type if "agent_type" in params else (existing_info or {}).get("agent_type", "unknown")
+    resolved_agent_cmd = raw_agent_cmd if "agent_cmd" in params else (existing_info or {}).get("agent_cmd", "unknown")
+    model_type = state.normalize_model_type(raw_model_type, resolved_agent_type, resolved_agent_cmd)
+
     swarms = normalize_swarms(raw_swarms) if raw_swarms is not None else (existing_info or {}).get("swarms", [])
     state.set_agent(agent_name, {
         **(existing_info or {}),
@@ -130,19 +134,21 @@ def handle_register(params: dict) -> str:
         "waiting_approval": (existing_info or {}).get("waiting_approval", False),
         "agent_id": agent_id,
         "uuid": agent_id,
-        "agent_type": agent_type or (existing_info or {}).get("agent_type", "unknown"),
-        "agent_cmd": agent_cmd or (existing_info or {}).get("agent_cmd", "unknown"),
+        "agent_type": resolved_agent_type or (existing_info or {}).get("agent_type", "unknown"),
+        "agent_cmd": resolved_agent_cmd or (existing_info or {}).get("agent_cmd", "unknown"),
         "model_type": model_type,
         "no_notify_with_send_keys": no_notify_with_send_keys,
         "no_registry": no_registry,
         "cwd": cwd or (existing_info or {}).get("cwd"),
         "swarms": swarms,
+        "is_mailbox": False,
+        "direct_input_disabled": False,
         "last_heartbeat": time.time(),
         "recovered_at": None,
         "pending_notifications": (existing_info or {}).get("pending_notifications", [])
     })
 
-    _best_effort_update_tmux_metadata(tmux_pane, agent_name, agent_id, agent_type, agent_cmd, tmux_socket, no_notify_with_send_keys, no_registry)
+    _best_effort_update_tmux_metadata(tmux_pane, agent_name, agent_id, resolved_agent_type, resolved_agent_cmd, tmux_socket, no_notify_with_send_keys, no_registry)
     registered_info = state.get_agent(agent_name) or {}
     state.publish_event("agent_registered", agent_event_payload(agent_name, registered_info))
 

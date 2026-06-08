@@ -25,12 +25,36 @@ broccoli-comms stop        # stop Broccoli-owned windows/session state and priva
 
 Default paths/mode:
 
-- runtime: `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms`
-- tracker socket: `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms/agent-tracker.sock`
+- runtime: the configured `[paths].runtime_dir` from `$XDG_CONFIG_HOME/broccoli-comms/config.toml` when set; otherwise the CLI falls back to `$XDG_RUNTIME_DIR` (or `/tmp/$UID/broccoli-comms` if `XDG_RUNTIME_DIR` is unset)
+- tracker socket: `<runtime_dir>/agent-tracker.sock`
 - tmux mode: `default` (uses your normal tmux server and a `broccoli-comms-agents` session)
-- private tmux compatibility: set `BROCCOLI_COMMS_TMUX_MODE=private` to use `${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms/tmux.sock`
-- config: `$XDG_CONFIG_HOME/broccoli-comms/config.json`
+- private tmux compatibility: set `BROCCOLI_COMMS_TMUX_MODE=private` to use `<runtime_dir>/tmux.sock`
+- agent config: `$XDG_CONFIG_HOME/broccoli-comms/config.json`
 - logs/cache: `$XDG_CACHE_HOME/broccoli-comms`
+
+To avoid the UI and service disagreeing about the tracker socket, pin the runtime explicitly in `$XDG_CONFIG_HOME/broccoli-comms/config.toml`. Use real absolute paths; TOML values are not shell-expanded.
+
+Example for the normal XDG runtime directory:
+
+```toml
+[paths]
+runtime_dir = "/run/user/1000/broccoli-comms"
+cache_dir = "/home/alice/.cache/broccoli-comms"
+config_dir = "/home/alice/.config/broccoli-comms"
+```
+
+With that config, the tracker socket is `/run/user/1000/broccoli-comms/agent-tracker.sock`.
+
+Example for a Home Manager-managed runtime pinned under the Broccoli cache directory:
+
+```toml
+[paths]
+runtime_dir = "/home/alice/.cache/broccoli-comms/runtime"
+cache_dir = "/home/alice/.cache/broccoli-comms"
+config_dir = "/home/alice/.config/broccoli-comms"
+```
+
+With that config, the tracker socket is `/home/alice/.cache/broccoli-comms/runtime/agent-tracker.sock`.
 
 ## Install and quick start
 
@@ -258,16 +282,17 @@ Edit `$XDG_CONFIG_HOME/broccoli-comms/config.json`:
 }
 ```
 
-Or manage the same config through the CLI:
+Or manipulate config through the CLI (non-launch actions) or config files:
 
 ```sh
 broccoli-comms agent list --json
-broccoli-comms agent add main --cwd /home/user/project --command 'pi' --autostart
-broccoli-comms agent add reviewer --cwd /home/user/project --command 'pi --role reviewer' --autostart
-broccoli-comms agent focus main
-broccoli-comms agent attach main
-broccoli-comms agent restart main
+# Focus/attach/restart/remove remain available for managed windows:
+broccoli-comms agent focus reviewer
+broccoli-comms agent attach reviewer
+broccoli-comms agent restart reviewer
 broccoli-comms agent remove reviewer
+
+# For creating or broadly editing managed agents, edit ~/.config/broccoli-comms/config.json (and restart as needed).
 ```
 
 Then run:
@@ -277,9 +302,9 @@ broccoli-comms start   # reconcile autostart agents
 broccoli-comms ui      # open the TUI against the running tracker
 ```
 
-Agents added without `--autostart` remain configured but are not launched by `start`; use `broccoli-comms agent restart NAME` to launch one explicitly.
+Configured agents without `autostart: true` remain configured but are not launched by `start`; use `broccoli-comms agent restart NAME` to launch one explicitly.
 
-`start` reconciles configured agents with `"autostart": true` into the `broccoli-comms-agents` tmux session, avoids duplicate windows on repeated starts, and launches each agent through `broccoli-comms track` with the private tracker environment. By default this session is created in your normal tmux server, and an already-existing `broccoli-comms-agents` session is reused. `broccoli-comms ui` runs `agent-communicator` in the current shell and requires the tracker to already be running. `broccoli-comms stop` removes only Broccoli-owned windows plus the private tracker, leaving unrelated tmux sessions/windows alone. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/stop` to use the Broccoli-owned private tmux socket behavior with the same session name.
+`start` reconciles configured agents with `"autostart": true` into the `broccoli-comms-agents` tmux session, avoids duplicate windows on repeated starts, and launches each agent through the tracking wrapper with the private tracker environment. By default this session is created in your normal tmux server, and an already-existing `broccoli-comms-agents` session is reused. `broccoli-comms ui` runs `agent-communicator` in the current shell and requires the tracker to already be running. `broccoli-comms stop` removes only Broccoli-owned windows plus the private tracker, leaving unrelated tmux sessions/windows alone. Set `BROCCOLI_COMMS_TMUX_MODE=private` on `start/stop` to use the Broccoli-owned private tmux socket behavior with the same session name.
 
 ### Which agent launch command should I use?
 
@@ -287,21 +312,28 @@ Use the higher-level Broccoli commands for most workflows:
 
 | Use case | Command | Notes |
 | --- | --- | --- |
-| Persistent named agent that should come back on every `start`/`ui` | `broccoli-comms agent add NAME --cwd DIR --command 'COMMAND' --autostart` | Saves to Broccoli config and reconciles into the `broccoli-comms-agents` session only when autostart is true. Best for coder/reviewer teams. |
-| One-off command in the current tmux pane that should appear in Agent Communicator | `broccoli-comms track --name NAME -- COMMAND [ARGS...]` | Must be run from inside tmux. It does not create a new tmux window; it wraps the current process with Broccoli's bundled `agent-wrapper`. |
-| One-off new tmux pane/window through the lower-level tracker | `broccoli-comms agent-tracker spin DIR COMMAND [ARGS...]` | Useful for tracker-level experiments; for durable agents prefer `agent add`. |
+| Start a fresh named agent launch | `broccoli-comms run NAME -- COMMAND [ARGS...]` | Creates a workspace under `/tmp/broccoli-agents/<name>/`, writes `AGENTS.md`, and writes bootstrap payload to `bootstrap.json`. |
+| Edit and restart an already-running managed agent | `broccoli-comms agent edit NAME [--rename NEW_NAME] [--cwd DIR] [--swarm SWARM --role {main,subagent}] [--] [COMMAND [ARGS...]]` | Edit works only on a live managed agent and applies immediately by restart. |
 
-### Track an ad-hoc command in the current pane
+The public launch surface is limited to `run` and `agent edit`.
 
-Use `broccoli-comms track` when you want to run a command yourself in the current tmux pane but still have it register with Agent Communicator. It fails clearly outside tmux because there is no pane metadata to register:
+If `run` is used for tracker-level experiments, use `run` with the desired profile name and command. For existing managed-window operations, use `agent edit` to update and restart live agents.
 
-```sh
-broccoli-comms track --name my-agent -- my-agent
-broccoli-comms track --name repo-coder --cwd ~/repo -- pi
-broccoli-comms track -- /opt/agents/my-agent --flag value
-```
+### Run a new/ephemeral agent
 
-`track` starts the private tracker if needed, resolves Broccoli's bundled `agent-wrapper`, and then `exec`s it in the current terminal. `agent-wrapper` does not need to be on `PATH`. The command you run, such as `my-agent` or `pi`, must still be on `PATH` unless you pass an absolute path. If `--name` is omitted, the command basename is used as the suggested Agent Communicator name.
+- Use `broccoli-comms run` for a brand-new agent launch path that does not alter config and always gets fresh `/tmp` workspace state.
+- `run` requires a unique `name` that is not currently running; if the name already has a managed window, stop it first (or use `agent edit` for that running agent).
+- Example:
+  - `broccoli-comms run planner --cwd ~/projects/my-app -- pi --role planner`
+- This writes `AGENTS.md` and `bootstrap.json` into `/tmp/broccoli-agents/planner/<random>/`.
+
+### Edit a live managed agent
+
+- Use `broccoli-comms agent edit` **only if the agent is already running** (managed window exists).
+- Any changes are persisted to config and trigger an immediate managed-window restart.
+- Example:
+  - `broccoli-comms agent edit planner --rename planner-main --scope repo:my-app --cwd ~/projects/my-app -- pi --role planner`
+  - `broccoli-comms agent edit planner --scope repo:my-app --swarm backend-fix --role subagent --cwd ~/projects/my-app`
 
 ### Agent-tracker saved agent templates
 
@@ -369,8 +401,6 @@ Agent Communicator key highlights:
 Legacy slash commands (`/msg`, `/text`, `/text --no-submit`, `/key`) remain supported. The composer context line shows the selected target plus model badge and machine where known.
 
 `agent focus <name>` selects a running managed-agent window by tmux metadata/window id, and `agent attach <name>` attaches or switches directly to that managed window.
-
-`broccoli-comms agent-tracker spin <dir> <command> [args...]` also auto-wraps raw commands through `agent-wrapper` before creating the tmux window/session, so spun agents register, heartbeat, inherit the intended private tracker environment and tmux pane metadata, and appear in status/communicator views. Commands already starting with `agent-wrapper` are not wrapped again.
 
 `broccoli-comms agent-tracker <subcommand> [args...]` is the canonical user-facing tracker CLI. It runs the in-repo tracker control implementation against the Broccoli Comms tracker and active tmux mode, so source checkouts do not need a globally installed `agent-tracker-ctl` and commands stay pinned to the app-owned runtime.
 
@@ -510,7 +540,7 @@ Use full paths in service files because boot/login services often have a minimal
 command -v broccoli-comms
 ```
 
-Also make sure any agent commands in your config, such as `pi`, `claude`, or `codex`, are either on the service `PATH` or written as absolute paths in `broccoli-comms agent add --command ...`.
+Also make sure any agent commands in your config, such as `pi`, `claude`, or `codex`, are either on the service `PATH` or written as absolute paths in `~/.config/broccoli-comms/config.json` (or your equivalent `config.toml` paths).
 
 ### Linux systemd user services
 

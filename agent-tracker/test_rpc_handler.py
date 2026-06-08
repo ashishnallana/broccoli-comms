@@ -265,6 +265,68 @@ class TestRpcHandler(unittest.TestCase):
         set_agent_no_notify.assert_called_once_with("%9", True, "sock")
         set_agent_no_registry.assert_called_once_with("%9", True, "sock")
 
+    @mock.patch("tmux_util.send_literal_text")
+    @mock.patch("tmux_util.set_agent_no_registry")
+    @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")
+    @mock.patch("tmux_util.set_agent_cmd")
+    @mock.patch("tmux_util.set_agent_type")
+    @mock.patch("tmux_util.set_agent_name")
+    @mock.patch("tmux_util.set_pane_title")
+    @mock.patch("tmux_util.set_agent_uuid")
+    @mock.patch("tmux_util.set_agent_id")
+    def test_register_overwrites_mailbox_identity_for_live_agent(
+        self,
+        _set_agent_id,
+        _set_agent_uuid,
+        _set_pane_title,
+        _set_agent_name,
+        _set_agent_type,
+        _set_agent_cmd,
+        _set_agent_no_notify,
+        _set_agent_no_registry,
+        _send_literal_text,
+    ):
+        state.set_agent(
+            "agent-communicator",
+            {
+                "agent_id": "comm-id",
+                "uuid": "comm-id",
+                "agent_type": "agent-communicator-ui",
+                "agent_cmd": "agent-communicator",
+                "is_mailbox": True,
+                "direct_input_disabled": True,
+                "pending_notifications": ["peer-agent"],
+            },
+        )
+
+        name = rpc_handler.handle_register({
+            "session": "sess",
+            "tmux_pane": "%42",
+            "wrapper_pid": 321,
+            "tmux_socket": "sock",
+            "name": "agent-communicator",
+            "agent_type": "pi",
+            "agent_cmd": "pi",
+            "agent_id": "comm-id",
+        })
+
+        self.assertEqual(name, "agent-communicator")
+        info = state.get_agent("agent-communicator")
+        self.assertEqual(info["agent_type"], "pi")
+        self.assertEqual(info["agent_cmd"], "pi")
+        self.assertEqual(info["tmux_pane"], "%42")
+        self.assertFalse(info.get("is_mailbox", False))
+        self.assertFalse(info.get("direct_input_disabled", False))
+        self.assertEqual(info.get("pending_notifications"), ["peer-agent"])
+
+        result = rpc_handler.handle_send_input({
+            "agent_name": "agent-communicator",
+            "input_type": "text",
+            "text": "hello",
+        })
+        self.assertTrue(result["success"])
+        _send_literal_text.assert_called_once_with("%42", "hello", submit=True, socket_path="sock")
+
     @mock.patch("rpc_handler.time.time", return_value=123.0)
     @mock.patch("tmux_util.set_agent_no_registry")
     @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")

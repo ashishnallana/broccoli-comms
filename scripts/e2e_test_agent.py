@@ -2,7 +2,7 @@
 """Deterministic Broccoli Comms E2E test agent.
 
 This is intentionally a test harness agent, not a fix. It is launched through
-`broccoli-comms agent add ... --command ...` and uses the Broccoli Comms CLI for
+`broccoli-comms run ... -- <agent-cmd>` and uses the Broccoli Comms CLI for
 all tracker interactions so routing tests exercise the same surface as users.
 """
 

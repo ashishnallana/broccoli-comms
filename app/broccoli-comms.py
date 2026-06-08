@@ -666,19 +666,68 @@ def ephemeral_agent_workspace(name: str) -> str:
     return str(workspace)
 
 
-def managed_agent_launch_command(name: str, cwd: str, command: str, swarms: list[dict[str, str]] | None = None, launch_cwd: str | None = None) -> str:
+def _parse_command_for_bootstrap(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError as e:
+        raise SystemExit(f"invalid command: {e}")
+
+
+def _is_agent_wrapper_command(command: str) -> bool:
+    wrapper = wrapper_path()
+    if not command:
+        return False
+    if os.path.basename(command) == "agent-wrapper":
+        return True
+    try:
+        return os.path.isfile(command) and os.path.samefile(command, wrapper)
+    except OSError:
+        return False
+
+
+def managed_agent_launch_command(
+    name: str,
+    cwd: str,
+    command: str,
+    swarms: list[dict[str, str]] | None = None,
+    launch_cwd: str | None = None,
+    scope: str | None = None,
+) -> str:
     launch_cwd = launch_cwd or cwd
-    track_prefix = [*broccoli_comms_launcher_argv(), "track", "--name", name, "--cwd", launch_cwd]
-    for swarm in normalize_swarms(swarms or []):
-        track_prefix.extend(["--swarm", swarm["name"], "--role", swarm["role"]])
-    track_prefix.append("--")
-    return " ".join([
+    command_args = _parse_command_for_bootstrap(command)
+    normalized_swarms = normalize_swarms(swarms or [])
+    if scope:
+        bootstrap_context = str(Path(launch_cwd) / "bootstrap.json")
+        command_args = _build_bootstrap_track_command(name, cwd, scope, command_args, bootstrap_context)
+    launcher = [wrapper_path()]
+    if command_args and _is_agent_wrapper_command(command_args[0]):
+        launcher = []
+    launch_parts: list[str] = [
         *managed_track_env_assignments(),
         f"BROCCOLI_COMMS_SOURCE_CWD={shlex.quote(str(cwd))}",
         f"BROCCOLI_COMMS_EPHEMERAL_CWD={shlex.quote(str(launch_cwd))}",
-        *(shlex.quote(part) for part in track_prefix),
-        command,
-    ])
+        f"SUGGESTED_AGENT_NAME={shlex.quote(name)}",
+    ]
+    if normalized_swarms:
+        launch_parts.append(f"AGENT_SWARMS_JSON={shlex.quote(json.dumps(normalized_swarms, separators=(',', ':')))}")
+    launch_parts.extend(shlex.quote(part) for part in launcher)
+    launch_parts.extend(shlex.quote(part) for part in command_args)
+    return " ".join(launch_parts)
+
+
+def _build_bootstrap_track_command(name: str, source_cwd: str | None, scope: str | None, command: list[str], bootstrap_context: str) -> list[str]:
+    bootstrap_invocation = [*broccoli_comms_launcher_argv(), "task", "bootstrap", "--agent", name, "--json"]
+    if source_cwd:
+        bootstrap_invocation.extend(["--cwd", source_cwd])
+    if scope:
+        bootstrap_invocation.extend(["--scope", scope])
+    bootstrap_script = " ".join(shlex.quote(part) for part in bootstrap_invocation)
+    script = (
+        "set -euo pipefail; "
+        f"{bootstrap_script} > {shlex.quote(bootstrap_context)}; "
+        "exec \"$@\""
+    )
+    return ["bash", "-lc", script, "_broccoli_agent_bootstrap", *command]
 
 
 def reconcile_agents(names: set[str] | None = None, *, autostart_only: bool = False) -> list[str]:
@@ -697,7 +746,14 @@ def reconcile_agents(names: set[str] | None = None, *, autostart_only: bool = Fa
             raise SystemExit(f"configured cwd for agent {name!r} does not exist: {cwd}")
         command = spec.get("command") or "bash"
         launch_cwd = ephemeral_agent_workspace(name)
-        launch = managed_agent_launch_command(name, cwd, command, spec.get("swarms") or [], launch_cwd=launch_cwd)
+        launch = managed_agent_launch_command(
+            name,
+            cwd,
+            command,
+            spec.get("swarms") or [],
+            launch_cwd=launch_cwd,
+            scope=spec.get("scope"),
+        )
         result = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", SESSION, "-n", name, "-c", launch_cwd, launch)
         window_id = result.stdout.strip()
         if window_id:
@@ -929,34 +985,6 @@ def agent_list(args: argparse.Namespace) -> None:
     print(json.dumps(payload if args.json else payload["agents"], indent=2, sort_keys=True))
 
 
-def agent_add(args: argparse.Namespace) -> None:
-    try:
-        validate_agent_name(args.name)
-    except ValueError as e:
-        raise SystemExit(str(e))
-    cwd = os.path.abspath(os.path.expanduser(args.cwd))
-    if not os.path.isdir(cwd):
-        raise SystemExit(f"cwd does not exist: {cwd}")
-    command = args.command.strip()
-    if not command:
-        raise SystemExit("--command must not be empty")
-    cfg = load_config()
-    agents = cfg.setdefault("agents", {})
-    existing = agents.get(args.name)
-    if args.name in agents and not args.force:
-        raise SystemExit(f"agent {args.name!r} already exists; use --force to update")
-    autostart = bool(args.autostart) if args.autostart is not None else bool((existing or {}).get("autostart", False))
-    swarms = parse_swarm_args(args)
-    spec = {"cwd": cwd, "command": command, "autostart": autostart}
-    if swarms:
-        spec["swarms"] = swarms
-    elif existing and "swarms" in existing:
-        spec["swarms"] = existing.get("swarms") or []
-    agents[args.name] = spec
-    save_config(cfg)
-    print(json.dumps({"added": args.name, "config": str(paths()["config_json"]), "agent": agents[args.name]}, indent=2, sort_keys=True))
-
-
 def agent_remove(args: argparse.Namespace) -> None:
     try:
         validate_agent_name(args.name)
@@ -970,6 +998,84 @@ def agent_remove(args: argparse.Namespace) -> None:
     save_config(cfg)
     window_killed = kill_agent_window(args.name)
     print(json.dumps({"removed": args.name, "window_killed": window_killed, "agent": removed}, indent=2, sort_keys=True))
+
+
+def agent_edit(args: argparse.Namespace) -> None:
+    try:
+        validate_agent_name(args.name)
+    except ValueError as e:
+        raise SystemExit(str(e))
+
+    if not window_exists(args.name):
+        raise SystemExit(f"agent {args.name!r} is not running; agent edit only works on live agents")
+
+    cfg = load_config()
+    agents = cfg.setdefault("agents", {})
+    existing = agents.get(args.name)
+
+    if args.rename:
+        try:
+            validate_agent_name(args.rename)
+        except ValueError as e:
+            raise SystemExit(str(e))
+        if args.rename in agents:
+            raise SystemExit(f"agent target name {args.rename!r} already exists")
+
+    raw_command = _consume_post_name_launch_options(args, list(getattr(args, "command", None) or []), allow_command_flag=True, allow_edit_flags=True)
+    if raw_command and raw_command[0] == "--":
+        raw_command = raw_command[1:]
+    command_string = getattr(args, "command_string", None)
+    command = shlex.join(raw_command) if raw_command else (command_string.strip() if command_string else None)
+    if command is not None and not command.strip():
+        raise SystemExit("--command must not be empty")
+
+    source_cwd = None
+    if args.cwd is not None:
+        source_cwd = os.path.abspath(os.path.expanduser(args.cwd))
+        if not os.path.isdir(source_cwd):
+            raise SystemExit(f"cwd does not exist: {source_cwd}")
+
+    swarms = parse_swarm_args(args) if (args.swarm or args.role) else None
+    target = args.rename or args.name
+
+    spec = dict(existing or {})
+    if command is not None:
+        spec["command"] = command
+    if source_cwd is not None:
+        spec["cwd"] = source_cwd
+    if swarms is not None:
+        spec["swarms"] = swarms
+    if args.scope is not None:
+        spec["scope"] = args.scope
+    if args.autostart is not None:
+        spec["autostart"] = args.autostart
+
+    if not spec.get("command"):
+        raise SystemExit("agent edit requires --command when the agent is not already configured with a command")
+    if not spec.get("cwd"):
+        raise SystemExit("agent edit requires --cwd when the agent is not already configured with a source cwd")
+    if target in agents and target != args.name:
+        raise SystemExit(f"agent {target!r} already exists")
+
+    if existing is not None and target != args.name:
+        del agents[args.name]
+    elif target != args.name and args.name in agents:
+        del agents[args.name]
+
+    agents[target] = spec
+    save_config(cfg)
+
+    ensure_tracker()
+    ensure_tmux()
+    window_killed = kill_agent_window(args.name)
+    launched = reconcile_agents({target})
+    print(json.dumps({
+        "edited": args.name,
+        "name": target,
+        "window_killed": window_killed,
+        "launched": target in launched,
+        "agent": spec,
+    }, indent=2, sort_keys=True))
 
 
 def agent_restart(args: argparse.Namespace) -> None:
@@ -1026,129 +1132,102 @@ def agent_attach(args: argparse.Namespace) -> None:
     exec_tmux_interactive(window["window_id"])
 
 
-def _derive_track_name(command: list[str], cwd: str | None = None) -> str:
-    basename = Path(command[0]).name if command else ""
-    candidate = re.sub(r"[^A-Za-z0-9_.-]", "-", basename).strip("-._")
-    if candidate:
-        return candidate
-    if cwd:
-        cwd_name = re.sub(r"[^A-Za-z0-9_.-]", "-", Path(cwd).resolve().name).strip("-._")
-        if cwd_name:
-            return cwd_name
-    return "agent"
+def _consume_post_name_launch_options(args: argparse.Namespace, command: list[str], *, allow_command_flag: bool = False, allow_edit_flags: bool = False) -> list[str]:
+    """Support `run NAME --cwd DIR -- cmd` despite argparse REMAINDER.
 
-
-def _resolve_command(command: str, env: dict[str, str]) -> str | None:
-    if not command:
-        return None
-    if os.path.isabs(command) or os.sep in command:
-        path = os.path.abspath(os.path.expanduser(command))
-        return path if os.path.exists(path) else None
-    return shutil.which(command, path=env.get("PATH"))
-
-
-def unwrap_track_wrapper_command(command: list[str], env: dict[str, str]) -> list[str]:
-    """Avoid nested Broccoli tracking for commands already wrapped with `broccoli-comms track`.
-
-    Some installed agent commands, such as the local `pi` launcher, are shell
-    wrappers that already exec `broccoli-comms track --name ... -- REAL_CMD`.
-    Running `broccoli-comms track -- pi` would otherwise stack two wrappers in
-    one pane and can create name collisions such as `pi` and `pi-1`.
+    argparse stops option parsing once a REMAINDER positional is reached.  The
+    public launch UX intentionally reads as `run NAME [options] -- COMMAND`, so
+    normalize any leading command-tail options back onto the namespace before
+    dispatching.
     """
-    if not command:
-        return command
-    resolved = _resolve_command(command[0], env)
-    if not resolved or not os.path.isfile(resolved):
-        return command
-    try:
-        with open(resolved, "r", encoding="utf-8") as f:
-            lines = f.read(8192).splitlines()
-    except (OSError, UnicodeDecodeError):
-        return command
-    for line in lines:
-        stripped = line.strip()
-        if not stripped.startswith("exec ") or "broccoli-comms" not in stripped or " track " not in stripped:
+    remaining = list(command or [])
+    swarms = list(getattr(args, "swarm", None) or [])
+    roles = list(getattr(args, "role", None) or [])
+    idx = 0
+    while idx < len(remaining):
+        token = remaining[idx]
+        if token == "--":
+            idx += 1
+            break
+        if allow_edit_flags and token in {"--autostart", "--no-autostart"}:
+            args.autostart = (token == "--autostart")
+            idx += 1
             continue
-        try:
-            parts = shlex.split(stripped)
-        except ValueError:
+        if token in ({"--cwd", "--scope", "--swarm", "--role"} | ({"--command"} if allow_command_flag else set()) | ({"--rename"} if allow_edit_flags else set())):
+            if idx + 1 >= len(remaining):
+                raise SystemExit(f"{token} requires a value")
+            value = remaining[idx + 1]
+            if token == "--cwd":
+                args.cwd = value
+            elif token == "--scope":
+                args.scope = value
+            elif token == "--swarm":
+                swarms.append(value)
+            elif token == "--role":
+                roles.append(value)
+            elif token == "--command":
+                args.command_string = value
+            elif token == "--rename":
+                args.rename = value
+            idx += 2
             continue
-        track_index = None
-        for idx in range(1, len(parts)):
-            if parts[idx] == "track" and Path(parts[idx - 1]).name == "broccoli-comms":
-                track_index = idx
-                break
-        if track_index is None:
-            continue
-        try:
-            separator_index = parts.index("--", track_index + 1)
-        except ValueError:
-            continue
-        inner = parts[separator_index + 1:]
-        if not inner:
-            continue
-        inner = [part for part in inner if part not in {"$@", "${@}", "$*", "${*}"}]
-        if not inner or inner[0].startswith("$"):
-            continue
-        return [*inner, *command[1:]]
-    return command
+        break
+    args.swarm = swarms or None
+    args.role = roles or None
+    return remaining[idx:]
 
 
-def track(args: argparse.Namespace) -> None:
-    command = list(getattr(args, "command", None) or [])
+def run(args: argparse.Namespace) -> None:
+    command = _consume_post_name_launch_options(args, list(getattr(args, "command", None) or []))
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        raise SystemExit("track requires a command after --")
+        raise SystemExit("run requires a command after --")
 
-    swarms = parse_swarm_args(args)
-
-    if os.environ.get("BROCCOLI_COMMS_TRACK_ACTIVE") == "1" or os.environ.get("AGENT_WRAPPER_DEPTH", "0") != "0":
-        if args.cwd:
-            cwd = os.path.abspath(os.path.expanduser(args.cwd))
-            if not os.path.isdir(cwd):
-                raise SystemExit(f"track cwd does not exist or is not a directory: {cwd}")
-            os.chdir(cwd)
-        os.execvpe(command[0], command, os.environ.copy())
-
-    if not os.environ.get("TMUX") or not os.environ.get("TMUX_PANE"):
-        raise SystemExit("broccoli-comms track must be run from within a tmux pane so the agent can be registered. Start or attach to tmux, then run the command again.")
-
-    original_command = list(command)
-    track_env = base_env()
-    command = unwrap_track_wrapper_command(command, track_env)
-
-    cwd = None
-    if args.cwd:
-        cwd = os.path.abspath(os.path.expanduser(args.cwd))
-        if not os.path.isdir(cwd):
-            raise SystemExit(f"track cwd does not exist or is not a directory: {cwd}")
-
-    name = args.name or _derive_track_name(original_command, cwd)
     try:
-        validate_agent_name(name)
+        validate_agent_name(args.name)
     except ValueError as e:
         raise SystemExit(str(e))
 
-    wrapper = wrapper_path()
-    if not os.path.exists(wrapper) or not os.access(wrapper, os.X_OK):
-        raise SystemExit(f"agent-wrapper not found or not executable: {wrapper}")
+    source_cwd = os.path.abspath(os.path.expanduser(args.cwd)) if args.cwd else os.getcwd()
+    if not os.path.isdir(source_cwd):
+        raise SystemExit(f"run source-cwd does not exist or is not a directory: {source_cwd}")
 
     ensure_tracker()
-    env = track_env
-    if os.environ.get("TMUX"):
-        env.pop("AGENT_TRACKER_TMUX_SOCKET", None)
-        env.pop("BROCCOLI_COMMS_TMUX_SOCKET", None)
-    for key in ("TMUX", "TMUX_PANE"):
-        if key in os.environ:
-            env[key] = os.environ[key]
-    env["SUGGESTED_AGENT_NAME"] = name
-    env.pop("AGENT_SWARMS_JSON", None)
-    if swarms:
-        env["AGENT_SWARMS_JSON"] = json.dumps(swarms, separators=(",", ":"))
-    if cwd:
-        os.chdir(cwd)
-    os.execvpe(wrapper, [wrapper, *command], env)
+    ensure_tmux()
+    if window_exists(args.name):
+        raise SystemExit(f"agent {args.name!r} is already running; stop or edit it first")
+
+    launch_cwd = ephemeral_agent_workspace(args.name)
+    context_path = str(Path(launch_cwd) / "bootstrap.json")
+    if Path(context_path).exists():
+        Path(context_path).unlink()
+
+    swarms = parse_swarm_args(args)
+    wrapped = _build_bootstrap_track_command(args.name, source_cwd, args.scope, command, context_path)
+    wrapped_cmd = shlex.join(wrapped)
+    launch = managed_agent_launch_command(
+        args.name,
+        source_cwd,
+        wrapped_cmd,
+        swarms,
+        launch_cwd=launch_cwd,
+    )
+
+    result = tmux(
+        "new-window", "-d", "-P", "-F", "#{window_id}\t#{pane_id}",
+        "-t", SESSION,
+        "-n", args.name,
+        "-c", launch_cwd,
+        launch,
+    )
+    window_and_pane = result.stdout.strip().split("\t", 1)
+    if not window_and_pane:
+        raise SystemExit("failed to create run window")
+    window_id = window_and_pane[0]
+    pane_id = window_and_pane[1] if len(window_and_pane) > 1 else ""
+    tmux("set-option", "-w", "-t", window_id, MANAGED_AGENT_OPTION, args.name)
+    print(json.dumps({"started": args.name, "window_id": window_id, "pane_id": pane_id, "ephemeral_cwd": launch_cwd, "bootstrap_context": context_path}, indent=2, sort_keys=True))
 
 
 def stop(_args: argparse.Namespace) -> None:
@@ -2259,7 +2338,6 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "agent-tracker":
         agent_tracker(argparse.Namespace(tracker_args=sys.argv[2:]))
         return
-
     parser = argparse.ArgumentParser(description="Standalone Broccoli Comms runtime")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("start").set_defaults(func=start)
@@ -2274,13 +2352,14 @@ def main() -> None:
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON doctor results")
     doctor_parser.set_defaults(func=doctor)
 
-    track_parser = sub.add_parser("track", help="Run a command through agent-wrapper so it appears in Agent Communicator")
-    track_parser.add_argument("--name", help="Suggested registered agent name; defaults to command basename")
-    track_parser.add_argument("--cwd", help="Working directory for the command")
-    track_parser.add_argument("--swarm", action="append", help="Swarm membership name; repeat with --role for multiple swarms")
-    track_parser.add_argument("--role", action="append", choices=sorted(VALID_SWARM_ROLES), help="Swarm role for the preceding --swarm")
-    track_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to run after --")
-    track_parser.set_defaults(func=track)
+    run_parser = sub.add_parser("run", help="Run a named agent command in a fresh /tmp workspace with bootstrap context")
+    run_parser.add_argument("name", help="Agent profile name")
+    run_parser.add_argument("--cwd", help="Source working directory (defaults to current directory)")
+    run_parser.add_argument("--scope", help="Optional task scope filter for bootstrap")
+    run_parser.add_argument("--swarm", action="append", help="Swarm membership name; repeat with --role for multiple swarms")
+    run_parser.add_argument("--role", action="append", choices=sorted(VALID_SWARM_ROLES), help="Swarm role for the preceding --swarm")
+    run_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to run after --")
+    run_parser.set_defaults(func=run)
 
     agent_tracker_parser = sub.add_parser("agent-tracker", help="Run agent-tracker-ctl against the Broccoli Comms private runtime", add_help=False)
     agent_tracker_parser.add_argument("tracker_args", nargs=argparse.REMAINDER)
@@ -2546,17 +2625,19 @@ def main() -> None:
     agent_list_parser = agent_sub.add_parser("list", help="List configured agents")
     agent_list_parser.add_argument("--json", action="store_true", help="Include config/runtime metadata in JSON output")
     agent_list_parser.set_defaults(func=agent_list)
-    agent_add_parser = agent_sub.add_parser("add", help="Add or update a configured agent")
-    agent_add_parser.add_argument("name", help="Agent/window name")
-    agent_add_parser.add_argument("--cwd", required=True, help="Working directory")
-    agent_add_parser.add_argument("--command", required=True, help="Command to run through broccoli-comms track")
-    agent_add_parser.add_argument("--swarm", action="append", help="Swarm membership name; repeat with --role for multiple swarms")
-    agent_add_parser.add_argument("--role", action="append", choices=sorted(VALID_SWARM_ROLES), help="Swarm role for the preceding --swarm")
-    autostart_group = agent_add_parser.add_mutually_exclusive_group()
-    autostart_group.add_argument("--autostart", dest="autostart", action="store_true", default=None, help="Launch this agent during broccoli-comms start/ui")
-    autostart_group.add_argument("--no-autostart", dest="autostart", action="store_false", help="Keep this agent configured but do not launch it during start/ui")
-    agent_add_parser.add_argument("--force", action="store_true", help="Update an existing agent")
-    agent_add_parser.set_defaults(func=agent_add)
+    agent_edit_parser = agent_sub.add_parser("edit", help="Update and restart a live managed agent")
+    agent_edit_parser.add_argument("name", help="Existing live managed agent name")
+    agent_edit_parser.add_argument("--rename", help="Rename the managed agent")
+    agent_edit_parser.add_argument("--cwd", help="Source working directory")
+    agent_edit_parser.add_argument("--scope", help="Bootstrap scope for subsequent restarts")
+    agent_edit_parser.add_argument("--command", dest="command_string", help="Replacement command string")
+    agent_edit_parser.add_argument("--swarm", action="append", help="Swarm membership name; repeat with --role for multiple swarms")
+    agent_edit_parser.add_argument("--role", action="append", choices=sorted(VALID_SWARM_ROLES), help="Swarm role for the preceding --swarm")
+    autostart_group = agent_edit_parser.add_mutually_exclusive_group()
+    autostart_group.add_argument("--autostart", dest="autostart", action="store_true", help="Enable launch during broccoli-comms start")
+    autostart_group.add_argument("--no-autostart", dest="autostart", action="store_false", help="Disable launch during broccoli-comms start")
+    agent_edit_parser.add_argument("command", nargs=argparse.REMAINDER, help="Replacement command to run after --")
+    agent_edit_parser.set_defaults(func=agent_edit)
     agent_remove_parser = agent_sub.add_parser("remove", help="Remove a configured agent and stop its managed window if running")
     agent_remove_parser.add_argument("name", help="Agent/window name")
     agent_remove_parser.set_defaults(func=agent_remove)

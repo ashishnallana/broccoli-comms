@@ -41,7 +41,7 @@ func TestSwarmMissingMainWarningRenders(t *testing.T) {
 func TestSwarmEmptyStateRendersSetupGuidance(t *testing.T) {
 	m := model{mode: swarmView}
 	view := strings.Join(m.messageLinesForWidth(100), "\n")
-	for _, want := range []string{"No swarms found", "--swarm", "--role", "broccoli-comms track"} {
+	for _, want := range []string{"No swarms found", "--swarm", "--role", "broccoli-comms run"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("swarm empty state missing %q:\n%s", want, view)
 		}
