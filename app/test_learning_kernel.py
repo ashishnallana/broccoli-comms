@@ -330,6 +330,99 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertEqual(params["metadata"]["event_seq_at_submission"], approval["event_seq_at_submission"])
             self.assertEqual(params["metadata"]["source"], "system/task-kernel")
 
+    def test_memory_validated_task_lifecycle_idempotency_and_bootstrap(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="memory", assigned_agent="a", scope="project:x")
+            k.mark_result(task["task_id"], "good")
+            first = k.memory_propose(type="fact", scope="project:x", subject_agent="a", title="Endpoint", body="Use /latest", source_task_id=task["task_id"], proposed_by="a", idempotency_key="m1")
+            retry = k.memory_propose(type="fact", scope="project:x", subject_agent="a", title="Endpoint", body="Use /latest", source_task_id=task["task_id"], proposed_by="a", idempotency_key="m1")
+            self.assertTrue(retry["idempotent"])
+            events = [e for e in k.events(subject_id=first["memory"]["memory_id"]) if e["event_type"] == "memory_proposed"]
+            self.assertEqual(len(events), 1)
+            approved = k.memory_approve(first["memory"]["memory_id"], expected_version=first["memory"]["version"])
+            self.assertEqual(approved["memory"]["status"], "active")
+            self.assertIsNotNone(approved["memory"].get("source_event_seq"))
+            boot = k.memory_for_bootstrap(agent="a", scope="project:x")
+            self.assertEqual([m["memory_id"] for m in boot["records"]], [first["memory"]["memory_id"]])
+
+    def test_memory_unvalidated_immutable_stale_and_hidden_statuses(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="memory", assigned_agent="a", scope="project:x")
+            mem = k.memory_propose(type="habit", scope="project:x", subject_agent="a", title="Tests", body="Run tests", source_task_id=task["task_id"], proposed_by="a")
+            with self.assertRaisesRegex(ValueError, "validated-good"):
+                k.memory_approve(mem["memory"]["memory_id"], expected_version=mem["memory"]["version"])
+            with self.assertRaisesRegex(ValueError, "immutable"):
+                k.memory_propose(type="fact", title="No", body="No", source_task_id=task["task_id"], proposed_by="imm", non_learning=True)
+            with self.assertRaisesRegex(ValueError, "trusted memory actor"):
+                k.memory_propose(type="habit", title="Manual", body="Manual", trusted_manual=True, proposed_by="agent")
+            with self.assertRaisesRegex(ValueError, "trusted memory actor"):
+                k.memory_approve(mem["memory"]["memory_id"], actor="agent")
+            rejected = k.memory_reject(mem["memory"]["memory_id"], expected_version=mem["memory"]["version"])
+            self.assertEqual(rejected["memory"]["status"], "rejected")
+            self.assertEqual(k.memory_for_bootstrap(agent="a", scope="project:x")["records"], [])
+            active_task = k.task_create(title="good", assigned_agent="a", scope="project:x")
+            k.mark_result(active_task["task_id"], "good")
+            active = k.memory_propose(type="fact", scope="project:x", subject_agent="a", title="A", body="A", source_task_id=active_task["task_id"], proposed_by="a")
+            with self.assertRaisesRegex(ValueError, "stale"):
+                k.memory_approve(active["memory"]["memory_id"], expected_version=99)
+
+    def test_memory_budget_limit_and_revoke_cleanup_flow(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp), mock.patch.object(broccoli.learning_kernel_module, "MEMORY_LIMITS", {**broccoli.learning_kernel_module.MEMORY_LIMITS, "max_active_per_agent_fact": 1}):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="good", assigned_agent="a")
+            k.mark_result(task["task_id"], "good")
+            one = k.memory_propose(type="fact", subject_agent="a", title="one", body="one", source_task_id=task["task_id"], proposed_by="a")
+            two = k.memory_propose(type="fact", subject_agent="a", title="two", body="two", source_task_id=task["task_id"], proposed_by="a")
+            k.memory_approve(one["memory"]["memory_id"], expected_version=one["memory"]["version"])
+            blocked = k.memory_approve(two["memory"]["memory_id"], expected_version=two["memory"]["version"])
+            self.assertTrue(blocked["limit_exceeded"])
+            self.assertEqual(blocked["stale_candidates"][0]["memory_id"], one["memory"]["memory_id"])
+            k.memory_revoke(one["memory"]["memory_id"], expected_version=2)
+            approved = k.memory_approve(two["memory"]["memory_id"], expected_version=two["memory"]["version"])
+            self.assertEqual(approved["memory"]["status"], "active")
+
+    def test_memory_expertise_constraints_and_bootstrap_limits(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp), mock.patch.object(broccoli.learning_kernel_module, "MEMORY_LIMITS", {**broccoli.learning_kernel_module.MEMORY_LIMITS, "bootstrap_max_records": 1, "bootstrap_max_body_chars_per_record": 5, "bootstrap_max_total_chars": 100}):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="good", assigned_agent="a", scope="project:x")
+            k.mark_result(task["task_id"], "good")
+            with self.assertRaisesRegex(ValueError, "expertise requires"):
+                k.memory_propose(type="expertise", scope="global", title="Expert", body="bounded", source_task_id=task["task_id"], proposed_by="a")
+            with self.assertRaisesRegex(ValueError, "score"):
+                k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="Expert", body="bounded", source_task_id=task["task_id"], proposed_by="a", metadata={"score": 10})
+            mem = k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="Expert", body="abcdef", source_task_id=task["task_id"], proposed_by="a")
+            k.memory_approve(mem["memory"]["memory_id"], expected_version=mem["memory"]["version"])
+            boot = k.memory_for_bootstrap(agent="a", scope="project:x")
+            self.assertEqual(len(boot["records"]), 1)
+            self.assertEqual(boot["records"][0]["body"], "abcde")
+            self.assertTrue(boot["truncated"])
+
+    def test_memory_stale_idempotent_transition_and_expertise_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="good", assigned_agent="a", scope="project:x")
+            k.mark_result(task["task_id"], "good")
+            mem = k.memory_propose(type="fact", subject_agent="a", title="A", body="A", source_task_id=task["task_id"], proposed_by="a")
+            active = k.memory_approve(mem["memory"]["memory_id"], expected_version=mem["memory"]["version"])
+            with self.assertRaisesRegex(ValueError, "stale"):
+                k.memory_approve(mem["memory"]["memory_id"], expected_version=mem["memory"]["version"])
+            revoked = k.memory_revoke(active["memory"]["memory_id"], reason="old", expected_version=active["memory"]["version"])
+            self.assertTrue(k.memory_revoke(active["memory"]["memory_id"], reason="old", expected_version=revoked["memory"]["version"])["idempotent"])
+            with self.assertRaisesRegex(ValueError, "stale"):
+                k.memory_revoke(active["memory"]["memory_id"], expected_version=active["memory"]["version"])
+            with self.assertRaisesRegex(ValueError, "conflict"):
+                k.memory_revoke(active["memory"]["memory_id"], reason="different", expected_version=revoked["memory"]["version"])
+            bad_task = k.task_create(title="bad", assigned_agent="a", scope="project:x")
+            with self.assertRaisesRegex(ValueError, "validated-good"):
+                exp = k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"evidence_task_ids": [bad_task["task_id"]]})
+                k.memory_approve(exp["memory"]["memory_id"], expected_version=exp["memory"]["version"])
+            with self.assertRaisesRegex(ValueError, "metadata"):
+                k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"nested": {"Score": 1}})
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"extra": "no"})
+
 
 if __name__ == "__main__":
     unittest.main()

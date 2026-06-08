@@ -27,6 +27,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import learning_kernel as learning_kernel_module
 from learning_kernel import LearningKernel, agent_contract, parse_csv, parse_duration_seconds
 
 def repo_root() -> Path:
@@ -1945,7 +1946,8 @@ def task_bootstrap(args: argparse.Namespace) -> None:
     payload = learning_kernel().task_next(agent=agent, scope=args.scope, include_profile=True)
     task = payload.get("task") if isinstance(payload, dict) else None
     state = learning_kernel().state_show(task["task_id"], agent) if task else None
-    payload.update({"state": state, "agents_md": agent_contract(agent, args.instance, cwd, agent_contract_template())})
+    mem = learning_kernel().memory_for_bootstrap(agent=agent, scope=(task or {}).get("scope") or args.scope)
+    payload.update({"state": state, "memory": mem["records"], "memory_meta": {"truncated": mem["truncated"], "omitted_count": mem["omitted_count"]}, "agents_md": agent_contract(agent, args.instance, cwd, agent_contract_template())})
     conflicts = duplicate_profile_instances(agent)
     if conflicts:
         payload["profile_conflict"] = {"agent": agent, "instances": conflicts, "message": "duplicate same-profile instances detected; parallel different task chains are allowed, but same-chain queue claiming should be coordinator-resolved"}
@@ -2005,6 +2007,108 @@ def user_profile_show(args: argparse.Namespace) -> None:
         print(f"\n> Warning: {profile['warning']}")
     else:
         _print_payload(profile, True)
+
+
+def verified_memory_runtime_identity() -> dict:
+    env_identity_present = any(os.environ.get(k) for k in ("AGENT_NAME", "AGENT_ID", "AGENT_UUID"))
+    try:
+        who = tracker_rpc("whoami", {})
+    except RuntimeError as e:
+        if "not identified" not in str(e).lower():
+            raise SystemExit("verified memory actor required")
+        who = None
+        tracker_reachable_not_identified = True
+    else:
+        tracker_reachable_not_identified = False
+    if who is None and not tracker_reachable_not_identified:
+        # tracker_rpc returns None for socket/connectivity errors. Never treat an
+        # unreachable tracker as proof that the caller is a local human.
+        raise SystemExit("verified memory actor required")
+    if isinstance(who, dict) and who.get("name"):
+        return {"registered": True, "name": str(who["name"]), "instance": who.get("agent_id") or who.get("uuid")}
+    if env_identity_present:
+        raise SystemExit("verified memory actor required")
+    return {"registered": False, "name": "user", "instance": None}
+
+
+def trusted_memory_actor_from_runtime() -> str:
+    configured = get_toml_config("learning", "trusted_memory_actors", []) or []
+    trusted = {str(item) for item in configured if isinstance(item, str)} if isinstance(configured, list) else set()
+    ident = verified_memory_runtime_identity()
+    if ident["registered"]:
+        name = ident["name"]
+        if name in trusted:
+            return name
+        raise SystemExit("trusted memory actor required")
+    # Only a process that is not identified by tracker peer-credential/process-tree
+    # metadata is treated as the local human/coordinator path.
+    return "user"
+
+
+def memory_propose(args: argparse.Namespace) -> None:
+    try:
+        ident = verified_memory_runtime_identity()
+        agent = ident["name"] if ident["registered"] else (args.agent or "user")
+        instance = ident["instance"] if ident["registered"] else args.instance
+        trusted_actor = trusted_memory_actor_from_runtime() if args.trusted_manual else None
+        if args.trusted_manual:
+            agent = trusted_actor
+            instance = ident["instance"] if ident["registered"] else None
+        metadata = json.loads(args.metadata_json) if args.metadata_json else {}
+        payload = learning_kernel().memory_propose(
+            type=args.type, scope=args.scope, subject_agent=args.subject_agent, title=args.title, body=args.body,
+            source_task_id=args.source_task, trusted_manual=args.trusted_manual, tags=args.tag, metadata=metadata,
+            idempotency_key=args.idempotency_key, proposed_by=agent, proposed_by_instance=instance,
+            trusted_actor=trusted_actor, non_learning=immutable_learning_instance(agent, instance),
+        )
+    except (ValueError, json.JSONDecodeError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def memory_approve(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().memory_approve(args.memory_id, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+    except (KeyError, ValueError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def memory_reject(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().memory_reject(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+    except (KeyError, ValueError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def memory_revoke(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().memory_revoke(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+    except (KeyError, ValueError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def memory_list(args: argparse.Namespace) -> None:
+    _print_payload(learning_kernel().memory_list(scope=args.scope, type=args.type, status=args.status, agent=args.agent), True)
+
+
+def memory_search(args: argparse.Namespace) -> None:
+    _print_payload(learning_kernel().memory_search(args.query, scope=args.scope), True)
+
+
+def memory_show(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().memory_show(args.memory_id)
+    except KeyError:
+        raise SystemExit(f"memory not found: {args.memory_id}")
+    _print_payload(payload, True)
+
+
+def memory_budget(args: argparse.Namespace) -> None:
+    agent = args.agent or os.environ.get("AGENT_NAME") or "user"
+    _print_payload(learning_kernel().memory_budget(agent=agent, scope=args.scope), True)
 
 
 def _parse_discoveries(values: list[str] | None) -> list[dict[str, str]]:
@@ -2315,6 +2419,62 @@ def main() -> None:
     user_profile_show_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
     user_profile_show_parser.add_argument("--json", action="store_true")
     user_profile_show_parser.set_defaults(func=user_profile_show)
+
+    memory = sub.add_parser("memory", help="Manage durable approved memory")
+    memory_sub = memory.add_subparsers(dest="memory_command", required=True)
+    memory_propose_parser = memory_sub.add_parser("propose")
+    memory_propose_parser.add_argument("--type", required=True, choices=["fact", "habit", "episode", "expertise"])
+    memory_propose_parser.add_argument("--scope", default="global")
+    memory_propose_parser.add_argument("--subject-agent")
+    memory_propose_parser.add_argument("--title", required=True)
+    memory_propose_parser.add_argument("--body", required=True)
+    memory_propose_parser.add_argument("--source-task")
+    memory_propose_parser.add_argument("--trusted-manual", action="store_true")
+    memory_propose_parser.add_argument("--agent")
+    memory_propose_parser.add_argument("--instance")
+    memory_propose_parser.add_argument("--idempotency-key")
+    memory_propose_parser.add_argument("--tag", action="append")
+    memory_propose_parser.add_argument("--metadata-json", help="JSON object metadata; expertise supports task_family/tools/evidence_task_ids/validation_count/last_validated_at/known_limits")
+    memory_propose_parser.add_argument("--json", action="store_true")
+    memory_propose_parser.set_defaults(func=memory_propose)
+    memory_approve_parser = memory_sub.add_parser("approve")
+    memory_approve_parser.add_argument("memory_id")
+    memory_approve_parser.add_argument("--expected-version", type=int)
+    memory_approve_parser.add_argument("--json", action="store_true")
+    memory_approve_parser.set_defaults(func=memory_approve)
+    memory_reject_parser = memory_sub.add_parser("reject")
+    memory_reject_parser.add_argument("memory_id")
+    memory_reject_parser.add_argument("--reason")
+    memory_reject_parser.add_argument("--expected-version", type=int)
+    memory_reject_parser.add_argument("--json", action="store_true")
+    memory_reject_parser.set_defaults(func=memory_reject)
+    memory_revoke_parser = memory_sub.add_parser("revoke")
+    memory_revoke_parser.add_argument("memory_id")
+    memory_revoke_parser.add_argument("--reason")
+    memory_revoke_parser.add_argument("--expected-version", type=int)
+    memory_revoke_parser.add_argument("--json", action="store_true")
+    memory_revoke_parser.set_defaults(func=memory_revoke)
+    memory_list_parser = memory_sub.add_parser("list")
+    memory_list_parser.add_argument("--scope")
+    memory_list_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise"])
+    memory_list_parser.add_argument("--status", choices=["pending", "active", "rejected", "revoked", "superseded"])
+    memory_list_parser.add_argument("--agent")
+    memory_list_parser.add_argument("--json", action="store_true")
+    memory_list_parser.set_defaults(func=memory_list)
+    memory_search_parser = memory_sub.add_parser("search")
+    memory_search_parser.add_argument("--query", required=True)
+    memory_search_parser.add_argument("--scope")
+    memory_search_parser.add_argument("--json", action="store_true")
+    memory_search_parser.set_defaults(func=memory_search)
+    memory_show_parser = memory_sub.add_parser("show")
+    memory_show_parser.add_argument("memory_id")
+    memory_show_parser.add_argument("--json", action="store_true")
+    memory_show_parser.set_defaults(func=memory_show)
+    memory_budget_parser = memory_sub.add_parser("budget")
+    memory_budget_parser.add_argument("--agent")
+    memory_budget_parser.add_argument("--scope")
+    memory_budget_parser.add_argument("--json", action="store_true")
+    memory_budget_parser.set_defaults(func=memory_budget)
 
     events = sub.add_parser("events", help="Query append-only task/state event log")
     events_sub = events.add_subparsers(dest="events_command", required=True)
