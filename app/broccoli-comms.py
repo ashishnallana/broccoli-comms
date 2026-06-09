@@ -761,6 +761,7 @@ def managed_agent_launch_command(
     launch_cwd: str | None = None,
     scope: str | None = None,
     immutable: bool = False,
+    skills_root_dir: str | None = None,
 ) -> str:
     launch_cwd = launch_cwd or cwd
     command_args = _parse_command_for_bootstrap(command)
@@ -785,6 +786,8 @@ def managed_agent_launch_command(
         f"AGENT_CMD={shlex.quote(actual_agent_cmd)}",
         f"AGENT_MODEL_TYPE={shlex.quote(actual_agent_cmd)}",
     ]
+    if skills_root_dir:
+        launch_parts.append(f"BROCCOLI_SKILLS_ROOT_DIR={shlex.quote(skills_root_dir)}")
     if immutable:
         launch_parts.append("BROCCOLI_COMMS_IMMUTABLE_INSTANCE=1")
         launch_parts.append("BROCCOLI_COMMS_NON_LEARNING=1")
@@ -1586,6 +1589,20 @@ def run(args: argparse.Namespace) -> None:
     if not os.path.isdir(source_cwd):
         raise SystemExit(f"run source-cwd does not exist or is not a directory: {source_cwd}")
 
+    skills_root_dir = None
+    if command:
+        provider_alias = command[0]
+        provider_cfg = get_toml_config("providers", provider_alias, {})
+        if provider_cfg:
+            cmd_override = provider_cfg.get("cmd", provider_alias)
+            default_args = provider_cfg.get("defaultArgs", [])
+            if isinstance(default_args, str):
+                import shlex
+                default_args = shlex.split(default_args)
+            command = [cmd_override] + default_args + command[1:]
+            if "skillsRootDir" in provider_cfg:
+                skills_root_dir = os.path.abspath(os.path.join(source_cwd, provider_cfg["skillsRootDir"]))
+
     ensure_tracker()
     ensure_tmux()
     if window_exists(args.name):
@@ -1609,6 +1626,7 @@ def run(args: argparse.Namespace) -> None:
         swarms,
         launch_cwd=launch_cwd,
         immutable=immutable,
+        skills_root_dir=skills_root_dir,
     )
 
     result = tmux(
@@ -2508,7 +2526,11 @@ def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dic
         files.append(str(target))
     for mem in by_type["skill"]:
         skill_name = safe_context_name(str(mem.get("title") or mem.get("memory_id") or "skill"))
-        target = path / "skill" / skill_name / "SKILLS.md"
+        skills_override = os.environ.get("BROCCOLI_SKILLS_ROOT_DIR")
+        if skills_override:
+            target = Path(skills_override) / skill_name / "SKILL.md"
+        else:
+            target = path / "skill" / skill_name / "SKILLS.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(_markdown_memory_list("Skill", [mem]), encoding="utf-8")
         files.append(str(target))

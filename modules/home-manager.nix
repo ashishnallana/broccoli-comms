@@ -245,6 +245,22 @@ in {
         [core]
         enable_reliable_send_keys = ${if cfg.tracker.enableReliableSendKeys then "true" else "false"}
 
+        [providers.jetski]
+        cmd = "/google/bin/releases/jetski-devs/tools/cli"
+        skillsRootDir = "_agents"
+
+        [providers.pi]
+        cmd = "/google/bin/releases/jetski-devs/tools/cli"
+        skillsRootDir = "_agents"
+
+        [providers.codex]
+        cmd = "/google/bin/releases/jetski-devs/tools/cli"
+        skillsRootDir = "_agents"
+
+        [providers.claude]
+        cmd = "/google/bin/releases/jetski-devs/tools/cli"
+        skillsRootDir = "_agents"
+
       '';
     })
 
