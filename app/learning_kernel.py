@@ -1041,9 +1041,10 @@ Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 
 ## Required startup
 1. If present in the working directory, read generated `memory.md`, `habits.md`, and `expertise.md`; bootstrap-generated `AGENTS.md` may provide absolute paths for these files and a concise list of available skills.
-2. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json` to check whether any pending/ready task is assigned.
-3. If a task is returned, run `broccoli-comms state show --task <task_id> --agent {agent} --json`, then start working on that task unless it is blocked or requires clarification.
-4. If no task is ready, stand by and do not invent work.
+2. Treat active records in `habits.md` as retained operating instructions for this and future turns. Re-check them before task completion/review transitions; do not drop them after the first response.
+3. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json` to check whether any pending/ready task is assigned.
+4. If a task is returned, run `broccoli-comms state show --task <task_id> --agent {agent} --json`, then start working on that task unless it is blocked or requires clarification.
+5. If no task is ready, stand by and do not invent work.
 
 ## Checkpoint and discovery rules
 - Update WorkingState when starting, blocking, requesting review, finishing, or discovering reusable facts.

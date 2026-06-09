@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -66,6 +67,32 @@ func TestLoadMemoryApprovalsUsesApprovalsBackend(t *testing.T) {
 	want := []string{"memory", "approvals", "--json"}
 	if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
 		t.Fatalf("load args = %#v, want %#v", calls, want)
+	}
+}
+
+func TestMemoryApprovalsViewShowsTypeAndAgent(t *testing.T) {
+	m := model{
+		showingMemoryApprovals: true,
+		memoryItems:            []memoryRecord{{MemoryID: "mem-1", Status: "pending", Version: 1, Type: "habit", SubjectAgent: "broccoli-agent", Title: "Run tests"}},
+		memorySelected:         0,
+	}
+	view := m.memoryApprovalsView(120, 30)
+	for _, want := range []string{"type:habit", "agent:broccoli-agent"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("memory approvals view missing %q: %q", want, view)
+		}
+	}
+}
+
+func TestMemoryApprovalsViewFallsBackToProposerAgent(t *testing.T) {
+	m := model{
+		showingMemoryApprovals: true,
+		memoryItems:            []memoryRecord{{MemoryID: "mem-1", Status: "pending", Version: 1, Type: "fact", ProposedBy: "proposer-agent", Title: "Endpoint"}},
+		memorySelected:         0,
+	}
+	view := m.memoryApprovalsView(120, 30)
+	if !strings.Contains(view, "agent:proposer-agent") {
+		t.Fatalf("memory approvals view should fall back to proposed_by agent: %q", view)
 	}
 }
 

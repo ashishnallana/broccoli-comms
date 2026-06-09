@@ -688,6 +688,9 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertIn("broccoli-comms memory show mem-skill --json", agents)
             self.assertIn(str(context / "skills" / "Deploy-Helper" / "SKILL.md"), agents)
             self.assertIn("Use `broccoli-comms memory ...` commands", agents)
+            self.assertIn("Retained habits are mandatory operating instructions", agents)
+            self.assertIn("Review", agents)
+            self.assertIn("source: `" + str(context / "habits.md") + "`", agents)
             self.assertNotIn("secret detailed steps", agents)
 
     def test_ephemeral_agent_workspace_writes_agents_md_from_config_template(self):

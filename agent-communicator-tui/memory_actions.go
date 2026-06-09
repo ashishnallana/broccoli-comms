@@ -25,6 +25,7 @@ type memoryRecord struct {
 	Type         string `json:"type"`
 	Scope        string `json:"scope"`
 	SubjectAgent string `json:"subject_agent"`
+	ProposedBy   string `json:"proposed_by"`
 	Title        string `json:"title"`
 	Body         string `json:"body"`
 }

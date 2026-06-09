@@ -2513,7 +2513,7 @@ def _markdown_memory_list(title: str, records: list[dict]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _bootstrap_agents_md(base: str, path: Path, skills: list[dict]) -> str:
+def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list[dict] | None = None) -> str:
     memory_path = path / "memory.md"
     habits_path = path / "habits.md"
     expertise_path = path / "expertise.md"
@@ -2526,7 +2526,17 @@ def _bootstrap_agents_md(base: str, path: Path, skills: list[dict]) -> str:
         f"  - Habits: `{habits_path}`",
         f"  - Expertise: `{expertise_path}`",
         "- Use `broccoli-comms memory ...` commands to update durable skills/memory; do not edit generated SKILL.md, memory.md, habits.md, or expertise.md files as the source of truth.",
+        "- **Retained habits are mandatory operating instructions.** Keep applying active habits from `habits.md` across the whole session, especially at task completion, review handoff, validation, and queue-continuation transitions.",
+        "- Before reporting a task complete or validated, re-check `habits.md` and perform any follow-on action it requires, such as notifying a reviewer or starting the next ready task.",
     ]
+    if habits:
+        lines.extend(["", "## Retained habits from durable memory"])
+        for mem in habits:
+            lines.extend([
+                f"- **{mem.get('title') or mem.get('memory_id')}**",
+                f"  - id: `{mem.get('memory_id')}`",
+                f"  - source: `{habits_path}`",
+            ])
     if skills:
         lines.extend(["", "## Available skills from durable memory"])
         for mem in skills:
@@ -2580,7 +2590,7 @@ def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dic
         target.write_text(f"---\nname: {skill_name}\ndescription: {desc}\n---\n\n{body}\n", encoding="utf-8")
         files.append(str(target))
     agents_target = path / "AGENTS.md"
-    agents_target.write_text(_bootstrap_agents_md(str(payload.get("agents_md") or ""), path, by_type["skill"]), encoding="utf-8")
+    agents_target.write_text(_bootstrap_agents_md(str(payload.get("agents_md") or ""), path, by_type["skill"], by_type["habit"]), encoding="utf-8")
     files.append(str(agents_target))
     return {"context_dir": str(path), "files": files}
 

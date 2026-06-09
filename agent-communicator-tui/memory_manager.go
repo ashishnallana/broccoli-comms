@@ -162,6 +162,10 @@ func (m model) updateMemoryApprovals(msg tea.KeyMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
+func memoryRecordAgentName(mem memoryRecord) string {
+	return firstNonEmpty(mem.SubjectAgent, mem.ProposedBy, "unknown")
+}
+
 func (m model) memoryApprovalsView(width, height int) string {
 	contentW := max(20, width-4)
 	panelBG := colors.PopupBg
@@ -186,7 +190,9 @@ func (m model) memoryApprovalsView(width, height int) string {
 			marker = "▸ "
 		}
 		title := firstNonEmpty(mem.Title, mem.MemoryID)
-		row := fmt.Sprintf("%s[%s] %s v%d %s", marker, mem.Status, mem.MemoryID, mem.Version, title)
+		memoryType := firstNonEmpty(mem.Type, "unknown")
+		agentName := memoryRecordAgentName(mem)
+		row := fmt.Sprintf("%s[%s] %s type:%s agent:%s v%d %s", marker, mem.Status, mem.MemoryID, memoryType, agentName, mem.Version, title)
 		lines = append(lines, padStyledLine(style.Render(row), contentW, panelBG))
 		if mem.Body != "" && i == m.memorySelected && len(lines) < max(4, height-2) {
 			preview := strings.ReplaceAll(mem.Body, "\n", " ")
