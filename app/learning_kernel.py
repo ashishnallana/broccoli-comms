@@ -963,7 +963,7 @@ Ephemeral cwd: {cwd}
 Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 
 ## Required startup
-1. If present in the working directory, read generated `memory.md`, `habits.md`, `expertise.md`, and any `skill/<skill-name>/SKILLS.md` files.
+1. If present in the working directory, read generated `memory.md`, `habits.md`, `expertise.md`, and any `skills/<skill-name>/SKILL.md` files.
 2. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json`.
 3. If a task is returned, run `broccoli-comms state show --task <task_id> --agent {agent} --json`.
 4. If no task is ready, stand by and do not invent work.

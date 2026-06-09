@@ -2529,7 +2529,7 @@ def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dic
         files.append(str(target))
     for mem in by_type["skill"]:
         skill_name = safe_context_name(str(mem.get("title") or mem.get("memory_id") or "skill"))
-        target = path / "skill" / skill_name / "SKILLS.md"
+        target = path / "skills" / skill_name / "SKILL.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         desc = (mem.get("metadata") or {}).get("description") or ""
         body = str(mem.get("body") or "").strip()
@@ -3023,7 +3023,7 @@ def main() -> None:
     task_bootstrap_parser.add_argument("--scope")
     task_bootstrap_parser.add_argument("--cwd")
     task_bootstrap_parser.add_argument("--instance")
-    task_bootstrap_parser.add_argument("--write-context-dir", help="Write bootstrap context as memory.md/habits.md/expertise.md plus skill/<skill-name>/SKILLS.md files in this directory")
+    task_bootstrap_parser.add_argument("--write-context-dir", help="Write bootstrap context as memory.md/habits.md/expertise.md plus skills/<skill-name>/SKILL.md files in this directory")
     task_bootstrap_parser.add_argument("--json", action="store_true")
     task_bootstrap_parser.set_defaults(func=task_bootstrap)
     task_submit_parser = task_sub.add_parser("submit-completion")
