@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
@@ -659,6 +660,42 @@ func TestFilterConversationMatchesRemoteSenderFormat(t *testing.T) {
 	filtered := filterConversation(messages, row)
 	if len(filtered) != 1 || filtered[0].Body != "remote" {
 		t.Fatalf("filtered = %+v", filtered)
+	}
+}
+
+func TestRunNewAgentFlowUsesConfiguredProviderAndHost(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	configDir := filepath.Join(tmp, "broccoli-comms")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[providers.pi]\ncmd = 'pi'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config.ResetForTest()
+	defer config.ResetForTest()
+
+	m := model{showingConfigMenu: true, configItems: []ConfigSelectionItem{{Name: "Run new agent on remot", IsNewAgent: true, IsRemote: true, Hostname: "remote-host", Launchable: true}}, local: &fakeLocal{}}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd != nil || !m.showingRunAgentForm || m.runAgentHost != "remote-host" || m.runAgentProvider != "pi" {
+		t.Fatalf("new-agent form not opened correctly: host=%q provider=%q cmd=%v", m.runAgentHost, m.runAgentProvider, cmd)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("coder")})
+	m = updated.(model)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if m.showingRunAgentForm || cmd == nil {
+		t.Fatalf("enter should close form and return run command")
+	}
+	args, err := runNewAgentArgs("coder", "remote-host", "pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"run", "--host", "remote-host", "--json", "coder", "--", "pi"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
 	}
 }
 

@@ -676,12 +676,14 @@ agent_communicator_tui = "/config/agent-communicator"
                     {"memory_id": "mem-habit", "type": "habit", "title": "Review", "body": "Run tests"},
                     {"memory_id": "mem-expert", "type": "expertise", "title": "System", "body": "Architecture"},
                 ],
+                "chain_summary": {"summary_id": "sum-1", "task_chain_id": "chain-1", "root_task_id": "root-1", "summary": "Completed previous chain."},
             }
             result = broccoli_comms_app.write_bootstrap_context_files(payload, tmp)
             agents = (Path(result["context_dir"]) / "AGENTS.md").read_text()
             context = Path(result["context_dir"])
             self.assertIn(str(context / "memory.md"), agents)
-            self.assertIn(str(context / "habits.md"), agents)
+            self.assertNotIn(str(context / "habits.md"), agents)
+            self.assertNotIn("habits.md", agents)
             self.assertIn(str(context / "expertise.md"), agents)
             self.assertIn("Deploy Helper", agents)
             self.assertIn("Safely deploy things", agents)
@@ -689,9 +691,46 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertIn(str(context / "skills" / "Deploy-Helper" / "SKILL.md"), agents)
             self.assertIn("Use `broccoli-comms memory ...` commands", agents)
             self.assertIn("Retained habits are mandatory operating instructions", agents)
+            self.assertIn("summarize-chain <task_chain_id>", agents)
+            self.assertIn("resume from the latest chain summary", agents)
+            memory = (context / "memory.md").read_text()
+            self.assertIn("Latest task-chain summary", memory)
+            self.assertIn("Completed previous chain.", memory)
+            self.assertIn("Embedded retained habits from durable memory", agents)
             self.assertIn("Review", agents)
-            self.assertIn("source: `" + str(context / "habits.md") + "`", agents)
+            self.assertIn("Run tests", agents)
+            self.assertIn("before completion, validation, review handoff", agents)
+            self.assertNotIn("source: `" + str(context / "habits.md") + "`", agents)
             self.assertNotIn("secret detailed steps", agents)
+
+    def test_bootstrap_agents_md_removes_habits_startup_read_instruction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = broccoli_comms_app.agent_contract("a", "a@s1", tmp)
+            agents = broccoli_comms_app._bootstrap_agents_md(base, Path(tmp), [], [{"memory_id": "mem-h", "type": "habit", "scope": "global", "title": "Always review", "body": "Send review handoff before done."}])
+            self.assertNotIn("read generated `memory.md`, `habits.md`, and `expertise.md`", agents)
+            self.assertNotIn("active records in `habits.md`", agents)
+            self.assertNotIn("habits.md", agents)
+            self.assertIn("read generated `memory.md` and `expertise.md`", agents)
+            self.assertIn("Embedded retained habits from durable memory", agents)
+            self.assertIn("Always review", agents)
+            self.assertIn("Send review handoff before done.", agents)
+            self.assertIn("mandatory operating instructions", agents)
+
+    def test_bootstrap_does_not_fall_back_to_unrelated_latest_chain_summary(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}, clear=False), mock.patch.object(broccoli_comms_app, "duplicate_profile_instances", return_value=[]):
+            k = broccoli_comms_app.learning_kernel()
+            active = k.task_create(title="active", assigned_agent="a")
+            other = k.task_create(title="other", assigned_agent="b")
+            k.state_set(other["task_id"], "b", task_chain_id="other-chain", root_task_id=other["task_id"], status="working")
+            k.summarize_chain("other-chain", actor="b")
+
+            args = argparse.Namespace(agent="a", scope=None, cwd=tmp, instance="a@s1", write_context_dir=None, json=True)
+            out = io.StringIO()
+            with mock.patch("sys.stdout", out):
+                broccoli_comms_app.task_bootstrap(args)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["task"]["task_id"], active["task_id"])
+            self.assertIsNone(payload.get("chain_summary"))
 
     def test_ephemeral_agent_workspace_writes_agents_md_from_config_template(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):

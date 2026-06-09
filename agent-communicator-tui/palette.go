@@ -89,6 +89,7 @@ type commandPaletteState struct {
 	Open     bool
 	Query    []rune
 	Selected int
+	Offset   int
 }
 
 type commandAction struct {
@@ -160,6 +161,21 @@ func commandPaletteActions() []commandAction {
 			Keywords: []string{"tmux", "pane", "focus"},
 			Enabled:  func(m model) bool { return m.currentRow().Name != "" },
 			Run:      func(m *model) tea.Cmd { return switchToAgentPane(m.currentRow()) },
+		},
+		{
+			ID:       "run-agent",
+			Title:    "Run agent",
+			Subtitle: "Open the agent launcher to run configured, previous, or new agents via broccoli-comms run.",
+			Category: "Agents",
+			Shortcut: "open",
+			Keywords: []string{"launch", "run", "new", "host", "provider"},
+			Enabled:  func(model) bool { return true },
+			Run: func(m *model) tea.Cmd {
+				m.showingConfigMenu = true
+				m.configSelected = 0
+				m.configQuery = nil
+				return loadConfigItemsCmd(m.local)
+			},
 		},
 		{
 			ID:       "registry-status",
@@ -253,6 +269,49 @@ func (m *model) clampCommandPaletteSelection() {
 	if m.commandPalette.Selected < 0 {
 		m.commandPalette.Selected = 0
 	}
+	pageSize := m.commandPalettePageSize()
+	if m.commandPalette.Selected < m.commandPalette.Offset {
+		m.commandPalette.Offset = m.commandPalette.Selected
+	}
+	if m.commandPalette.Selected >= m.commandPalette.Offset+pageSize {
+		m.commandPalette.Offset = m.commandPalette.Selected - pageSize + 1
+	}
+	maxOffset := max(0, len(actions)-pageSize)
+	if m.commandPalette.Offset > maxOffset {
+		m.commandPalette.Offset = maxOffset
+	}
+	if m.commandPalette.Offset < 0 {
+		m.commandPalette.Offset = 0
+	}
+}
+
+func commandPaletteWidth(width int) int {
+	return min(max(56, width*3/4), max(42, width-4))
+}
+
+func commandPaletteContentHeight(height int) int {
+	if height <= 0 {
+		return 12
+	}
+	return min(max(12, height*3/4), max(6, height-4))
+}
+
+func (m model) commandPalettePageSize() int {
+	// Most actions render as a title row plus a subtitle row, with occasional
+	// category headers. A conservative half-height page keeps Ctrl-U/Ctrl-D
+	// movement aligned with the amount of visible command content.
+	return max(1, (commandPaletteContentHeight(m.height)-3)/2)
+}
+
+func (m *model) scrollCommandPalette(delta int) {
+	actions := m.filteredCommandActions()
+	if len(actions) == 0 {
+		m.commandPalette.Selected = 0
+		m.commandPalette.Offset = 0
+		return
+	}
+	m.commandPalette.Selected = min(max(0, m.commandPalette.Selected+delta), len(actions)-1)
+	m.clampCommandPaletteSelection()
 }
 
 func (m model) updateCommandPalette(msg tea.KeyMsg) (model, tea.Cmd) {
@@ -263,18 +322,27 @@ func (m model) updateCommandPalette(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.commandPalette.Open = false
 		m.commandPalette.Query = nil
 		m.commandPalette.Selected = 0
+		m.commandPalette.Offset = 0
 		return m, nil
 	case tea.KeyUp, tea.KeyCtrlP:
 		actions := m.filteredCommandActions()
 		if len(actions) > 0 {
 			m.commandPalette.Selected = (m.commandPalette.Selected - 1 + len(actions)) % len(actions)
+			m.clampCommandPaletteSelection()
 		}
 		return m, nil
 	case tea.KeyDown, tea.KeyCtrlN:
 		actions := m.filteredCommandActions()
 		if len(actions) > 0 {
 			m.commandPalette.Selected = (m.commandPalette.Selected + 1) % len(actions)
+			m.clampCommandPaletteSelection()
 		}
+		return m, nil
+	case tea.KeyCtrlU:
+		m.scrollCommandPalette(-m.commandPalettePageSize())
+		return m, nil
+	case tea.KeyCtrlD:
+		m.scrollCommandPalette(m.commandPalettePageSize())
 		return m, nil
 	case tea.KeyEnter:
 		actions := m.filteredCommandActions()
@@ -286,6 +354,7 @@ func (m model) updateCommandPalette(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.commandPalette.Open = false
 		m.commandPalette.Query = nil
 		m.commandPalette.Selected = 0
+		m.commandPalette.Offset = 0
 		if action.Run == nil {
 			return m, nil
 		}
@@ -295,15 +364,18 @@ func (m model) updateCommandPalette(msg tea.KeyMsg) (model, tea.Cmd) {
 		if len(m.commandPalette.Query) > 0 {
 			m.commandPalette.Query = m.commandPalette.Query[:len(m.commandPalette.Query)-1]
 			m.commandPalette.Selected = 0
+			m.commandPalette.Offset = 0
 		}
 		return m, nil
 	case tea.KeySpace:
 		m.commandPalette.Query = append(m.commandPalette.Query, ' ')
 		m.commandPalette.Selected = 0
+		m.commandPalette.Offset = 0
 		return m, nil
 	case tea.KeyRunes:
 		m.commandPalette.Query = append(m.commandPalette.Query, msg.Runes...)
 		m.commandPalette.Selected = 0
+		m.commandPalette.Offset = 0
 		return m, nil
 	}
 	m.clampCommandPaletteSelection()
@@ -312,8 +384,8 @@ func (m model) updateCommandPalette(msg tea.KeyMsg) (model, tea.Cmd) {
 
 func (m model) commandPaletteView(width, height int) string {
 	actions := m.filteredCommandActions()
-	paletteW := min(max(42, width/2), max(42, width-8))
-	paletteH := min(max(10, len(actions)+5), max(10, height-4))
+	paletteW := commandPaletteWidth(width)
+	paletteH := commandPaletteContentHeight(height)
 	contentW := max(8, paletteW-4)
 	panelBG := colors.PopupBg
 	panelLine := lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Text).Render
@@ -327,11 +399,19 @@ func (m model) commandPaletteView(width, height int) string {
 		padStyledLine(paletteMuted.Render("Command palette")+bgSpaces(titleGap, panelBG)+paletteMuted.Render("esc close"), contentW, panelBG),
 		lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(colors.InputBg).Foreground(colors.Text).Padding(0, 1).Render(truncateCells(query, max(1, contentW-2))),
 	}
+	visibleStart := min(max(0, m.commandPalette.Offset), len(actions))
 	lastCategory := ""
-	for i, action := range actions {
+	if visibleStart > 0 {
+		lastCategory = actions[visibleStart-1].Category
+		lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Muted).Render(truncateCells("↑ more commands", contentW)))
+	}
+	visibleEnd := visibleStart
+	for i, action := range actions[visibleStart:] {
+		actionIndex := visibleStart + i
 		if len(lines) >= paletteH-1 {
 			break
 		}
+		visibleEnd = actionIndex + 1
 		if action.Category != lastCategory {
 			lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.TextSubtle).Bold(true).Render(truncateCells(strings.ToUpper(action.Category), contentW)))
 			lastCategory = action.Category
@@ -339,7 +419,7 @@ func (m model) commandPaletteView(width, height int) string {
 		title := truncateCells(action.Title, max(1, contentW-lipgloss.Width(action.Shortcut)-3))
 		gap := max(1, contentW-lipgloss.Width(title)-lipgloss.Width(action.Shortcut))
 		rowText := title + strings.Repeat(" ", gap) + action.Shortcut
-		if i == m.commandPalette.Selected {
+		if actionIndex == m.commandPalette.Selected {
 			lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(colors.SelectedBg).Foreground(colors.SelectedFg).Bold(true).Render(truncateCells(rowText, contentW)))
 		} else {
 			lines = append(lines, panelLine(rowText))
@@ -350,6 +430,8 @@ func (m model) commandPaletteView(width, height int) string {
 	}
 	if len(actions) == 0 {
 		lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Muted).Render("No backed commands match."))
+	} else if visibleEnd < len(actions) && len(lines) < paletteH {
+		lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Muted).Render(truncateCells("↓ more commands", contentW)))
 	}
 	content := strings.Join(lines, "\n")
 	box := lipgloss.NewStyle().Width(paletteW-2).MaxWidth(paletteW).Border(lipgloss.NormalBorder()).BorderForeground(colors.PopupBorder).Padding(1, 1).Background(panelBG).Render(content)

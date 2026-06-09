@@ -2489,6 +2489,16 @@ def task_mark_result(args: argparse.Namespace) -> None:
     _print_payload(payload, args.json)
 
 
+def task_summarize_chain(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().summarize_chain(args.task_chain_id, root_task_id=args.root_task_id, next_task_chain_id=args.next_task_chain_id, actor=os.environ.get("AGENT_NAME") or "user")
+    except KeyError:
+        raise SystemExit(f"task chain not found: {args.task_chain_id}")
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
 def safe_context_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "-", name).strip("-._") or "agent"
 
@@ -2515,28 +2525,39 @@ def _markdown_memory_list(title: str, records: list[dict]) -> str:
 
 def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list[dict] | None = None) -> str:
     memory_path = path / "memory.md"
-    habits_path = path / "habits.md"
     expertise_path = path / "expertise.md"
+    base = base.replace(
+        "1. If present in the working directory, read generated `memory.md`, `habits.md`, and `expertise.md`; bootstrap-generated `AGENTS.md` may provide absolute paths for these files and a concise list of available skills.",
+        "1. If present in the working directory, read generated `memory.md` and `expertise.md`; retained habits are embedded directly in this AGENTS.md, and bootstrap-generated `AGENTS.md` may provide absolute paths for context files and a concise list of available skills.",
+    ).replace(
+        "2. Treat active records in `habits.md` as retained operating instructions for this and future turns. Re-check them before task completion/review transitions; do not drop them after the first response.",
+        "2. Treat embedded retained habits in this AGENTS.md as mandatory operating instructions for this and future turns. Re-check them before task completion/review transitions; do not drop them after the first response.",
+    )
     lines = [
         base.rstrip(),
         "",
         "## Generated bootstrap context",
         "- At session start, you must read the generated context files for this workspace:",
         f"  - Memory: `{memory_path}`",
-        f"  - Habits: `{habits_path}`",
         f"  - Expertise: `{expertise_path}`",
-        "- Use `broccoli-comms memory ...` commands to update durable skills/memory; do not edit generated SKILL.md, memory.md, habits.md, or expertise.md files as the source of truth.",
-        "- **Retained habits are mandatory operating instructions.** Keep applying active habits from `habits.md` across the whole session, especially at task completion, review handoff, validation, and queue-continuation transitions.",
-        "- Before reporting a task complete or validated, re-check `habits.md` and perform any follow-on action it requires, such as notifying a reviewer or starting the next ready task.",
+        "- Use `broccoli-comms memory ...` commands to update durable skills/memory; do not edit generated SKILL.md, memory.md, or expertise.md files as the source of truth.",
+        "- **Retained habits are mandatory operating instructions.** The active habits are embedded below; follow them across the whole session, especially at task completion, review handoff, validation, and queue-continuation transitions.",
+        "- Before reporting a task complete or validated, re-check the embedded retained habits and perform any follow-on action they require, such as notifying a reviewer or starting the next ready task.",
+        "- For long-running/restartable work, use bounded chain summaries: when a task chain is complete, run `broccoli-comms task summarize-chain <task_chain_id> --json`; on startup, resume from the latest chain summary plus the active task/state instead of replaying the full append-only event log. Fall back to bounded recent events only if a summary is missing or stale.",
     ]
     if habits:
-        lines.extend(["", "## Retained habits from durable memory"])
+        lines.extend(["", "## Embedded retained habits from durable memory", "These retained habits are mandatory operating instructions. Follow them across turns and before completion, validation, review handoff, or queue-continuation transitions."])
         for mem in habits:
             lines.extend([
-                f"- **{mem.get('title') or mem.get('memory_id')}**",
-                f"  - id: `{mem.get('memory_id')}`",
-                f"  - source: `{habits_path}`",
+                "",
+                f"### {mem.get('title') or mem.get('memory_id')}",
+                f"- id: `{mem.get('memory_id')}`",
+                f"- type: `{mem.get('type')}`",
+                f"- scope: `{mem.get('scope')}`",
             ])
+            if mem.get("source_task_id"):
+                lines.append(f"- source_task: `{mem.get('source_task_id')}`")
+            lines.extend(["", str(mem.get("body") or "").strip()])
     if skills:
         lines.extend(["", "## Available skills from durable memory"])
         for mem in skills:
@@ -2571,6 +2592,9 @@ def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dic
             memory_intro.extend([textwrap.dedent(str(task.get("description"))).strip(), ""])
     if state:
         memory_intro.extend(["## Current working state", "", f"- status: `{state.get('status')}`", f"- activity: {state.get('current_activity') or ''}", f"- next: {state.get('next_step') or ''}", ""])
+    chain_summary = payload.get("chain_summary") or {}
+    if chain_summary:
+        memory_intro.extend(["## Latest task-chain summary", "", f"- id: `{chain_summary.get('summary_id')}`", f"- task_chain_id: `{chain_summary.get('task_chain_id')}`", f"- root_task_id: `{chain_summary.get('root_task_id')}`", "", str(chain_summary.get("summary") or "").strip(), ""])
     memory_intro.append(_markdown_memory_list("Facts and episodes", by_type["fact"] + by_type["episode"]))
     files = []
     for name, content in {
@@ -2602,7 +2626,9 @@ def task_bootstrap(args: argparse.Namespace) -> None:
     task = payload.get("task") if isinstance(payload, dict) else None
     state = learning_kernel().state_show(task["task_id"], agent) if task else None
     mem = learning_kernel().memory_for_bootstrap(agent=agent, scope=(task or {}).get("scope") or args.scope)
-    payload.update({"state": state, "memory": mem["records"], "memory_meta": {"truncated": mem["truncated"], "omitted_count": mem["omitted_count"]}, "agents_md": agent_contract(agent, args.instance, cwd, agent_contract_template())})
+    root_for_summary = (state or {}).get("root_task_id") if isinstance(state, dict) else (task or {}).get("task_id")
+    chain_summary = learning_kernel().latest_chain_summary(root_for_summary) if root_for_summary else None
+    payload.update({"state": state, "chain_summary": chain_summary, "memory": mem["records"], "memory_meta": {"truncated": mem["truncated"], "omitted_count": mem["omitted_count"]}, "agents_md": agent_contract(agent, args.instance, cwd, agent_contract_template())})
     conflicts = duplicate_profile_instances(agent)
     if conflicts:
         payload["profile_conflict"] = {"agent": agent, "instances": conflicts, "message": "duplicate same-profile instances detected; parallel different task chains are allowed, but same-chain queue claiming should be coordinator-resolved"}
@@ -3098,6 +3124,12 @@ def main() -> None:
     task_result_parser.add_argument("--status", choices=["ready", "working", "blocked", "validated"], help="Optional resulting task status; non-good results allow ready/working/blocked")
     task_result_parser.add_argument("--json", action="store_true")
     task_result_parser.set_defaults(func=task_mark_result)
+    task_summary_parser = task_sub.add_parser("summarize-chain")
+    task_summary_parser.add_argument("task_chain_id")
+    task_summary_parser.add_argument("--root-task-id", help="Override/preserve root task lineage for the summarized chain")
+    task_summary_parser.add_argument("--next-task-chain-id", help="Optional next chain that should resume from this summary")
+    task_summary_parser.add_argument("--json", action="store_true")
+    task_summary_parser.set_defaults(func=task_summarize_chain)
     task_bootstrap_parser = task_sub.add_parser("bootstrap")
     task_bootstrap_parser.add_argument("--agent")
     task_bootstrap_parser.add_argument("--scope")

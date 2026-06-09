@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/pelletier/go-toml/v2"
@@ -90,6 +91,30 @@ func GetBool(fallback bool, keys ...string) bool {
 		return v
 	}
 	return fallback
+}
+
+// ProviderNames returns configured provider aliases from config.toml.
+func ProviderNames() []string {
+	Load()
+	providers, ok := configCache["providers"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(providers))
+	for name := range providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// FirstProviderName returns one configured provider alias, suitable as a default launch provider.
+func FirstProviderName() string {
+	names := ProviderNames()
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
 }
 
 // ResetForTest clears the configuration cache so it can be reloaded in tests.

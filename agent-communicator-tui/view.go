@@ -44,6 +44,9 @@ func (m model) baseView() string {
 	if m.showingConfigMenu {
 		return m.renderConfigMenu(m.width, fullH)
 	}
+	if m.showingRunAgentForm {
+		return m.renderRunAgentForm(m.width, fullH)
+	}
 	tabs := m.bottomTabBar(m.width)
 	status := m.footer(m.width)
 	bottomH := lineCount(status) + lineCount(tabs)
@@ -297,6 +300,19 @@ func (m model) renderPromptMenu(width, height int) string {
 	return box(boxContent, width, height)
 }
 
+func (m model) renderRunAgentForm(width, height int) string {
+	name := string(m.runAgentName)
+	if name == "" {
+		name = "agent-name"
+	}
+	provider := fallback(m.runAgentProvider, "no configured provider")
+	content := titleStyle.Render("Run new agent") + "\n" +
+		mutedStyle.Render("Host: "+fallback(m.runAgentHost, localHostname())+" · Provider: "+provider) + "\n\n" +
+		"Agent name: " + lipgloss.NewStyle().Foreground(colors.TextStrong).Render(name) + "\n\n" +
+		mutedStyle.Render("Type name · Enter run via broccoli-comms run · Esc cancel")
+	return box(content, width, height)
+}
+
 func (m model) renderConfigMenu(width, height int) string {
 	var body string
 	items := m.filteredConfigItems()
@@ -306,7 +322,7 @@ func (m model) renderConfigMenu(width, height int) string {
 			Foreground(colors.Error).
 			Render("No configured, running, or remote agents found via broccoli-comms agent list.")
 	} else if len(items) == 0 {
-		body = lipgloss.NewStyle().Foreground(colors.Error).Render("No agents match search: "+query)
+		body = lipgloss.NewStyle().Foreground(colors.Error).Render("No agents match search: " + query)
 	} else {
 		var listLines []string
 		for i, item := range items {
@@ -318,7 +334,9 @@ func (m model) renderConfigMenu(width, height int) string {
 			}
 
 			scopePrefix := fmt.Sprintf("[%s] ", shortHost(localHostname()))
-			if item.IsRemote {
+			if item.IsNewAgent {
+				scopePrefix = fmt.Sprintf("[%s] new ", shortHost(item.Hostname))
+			} else if item.IsRemote {
 				scopePrefix = fmt.Sprintf("[%s] remote ", shortHost(item.Hostname))
 			} else if item.Running {
 				scopePrefix = fmt.Sprintf("[%s] running ", shortHost(localHostname()))
@@ -335,7 +353,9 @@ func (m model) renderConfigMenu(width, height int) string {
 			}
 
 			action := "Enter: run"
-			if item.IsRemote || !item.Launchable {
+			if item.IsNewAgent {
+				action = "Enter: name agent"
+			} else if item.IsRemote || !item.Launchable {
 				action = "Enter: immutable copy"
 			} else if item.Copyable {
 				action = "Enter: run · c: copy"
@@ -345,7 +365,7 @@ func (m model) renderConfigMenu(width, height int) string {
 		body = strings.Join(listLines, "\n")
 	}
 
-	title := titleStyle.Render("Agents (search/run/copy)")
-	boxContent := title + "\n" + mutedStyle.Render("Search: "+query+"  ·  Enter runs configured agents; remote/unlaunchable entries are copied immutable") + "\n\n" + body
+	title := titleStyle.Render("Agents (search/run/copy/new)")
+	boxContent := title + "\n" + mutedStyle.Render("Search: "+query+"  ·  Enter runs existing agents or opens new-agent name form") + "\n\n" + body
 	return box(boxContent, width, height)
 }

@@ -76,6 +76,12 @@ type model struct {
 	configSelected    int
 	configQuery       []rune
 
+	// Run new agent form
+	showingRunAgentForm bool
+	runAgentHost        string
+	runAgentProvider    string
+	runAgentName        []rune
+
 	// Prompt templates (Ctrl-O)
 	prompts           []promptTemplate
 	showingPromptMenu bool
@@ -235,6 +241,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err
 	case agentConfigSpun:
 		m.err = msg.Err
+		if msg.Err == nil {
+			m.directInputStatus = "Started " + msg.Name
+			m.directInputStatusErr = false
+			return m, tea.Batch(loadAgents(m.local), loadConfigItemsCmd(m.local), tea.Tick(4*time.Second, func(time.Time) tea.Msg { return clearDirectInputStatusTick{} }))
+		}
 	case approvalReviewResult:
 		m.err = msg.Err
 		if msg.Err == nil {

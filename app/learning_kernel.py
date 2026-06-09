@@ -46,6 +46,7 @@ TEXT_LIMITS = {
     "scope": 500,
     "event_text": 1000,
     "memory_body": 4000,
+    "chain_summary": 4000,
 }
 SECRET_PATTERNS = [
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*\S+"),
@@ -202,9 +203,17 @@ class LearningKernel:
               schema_version INTEGER NOT NULL DEFAULT 1,
               UNIQUE(proposed_by, idempotency_key)
             );
+            CREATE TABLE IF NOT EXISTS task_chain_summaries(
+              summary_id TEXT PRIMARY KEY, task_chain_id TEXT NOT NULL UNIQUE, root_task_id TEXT NOT NULL,
+              previous_summary_id TEXT, next_task_chain_id TEXT, summary TEXT NOT NULL,
+              event_seq_start INTEGER NOT NULL DEFAULT 0, event_seq_end INTEGER NOT NULL DEFAULT 0,
+              created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+              version INTEGER NOT NULL DEFAULT 1
+            );
             CREATE INDEX IF NOT EXISTS idx_tasks_next ON tasks(status, assigned_agent, scope, updated_at);
             CREATE INDEX IF NOT EXISTS idx_events_subject ON events(subject_type, subject_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_memory_lookup ON memory_records(status, type, scope, subject_agent, validated_at);
+            CREATE INDEX IF NOT EXISTS idx_chain_summaries_root ON task_chain_summaries(root_task_id, created_at);
             """)
             self._migrate_working_states(conn)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_states_lookup ON working_states(task_id, agent, task_chain_id)")
@@ -298,6 +307,9 @@ class LearningKernel:
         d["tags"] = json.loads(d.get("tags") or "[]")
         d["metadata"] = json.loads(d.get("metadata") or "{}")
         return d
+
+    def row_chain_summary(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        return dict(row) if row else None
 
     def _clean_discoveries(self, discoveries: list[dict[str, Any]] | None) -> list[dict[str, str]]:
         cleaned = []
@@ -993,6 +1005,89 @@ class LearningKernel:
                 omitted += 1; truncated = True; continue
             total += size; selected.append(item)
         return {"records": selected, "truncated": truncated, "omitted_count": omitted + max(0, len(rows) - len(selected) - omitted)}
+
+    def _chain_events(self, conn: sqlite3.Connection, task_chain_id: str) -> list[dict[str, Any]]:
+        rows = conn.execute("SELECT rowid AS event_seq,* FROM events ORDER BY rowid").fetchall()
+        out = []
+        for row in rows:
+            payload = json.loads(row["payload"] or "{}")
+            if payload.get("task_chain_id") == task_chain_id:
+                d = dict(row); d["payload"] = payload; d["refs"] = json.loads(row["refs"] or "{}"); out.append(d)
+        if out:
+            return out
+        task_ids = [r["task_id"] for r in conn.execute("SELECT task_id FROM working_states WHERE task_chain_id=?", (task_chain_id,)).fetchall()]
+        if not task_ids:
+            task_ids = [r["task_id"] for r in conn.execute("SELECT task_id FROM task_approvals WHERE task_chain_id=?", (task_chain_id,)).fetchall()]
+        if task_ids:
+            q = ",".join("?" for _ in task_ids)
+            rows = conn.execute(f"SELECT rowid AS event_seq,* FROM events WHERE task_id IN ({q}) ORDER BY rowid", task_ids).fetchall()
+            for row in rows:
+                d = dict(row); d["payload"] = json.loads(row["payload"] or "{}"); d["refs"] = json.loads(row["refs"] or "{}"); out.append(d)
+        return out
+
+    def summarize_chain(self, task_chain_id: str, **kw: Any) -> dict[str, Any]:
+        task_chain_id = clean_text(task_chain_id, "list_item", required=True) or ""
+        next_task_chain_id = clean_text(kw.get("next_task_chain_id"), "list_item")
+        actor = clean_text(kw.get("actor") or "user", "agent") or "user"
+        with closing(self.connect()) as conn:
+            events = self._chain_events(conn, task_chain_id)
+            if not events:
+                raise KeyError(task_chain_id)
+            root_task_id = clean_text(kw.get("root_task_id") or "", "list_item") or ""
+            for ev in events:
+                root_task_id = root_task_id or clean_text(ev["payload"].get("root_task_id"), "list_item") or ""
+            if not root_task_id:
+                row = conn.execute("SELECT root_task_id FROM working_states WHERE task_chain_id=? ORDER BY updated_at DESC LIMIT 1", (task_chain_id,)).fetchone()
+                root_task_id = row["root_task_id"] if row and row["root_task_id"] else task_chain_id
+            task_ids = sorted({ev.get("task_id") for ev in events if ev.get("task_id")})
+            tasks = [self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (tid,)).fetchone()) for tid in task_ids]
+            tasks = [t for t in tasks if t]
+            completed = [t for t in tasks if t.get("status") in DONE_STATUSES]
+            approvals = [ev for ev in events if ev["event_type"] == "task_completion_submitted"]
+            results = [ev for ev in events if ev["event_type"] == "task_result_marked"]
+            states = [ev for ev in events if ev["event_type"] == "working_state_set"]
+            parts = [
+                f"Task chain {task_chain_id} summary.",
+                f"Root task: {root_task_id}.",
+                f"Events summarized: {events[0]['event_seq']}..{events[-1]['event_seq']} ({len(events)} events).",
+            ]
+            if tasks:
+                parts.append("Tasks: " + "; ".join(f"{t['task_id']} {t['status']} {t.get('result_status') or ''} — {t['title']}" for t in tasks[:12]))
+            if completed:
+                parts.append(f"Completed/validated tasks: {len(completed)} of {len(tasks)}.")
+            if approvals:
+                latest = approvals[-1]["payload"]
+                parts.append("Latest completion: " + str(latest.get("result_summary") or "")[:500])
+            if results:
+                latest = results[-1]["payload"]
+                parts.append("Latest result: " + " ".join(str(latest.get(k) or "") for k in ("result_status", "result_notes", "next_step"))[:500])
+            if states:
+                latest = states[-1]["payload"]
+                parts.append("Latest state: " + " ".join(str(latest.get(k) or "") for k in ("status", "current_activity", "next_step"))[:500])
+            summary = clean_text("\n".join(parts), "chain_summary", required=True) or ""
+            previous = self.row_chain_summary(conn.execute("SELECT * FROM task_chain_summaries WHERE root_task_id=? AND task_chain_id!=? ORDER BY event_seq_end DESC LIMIT 1", (root_task_id, task_chain_id)).fetchone())
+            existing = self.row_chain_summary(conn.execute("SELECT * FROM task_chain_summaries WHERE task_chain_id=?", (task_chain_id,)).fetchone())
+            ts = now_iso()
+            conn.execute("BEGIN IMMEDIATE")
+            if existing:
+                summary_id = existing["summary_id"]
+                conn.execute("UPDATE task_chain_summaries SET root_task_id=?,previous_summary_id=?,next_task_chain_id=?,summary=?,event_seq_start=?,event_seq_end=?,created_by=?,updated_at=?,version=version+1 WHERE summary_id=?", (root_task_id, previous.get("summary_id") if previous else None, next_task_chain_id, summary, events[0]["event_seq"], events[-1]["event_seq"], actor, ts, summary_id))
+            else:
+                summary_id = f"sum-{uuid.uuid4().hex[:12]}"
+                conn.execute("INSERT INTO task_chain_summaries(summary_id,task_chain_id,root_task_id,previous_summary_id,next_task_chain_id,summary,event_seq_start,event_seq_end,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (summary_id, task_chain_id, root_task_id, previous.get("summary_id") if previous else None, next_task_chain_id, summary, events[0]["event_seq"], events[-1]["event_seq"], actor, ts, ts))
+            ev = self.event(conn, "task_chain_summarized", "agent", actor, "task_chain_summary", summary_id, {"summary_id": summary_id, "task_chain_id": task_chain_id, "root_task_id": root_task_id, "previous_summary_id": previous.get("summary_id") if previous else None, "next_task_chain_id": next_task_chain_id, "event_seq_start": events[0]["event_seq"], "event_seq_end": events[-1]["event_seq"]}, root_task_id)
+            conn.execute("COMMIT")
+            result = self.row_chain_summary(conn.execute("SELECT * FROM task_chain_summaries WHERE summary_id=?", (summary_id,)).fetchone())
+            result["event"] = ev
+            return result
+
+    def latest_chain_summary(self, root_task_id: str | None = None) -> dict[str, Any] | None:
+        with closing(self.connect()) as conn:
+            if root_task_id:
+                row = conn.execute("SELECT * FROM task_chain_summaries WHERE root_task_id=? ORDER BY event_seq_end DESC LIMIT 1", (root_task_id,)).fetchone()
+            else:
+                row = conn.execute("SELECT * FROM task_chain_summaries ORDER BY event_seq_end DESC LIMIT 1").fetchone()
+        return self.row_chain_summary(row)
 
     def user_profile(self, raw: bool = False) -> dict[str, Any]:
         with closing(self.connect()) as conn:

@@ -80,6 +80,30 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertIn("correction-assisted", contract)
             self.assertIn("Never store raw terminal transcripts", contract)
 
+    def test_task_chain_summary_creation_retrieval_and_lineage(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            root = k.task_create(title="root", assigned_agent="a")
+            k.state_set(root["task_id"], "a", instance_id="a@s1", task_chain_id="chain-1", root_task_id=root["task_id"], status="working", current_activity="coding", next_step="validate")
+            approval = k.submit_completion(root["task_id"], agent="a", task_chain_id="chain-1", root_task_id=root["task_id"], result_summary="implemented feature")
+            k.review_completion(approval["approval"]["approval_id"], "good", task_version_at_submission=approval["approval"]["task_version_at_submission"])
+
+            summary = k.summarize_chain("chain-1", next_task_chain_id="chain-2", actor="a")
+            self.assertEqual(summary["task_chain_id"], "chain-1")
+            self.assertEqual(summary["root_task_id"], root["task_id"])
+            self.assertEqual(summary["next_task_chain_id"], "chain-2")
+            self.assertIn("implemented feature", summary["summary"])
+            self.assertLessEqual(len(summary["summary"]), 4000)
+            self.assertEqual(k.latest_chain_summary(root["task_id"])["summary_id"], summary["summary_id"])
+            events = [e for e in k.events(task_id=root["task_id"]) if e["event_type"] == "task_chain_summarized"]
+            self.assertEqual(events[0]["payload"]["next_task_chain_id"], "chain-2")
+
+            follow = k.task_create(title="follow", assigned_agent="a")
+            k.state_set(follow["task_id"], "a", instance_id="a@s2", task_chain_id="chain-2", root_task_id=root["task_id"], status="working")
+            second = k.summarize_chain("chain-2", actor="a")
+            self.assertEqual(second["root_task_id"], root["task_id"])
+            self.assertEqual(second["previous_summary_id"], summary["summary_id"])
+
     def test_agent_contract_template_comes_from_config_toml(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             cfg_dir = Path(tmp) / "broccoli-comms"

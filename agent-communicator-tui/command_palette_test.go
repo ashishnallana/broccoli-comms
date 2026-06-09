@@ -21,6 +21,38 @@ func TestCtrlOOpensPaletteAndCtrlPNavigatesPrevious(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteCtrlDAndCtrlUScrollSelection(t *testing.T) {
+	m := model{width: 100, height: 20, rows: []agentRow{{Name: "alpha", Scope: "local"}, {Name: "beta", Scope: "local"}}, local: &fakeLocal{}}
+	m.commandPalette.Open = true
+
+	updated, cmd := m.updateCommandPalette(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = updated
+	if cmd != nil {
+		t.Fatalf("ctrl-d should not return command: %v", cmd)
+	}
+	if m.commandPalette.Selected <= 0 || m.commandPalette.Offset <= 0 {
+		t.Fatalf("ctrl-d should page down selection and offset, selected=%d offset=%d", m.commandPalette.Selected, m.commandPalette.Offset)
+	}
+
+	updated, cmd = m.updateCommandPalette(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = updated
+	if cmd != nil {
+		t.Fatalf("ctrl-u should not return command: %v", cmd)
+	}
+	if m.commandPalette.Selected != 0 || m.commandPalette.Offset != 0 {
+		t.Fatalf("ctrl-u should page back to top, selected=%d offset=%d", m.commandPalette.Selected, m.commandPalette.Offset)
+	}
+}
+
+func TestCommandPaletteDimensionsAreLarger(t *testing.T) {
+	if got, want := commandPaletteWidth(120), 90; got != want {
+		t.Fatalf("palette width = %d, want %d", got, want)
+	}
+	if got, want := commandPaletteContentHeight(30), 22; got != want {
+		t.Fatalf("palette content height = %d, want %d", got, want)
+	}
+}
+
 func TestCommandPaletteOverlaysWithoutRelayout(t *testing.T) {
 	m := model{
 		width:  120,

@@ -96,6 +96,56 @@ func TestMemoryApprovalsViewFallsBackToProposerAgent(t *testing.T) {
 	}
 }
 
+func TestMemoryApprovalsRollbackActionCommand(t *testing.T) {
+	old := runApprovalCLI
+	defer func() { runApprovalCLI = old }()
+	var calls [][]string
+	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return json.Marshal(map[string]any{"ok": true})
+	}
+
+	m := model{showingMemoryApprovals: true, memoryItems: []memoryRecord{{MemoryID: "mem-2", Status: "active", Version: 4}}, memorySelected: 0}
+	updated, cmd := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if !updated.showingMemoryApprovals {
+		t.Fatalf("rollback action should keep overlay open")
+	}
+	if cmd == nil {
+		t.Fatalf("rollback action should return command")
+	}
+	res := cmd().(memoryActionResult)
+	if res.Err != nil {
+		t.Fatalf("rollback command returned error: %v", res.Err)
+	}
+	want := []string{"memory", "rollback", "mem-2", "--to-version", "3", "--expected-version", "4", "--json"}
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
+		t.Fatalf("rollback args = %#v, want %#v", calls, want)
+	}
+}
+
+func TestMemoryApprovalsRollbackWithoutPreviousVersionReturnsClearError(t *testing.T) {
+	old := runApprovalCLI
+	defer func() { runApprovalCLI = old }()
+	var calls [][]string
+	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return json.Marshal(map[string]any{"ok": true})
+	}
+
+	m := model{showingMemoryApprovals: true, memoryItems: []memoryRecord{{MemoryID: "mem-1", Status: "active", Version: 1}}, memorySelected: 0}
+	_, cmd := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if cmd == nil {
+		t.Fatalf("rollback action should return command with clear error")
+	}
+	res := cmd().(memoryActionResult)
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "no previous version") {
+		t.Fatalf("rollback should return no previous version error, got: %v", res.Err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("rollback version <=1 should not call CLI, got %#v", calls)
+	}
+}
+
 func TestMemoryApprovalsApproveActionCommand(t *testing.T) {
 	old := runApprovalCLI
 	defer func() { runApprovalCLI = old }()

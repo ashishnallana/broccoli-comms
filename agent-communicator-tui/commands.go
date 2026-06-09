@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
@@ -595,6 +596,35 @@ type agentConfigSpun struct {
 	Err  error
 }
 
+func runNewAgentArgs(name, host, provider string) ([]string, error) {
+	if strings.TrimSpace(provider) == "" {
+		return nil, fmt.Errorf("no configured provider found in config.toml")
+	}
+	args := []string{"run"}
+	if strings.TrimSpace(host) != "" && host != localHostname() {
+		args = append(args, "--host", host)
+	}
+	args = append(args, "--json", name, "--", provider)
+	return args, nil
+}
+
+func runNewAgentCmd(name, host, provider string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		args, err := runNewAgentArgs(name, host, provider)
+		if err != nil {
+			return agentConfigSpun{Name: name, Err: err}
+		}
+		cmd := broccoliCommsCommandContext(ctx, args...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return agentConfigSpun{Name: name, Err: fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))}
+		}
+		return agentConfigSpun{Name: name}
+	}
+}
+
 func runConfiguredAgentCmd(name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -644,6 +674,7 @@ type ConfigSelectionItem struct {
 	Name          string
 	Description   string
 	IsRemote      bool
+	IsNewAgent    bool
 	TrackerID     string
 	Hostname      string
 	TargetAddress string
@@ -728,6 +759,35 @@ func loadConfigItemsFromBroccoliComms(ctx context.Context) ([]ConfigSelectionIte
 			Source:        "broccoli-comms",
 		})
 	}
+	hosts := map[string]bool{localHostname(): true}
+	for _, item := range items {
+		if item.Hostname != "" {
+			hosts[item.Hostname] = true
+		}
+	}
+	var hostNames []string
+	for host := range hosts {
+		hostNames = append(hostNames, host)
+	}
+	sort.Strings(hostNames)
+	provider := config.FirstProviderName()
+	for _, host := range hostNames {
+		description := "new agent name only"
+		if provider != "" {
+			description += " · provider " + provider
+		} else {
+			description += " · no provider configured"
+		}
+		items = append(items, ConfigSelectionItem{
+			Name:        "Run new agent on " + shortHost(host),
+			Description: description,
+			IsRemote:    host != localHostname(),
+			IsNewAgent:  true,
+			Hostname:    host,
+			Launchable:  provider != "",
+			Source:      "new-agent",
+		})
+	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].IsRemote != items[j].IsRemote {
 			return !items[i].IsRemote
@@ -759,6 +819,14 @@ func loadConfigItemsCmd(local localClient) tea.Cmd {
 		}
 		return configItemsLoaded{Items: nil, Err: err}
 	}
+}
+
+func (m *model) openRunAgentForm(item ConfigSelectionItem) {
+	m.showingConfigMenu = false
+	m.showingRunAgentForm = true
+	m.runAgentHost = fallback(item.Hostname, localHostname())
+	m.runAgentProvider = config.FirstProviderName()
+	m.runAgentName = nil
 }
 
 func spinRemoteAgentCmd(local localClient, targetTrackerID, configName string) tea.Cmd {

@@ -23,6 +23,9 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 	if m.showingSaveForm {
 		return m.updateSaveForm(msg)
 	}
+	if m.showingRunAgentForm {
+		return m.handleRunAgentFormKey(msg)
+	}
 	if m.showingPromptMenu {
 		return m.handlePromptMenuKey(msg)
 	}
@@ -33,6 +36,7 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.commandPalette.Open = true
 		m.commandPalette.Query = nil
 		m.commandPalette.Selected = 0
+		m.commandPalette.Offset = 0
 		return m, nil
 	}
 	switch msg.Type {
@@ -295,12 +299,53 @@ func (m model) handleConfigMenuKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.showingConfigMenu = false
 		if len(items) > 0 {
 			item := items[m.configSelected]
+			if item.IsNewAgent {
+				m.openRunAgentForm(item)
+				return m, nil
+			}
 			if item.IsRemote || !item.Launchable {
 				return m, copyAgentImmutableCmd(item)
 			}
 			return m, runConfiguredAgentCmd(item.Name)
 		}
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m model) handleRunAgentFormKey(msg tea.KeyMsg) (model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyCtrlQ:
+		return m, tea.Quit
+	case tea.KeyEsc:
+		m.showingRunAgentForm = false
+		m.runAgentName = nil
+		return m, nil
+	case tea.KeyBackspace:
+		if len(m.runAgentName) > 0 {
+			m.runAgentName = m.runAgentName[:len(m.runAgentName)-1]
+		}
+		return m, nil
+	case tea.KeySpace:
+		m.runAgentName = append(m.runAgentName, '-')
+		return m, nil
+	case tea.KeyRunes:
+		for _, r := range msg.Runes {
+			if r == ' ' {
+				r = '-'
+			}
+			m.runAgentName = append(m.runAgentName, r)
+		}
+		return m, nil
+	case tea.KeyEnter:
+		name := strings.TrimSpace(string(m.runAgentName))
+		if name == "" {
+			m.err = fmt.Errorf("agent name is required")
+			return m, nil
+		}
+		m.showingRunAgentForm = false
+		m.runAgentName = nil
+		return m, runNewAgentCmd(name, m.runAgentHost, m.runAgentProvider)
 	}
 	return m, nil
 }
