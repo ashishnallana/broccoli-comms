@@ -250,13 +250,13 @@ in {
         agentsDir = "_agents"
 
         [providers.pi]
-        cmd = "/google/bin/releases/jetski-devs/tools/cli"
+        cmd = "pi"
 
         [providers.codex]
-        cmd = "/google/bin/releases/jetski-devs/tools/cli"
+        cmd = "codex"
 
         [providers.claude]
-        cmd = "/google/bin/releases/jetski-devs/tools/cli"
+        cmd = "claude"
 
       '';
     })
