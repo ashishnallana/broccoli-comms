@@ -20,6 +20,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import uuid
 import urllib.error
@@ -33,19 +34,61 @@ from learning_kernel import LearningKernel, agent_contract, parse_csv, parse_dur
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11 fallback for the test/runtime CLI.
+    tomllib = None
 
 def get_config_path() -> Path:
     xdg_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return xdg_config / "broccoli-comms" / "config.toml"
+
+def _parse_simple_toml(text: str) -> dict:
+    data: dict = {}
+    section: dict = data
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = data.setdefault(line[1:-1].strip(), {})
+            continue
+        if "=" not in line:
+            continue
+        key, value = [part.strip() for part in line.split("=", 1)]
+        if "#" in value:
+            value = value.split("#", 1)[0].strip()
+        if value.startswith('"') and value.endswith('"'):
+            parsed = value[1:-1]
+        elif value.startswith("'") and value.endswith("'"):
+            parsed = value[1:-1]
+        elif value.lower() in {"true", "false"}:
+            parsed = value.lower() == "true"
+        elif value.startswith("[") and value.endswith("]"):
+            parsed = []
+            inner = value[1:-1].strip()
+            if inner:
+                for item in inner.split(","):
+                    item = item.strip()
+                    if (item.startswith('"') and item.endswith('"')) or (item.startswith("'") and item.endswith("'")):
+                        parsed.append(item[1:-1])
+                    else:
+                        parsed.append(item)
+        else:
+            parsed = value
+        section[key] = parsed
+    return data
+
 
 def load_toml_config() -> dict:
     path = get_config_path()
     if not path.exists():
         return {}
     try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
+        if tomllib is not None:
+            with open(path, "rb") as f:
+                return tomllib.load(f)
+        return _parse_simple_toml(path.read_text())
     except Exception:
         return {}
 
@@ -169,7 +212,7 @@ def tmux_socket_label() -> str | None:
 def base_env(preserve_agent_identity: bool = False) -> dict[str, str]:
     p = paths()
     env = os.environ.copy()
-    strip_keys = ["TMUX", "TMUX_PANE", "SUGGESTED_AGENT_NAME", "AGENT_SWARMS_JSON"]
+    strip_keys = ["TMUX", "TMUX_PANE", "SUGGESTED_AGENT_NAME", "AGENT_SWARMS_JSON", "BROCCOLI_COMMS_CLI"]
     if not preserve_agent_identity:
         strip_keys.extend(["AGENT_ID", "AGENT_NAME", "AGENT_UUID"])
     for key in strip_keys:
@@ -207,12 +250,12 @@ def can_connect(sock: Path) -> bool:
         return False
 
 
-def tracker_rpc(method: str, params: dict | None = None) -> object | None:
+def tracker_rpc(method: str, params: dict | None = None, timeout: float = 2.0) -> object | None:
     sock_path = paths()["tracker_socket"]
     s = None
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(2.0)
+        s.settimeout(timeout)
         s.connect(str(sock_path))
         s.sendall(json.dumps({"jsonrpc": "2.0", "method": method, "params": params or {}, "id": 1}).encode())
         s.shutdown(socket.SHUT_WR)
@@ -609,18 +652,27 @@ def broccoli_comms_launcher_argv() -> list[str]:
         if os.path.isabs(candidate) or os.sep in candidate:
             path = Path(candidate).expanduser().resolve()
             if path.exists():
+                if path.suffix == ".py":
+                    return [sys.executable, str(path)]
                 if os.access(path, os.X_OK):
                     return [str(path)]
                 return [sys.executable, str(path)]
         resolved = shutil.which(candidate, path=f"{repo_root() / 'bin'}:{os.environ.get('PATH', '')}")
         if resolved:
             return [resolved]
+    # Prefer the current Python app over the checked-in bin/ compatibility
+    # wrapper. During local development bin/broccoli-comms can lag behind the
+    # app and miss newer subcommands such as task/bootstrap, which makes
+    # nested `broccoli-comms run` bootstrap panes exit immediately.
+    current_script = Path(__file__).resolve()
+    if current_script.exists():
+        return [sys.executable, str(current_script)]
     local_launcher = repo_root() / "bin" / "broccoli-comms"
     if local_launcher.exists():
         if os.access(local_launcher, os.X_OK):
             return [str(local_launcher)]
         return [sys.executable, str(local_launcher)]
-    return [sys.executable, str(Path(__file__).resolve())]
+    return [sys.executable, str(current_script)]
 
 
 def managed_track_env_assignments() -> list[str]:
@@ -629,6 +681,17 @@ def managed_track_env_assignments() -> list[str]:
         env["BROCCOLI_COMMS_TMUX_MODE"] = "private"
     elif "BROCCOLI_COMMS_TMUX_MODE" in os.environ:
         env["BROCCOLI_COMMS_TMUX_MODE"] = tmux_mode()
+    # `broccoli-comms run` is often invoked from inside an already tracked
+    # agent pane.  The new tmux pane must start as a fresh wrapper context;
+    # otherwise agent-wrapper sees BROCCOLI_COMMS_TRACK_ACTIVE=1 or
+    # AGENT_WRAPPER_DEPTH=1 and bypasses registration entirely.
+    env.update({
+        "BROCCOLI_COMMS_TRACK_ACTIVE": "",
+        "AGENT_WRAPPER_DEPTH": "0",
+        "AGENT_NAME": "",
+        "AGENT_ID": "",
+        "AGENT_UUID": "",
+    })
     keys = [
         "PATH",
         "BROCCOLI_COMMS_APP_RUNTIME",
@@ -653,8 +716,13 @@ def managed_track_env_assignments() -> list[str]:
         "BROCCOLI_COMMS_REMOTE_PANE_INPUT_SEND_ENABLED",
         "BROCCOLI_COMMS_REMOTE_PANE_INPUT_RECEIVE_ENABLED",
         "BROCCOLI_COMMS_REMOTE_PANE_INPUT_REGISTRY_ENABLED",
+        "BROCCOLI_COMMS_TRACK_ACTIVE",
+        "AGENT_WRAPPER_DEPTH",
+        "AGENT_NAME",
+        "AGENT_ID",
+        "AGENT_UUID",
     ]
-    return [shell_env_assignment(key, env[key]) for key in keys if env.get(key)]
+    return [shell_env_assignment(key, env[key]) for key in keys if key in env and (env.get(key) or key in {"BROCCOLI_COMMS_TRACK_ACTIVE", "AGENT_WRAPPER_DEPTH", "AGENT_NAME", "AGENT_ID", "AGENT_UUID"})]
 
 
 def ephemeral_agent_workspace(name: str) -> str:
@@ -692,12 +760,18 @@ def managed_agent_launch_command(
     swarms: list[dict[str, str]] | None = None,
     launch_cwd: str | None = None,
     scope: str | None = None,
+    immutable: bool = False,
 ) -> str:
     launch_cwd = launch_cwd or cwd
     command_args = _parse_command_for_bootstrap(command)
+    actual_agent_cmd = os.path.basename(command_args[0]) if command_args else "agent"
+    if "_broccoli_agent_bootstrap" in command_args:
+        marker_index = command_args.index("_broccoli_agent_bootstrap")
+        if marker_index + 1 < len(command_args):
+            actual_agent_cmd = os.path.basename(command_args[marker_index + 1])
     normalized_swarms = normalize_swarms(swarms or [])
     if scope:
-        bootstrap_context = str(Path(launch_cwd) / "bootstrap.json")
+        bootstrap_context = str(Path(launch_cwd))
         command_args = _build_bootstrap_track_command(name, cwd, scope, command_args, bootstrap_context)
     launcher = [wrapper_path()]
     if command_args and _is_agent_wrapper_command(command_args[0]):
@@ -707,7 +781,13 @@ def managed_agent_launch_command(
         f"BROCCOLI_COMMS_SOURCE_CWD={shlex.quote(str(cwd))}",
         f"BROCCOLI_COMMS_EPHEMERAL_CWD={shlex.quote(str(launch_cwd))}",
         f"SUGGESTED_AGENT_NAME={shlex.quote(name)}",
+        f"AGENT_TYPE={shlex.quote(actual_agent_cmd)}",
+        f"AGENT_CMD={shlex.quote(actual_agent_cmd)}",
+        f"AGENT_MODEL_TYPE={shlex.quote(actual_agent_cmd)}",
     ]
+    if immutable:
+        launch_parts.append("BROCCOLI_COMMS_IMMUTABLE_INSTANCE=1")
+        launch_parts.append("BROCCOLI_COMMS_NON_LEARNING=1")
     if normalized_swarms:
         launch_parts.append(f"AGENT_SWARMS_JSON={shlex.quote(json.dumps(normalized_swarms, separators=(',', ':')))}")
     launch_parts.extend(shlex.quote(part) for part in launcher)
@@ -716,7 +796,7 @@ def managed_agent_launch_command(
 
 
 def _build_bootstrap_track_command(name: str, source_cwd: str | None, scope: str | None, command: list[str], bootstrap_context: str) -> list[str]:
-    bootstrap_invocation = [*broccoli_comms_launcher_argv(), "task", "bootstrap", "--agent", name, "--json"]
+    bootstrap_invocation = [*broccoli_comms_launcher_argv(), "task", "bootstrap", "--agent", name, "--write-context-dir", bootstrap_context]
     if source_cwd:
         bootstrap_invocation.extend(["--cwd", source_cwd])
     if scope:
@@ -724,7 +804,7 @@ def _build_bootstrap_track_command(name: str, source_cwd: str | None, scope: str
     bootstrap_script = " ".join(shlex.quote(part) for part in bootstrap_invocation)
     script = (
         "set -euo pipefail; "
-        f"{bootstrap_script} > {shlex.quote(bootstrap_context)}; "
+        f"{bootstrap_script} >/dev/null; "
         "exec \"$@\""
     )
     return ["bash", "-lc", script, "_broccoli_agent_bootstrap", *command]
@@ -753,6 +833,7 @@ def reconcile_agents(names: set[str] | None = None, *, autostart_only: bool = Fa
             spec.get("swarms") or [],
             launch_cwd=launch_cwd,
             scope=spec.get("scope"),
+            immutable=bool(spec.get("immutable") or spec.get("non_learning")),
         )
         result = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", SESSION, "-n", name, "-c", launch_cwd, launch)
         window_id = result.stdout.strip()
@@ -890,15 +971,142 @@ def tracker_agents() -> dict:
         return {}
 
 
-def agent_list_payload() -> dict:
+def _tracker_agents_with_remote(include_remote: bool = False) -> dict:
+    if not can_connect(paths()["tracker_socket"]):
+        return {}
+    try:
+        agents = tracker_rpc("list", {"include_remote": bool(include_remote)})
+        return agents if isinstance(agents, dict) else {}
+    except Exception:
+        return {}
+
+
+def _configured_agent_view(name: str, spec: dict) -> dict:
+    return {
+        "cwd": spec.get("cwd"),
+        "command": spec.get("command"),
+        "scope": spec.get("scope"),
+        "autostart": agent_autostart(spec),
+        "swarms": spec.get("swarms", []),
+        "immutable": bool(spec.get("immutable") or spec.get("non_learning")),
+        "non_learning": bool(spec.get("non_learning") or spec.get("immutable")),
+    }
+
+
+def _remote_registry_agents() -> dict:
+    """Best-effort remote registry listing without starting a local launch path."""
+    remote: dict[str, dict] = {}
+    for entry in load_registry_urls_config().get("registries", []):
+        if not entry.get("enabled", True):
+            continue
+        token = _read_token_file(entry.get("token-file")) if entry.get("token-file") else None
+        headers = {"Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        url = entry["url"].rstrip("/") + "/agents"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                body = json.loads(resp.read().decode() or "{}")
+        except Exception:
+            continue
+        registry_name = entry.get("name") or "default"
+        for agent in (body or {}).get("agents") or []:
+            hostname = agent.get("hostname")
+            agent_name = agent.get("name")
+            if not hostname or not agent_name:
+                continue
+            base_key = f"{hostname}/{agent_name}"
+            key = base_key if base_key not in remote else f"{registry_name}:{base_key}"
+            remote[key] = {
+                **agent,
+                "name": key,
+                "scope": "remote",
+                "target_address": key,
+                "registry_name": registry_name,
+            }
+    return remote
+
+
+def merged_agent_rows(*, include_remote: bool = False) -> dict[str, dict]:
     cfg = load_config()
-    agents = cfg.get("agents") or {}
-    runtime_up = tmux_up()
-    tracker_up = can_connect(paths()["tracker_socket"])
+    configured_agents = cfg.get("agents") or {}
     windows_by_name: dict[str, list[dict[str, str]]] = {}
     for window in managed_windows():
         windows_by_name.setdefault(window["managed_agent"], []).append(window)
-    tracker_by_name = tracker_agents()
+    tracker_by_name = _tracker_agents_with_remote(include_remote=include_remote)
+    if include_remote:
+        for name, info in _remote_registry_agents().items():
+            tracker_by_name.setdefault(name, info)
+
+    names = set(configured_agents) | set(windows_by_name) | set(tracker_by_name)
+    rows: dict[str, dict] = {}
+    for name in sorted(names):
+        spec = configured_agents.get(name)
+        tracker = tracker_by_name.get(name) if isinstance(tracker_by_name.get(name), dict) else None
+        remote = bool((tracker or {}).get("scope") == "remote")
+        configured_view = _configured_agent_view(name, spec) if spec is not None else None
+        row = {
+            "name": name,
+            "configured": configured_view,
+            "is_configured": spec is not None,
+            "remote": remote,
+            "scope_kind": "remote" if remote else "local",
+            "source": "+".join(part for part, present in (("configured", spec is not None), ("running", bool(windows_by_name.get(name)) or bool(tracker and not remote)), ("remote", remote)) if present) or "unknown",
+            "running": bool(windows_by_name.get(name)) or bool(tracker and not remote),
+            "window_exists": bool(windows_by_name.get(name)),
+            "managed_windows": windows_by_name.get(name, []),
+            "tracker": tracker,
+            "target_address": (tracker or {}).get("target_address") or name,
+            "hostname": (tracker or {}).get("hostname"),
+            "agent_id": (tracker or {}).get("agent_id") or (tracker or {}).get("uuid"),
+            "tracker_id": (tracker or {}).get("tracker_id"),
+            "registry_name": (tracker or {}).get("registry_name"),
+            "status": (tracker or {}).get("status") or ("configured" if spec is not None else "unknown"),
+            "launchable": bool(spec and spec.get("command")),
+            "copyable": bool(spec and spec.get("command")) or bool((tracker or {}).get("command") or (tracker or {}).get("agent_command") or (tracker or {}).get("agent_cmd")),
+        }
+        if spec is not None:
+            row.update({
+                # Backward-compatible direct fields for simple JSON consumers.
+                "cwd": spec.get("cwd"),
+                "command": spec.get("command"),
+                "scope": spec.get("scope"),
+                "autostart": agent_autostart(spec),
+                "swarms": spec.get("swarms", []),
+                "immutable": bool(spec.get("immutable") or spec.get("non_learning")),
+                "non_learning": bool(spec.get("non_learning") or spec.get("immutable")),
+            })
+        elif tracker:
+            row.update({
+                "cwd": tracker.get("cwd"),
+                "command": tracker.get("command") or tracker.get("agent_command"),
+                "scope": tracker.get("scope"),
+                "swarms": tracker.get("swarms", []),
+                "agent_cmd": tracker.get("agent_cmd"),
+                "agent_type": tracker.get("agent_type"),
+                "model_type": tracker.get("model_type"),
+            })
+        rows[name] = row
+    return rows
+
+
+def filtered_agent_rows(args: argparse.Namespace) -> dict[str, dict]:
+    include_remote = bool(getattr(args, "include_remote", False) or getattr(args, "remote_only", False))
+    rows = merged_agent_rows(include_remote=include_remote)
+    if getattr(args, "configured_only", False):
+        rows = {name: row for name, row in rows.items() if row.get("is_configured")}
+    if getattr(args, "running_only", False):
+        rows = {name: row for name, row in rows.items() if row.get("running")}
+    if getattr(args, "remote_only", False):
+        rows = {name: row for name, row in rows.items() if row.get("remote")}
+    return rows
+
+
+def agent_list_payload(args: argparse.Namespace | None = None) -> dict:
+    args = args or argparse.Namespace(include_remote=False, configured_only=False, running_only=False, remote_only=False)
+    runtime_up = tmux_up()
+    tracker_up = can_connect(paths()["tracker_socket"])
     return {
         "app": APP,
         "version": VERSION,
@@ -910,27 +1118,7 @@ def agent_list_payload() -> dict:
             "tmux_mode": tmux_mode(),
             "tmux_socket": tmux_socket_label(),
         },
-        "agents": {
-            name: {
-                "name": name,
-                "configured": {
-                    "cwd": spec.get("cwd"),
-                    "command": spec.get("command"),
-                    "autostart": agent_autostart(spec),
-                    "swarms": spec.get("swarms", []),
-                },
-                # Backward-compatible direct fields for simple JSON consumers.
-                "cwd": spec.get("cwd"),
-                "command": spec.get("command"),
-                "autostart": agent_autostart(spec),
-                "swarms": spec.get("swarms", []),
-                "running": bool(windows_by_name.get(name)),
-                "window_exists": bool(windows_by_name.get(name)),
-                "managed_windows": windows_by_name.get(name, []),
-                "tracker": tracker_by_name.get(name),
-            }
-            for name, spec in sorted(agents.items())
-        },
+        "agents": filtered_agent_rows(args),
     }
 
 
@@ -981,8 +1169,67 @@ def status(args: argparse.Namespace) -> None:
 
 
 def agent_list(args: argparse.Namespace) -> None:
-    payload = agent_list_payload()
+    payload = agent_list_payload(args)
     print(json.dumps(payload if args.json else payload["agents"], indent=2, sort_keys=True))
+
+
+def _find_agent_row(name: str, *, include_remote: bool = True) -> tuple[str, dict]:
+    rows = merged_agent_rows(include_remote=include_remote)
+    if name in rows:
+        return name, rows[name]
+    for key, row in rows.items():
+        aliases = {str(row.get("target_address") or ""), str((row.get("tracker") or {}).get("name") or "")}
+        if name in aliases:
+            return key, row
+    raise SystemExit(f"agent {name!r} not found")
+
+
+def agent_status(args: argparse.Namespace) -> None:
+    key, row = _find_agent_row(args.name, include_remote=True)
+    payload = {"name": key, "agent": row}
+    print(json.dumps(payload if args.json else row, indent=2, sort_keys=True))
+
+
+def _row_copy_spec(source_name: str, row: dict, *, immutable: bool) -> dict:
+    configured = row.get("configured") if isinstance(row.get("configured"), dict) else {}
+    tracker = row.get("tracker") if isinstance(row.get("tracker"), dict) else {}
+    command = configured.get("command") or row.get("command") or tracker.get("command") or tracker.get("agent_command") or tracker.get("agent_cmd")
+    cwd = configured.get("cwd") or row.get("cwd") or tracker.get("cwd") or os.getcwd()
+    if not command:
+        raise SystemExit(f"agent {source_name!r} does not expose a copyable command")
+    spec = {
+        "cwd": str(cwd),
+        "command": str(command),
+        "scope": configured.get("scope") or row.get("scope") or tracker.get("bootstrap_scope"),
+        "swarms": configured.get("swarms") or row.get("swarms") or tracker.get("swarms") or [],
+        "autostart": False,
+        "immutable": bool(immutable),
+        "non_learning": bool(immutable),
+        "source": {
+            "name": source_name,
+            "target_address": row.get("target_address"),
+            "remote": bool(row.get("remote")),
+            "registry_name": row.get("registry_name"),
+        },
+    }
+    return {k: v for k, v in spec.items() if v not in (None, [], {}) or k in {"swarms", "autostart", "immutable", "non_learning"}}
+
+
+def agent_copy(args: argparse.Namespace) -> None:
+    try:
+        validate_agent_name(args.new_name)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    cfg = load_config()
+    agents = cfg.setdefault("agents", {})
+    if args.new_name in agents and not getattr(args, "replace", False):
+        raise SystemExit(f"agent {args.new_name!r} is already configured; use --replace")
+    source_key, row = _find_agent_row(args.source, include_remote=True)
+    spec = _row_copy_spec(source_key, row, immutable=bool(args.immutable))
+    agents[args.new_name] = spec
+    save_config(cfg)
+    payload = {"copied": source_key, "name": args.new_name, "agent": spec}
+    print(json.dumps(payload if args.json else payload, indent=2, sort_keys=True))
 
 
 def agent_remove(args: argparse.Namespace) -> None:
@@ -1149,11 +1396,15 @@ def _consume_post_name_launch_options(args: argparse.Namespace, command: list[st
         if token == "--":
             idx += 1
             break
+        if token == "--json":
+            setattr(args, "json", True)
+            idx += 1
+            continue
         if allow_edit_flags and token in {"--autostart", "--no-autostart"}:
             args.autostart = (token == "--autostart")
             idx += 1
             continue
-        if token in ({"--cwd", "--scope", "--swarm", "--role"} | ({"--command"} if allow_command_flag else set()) | ({"--rename"} if allow_edit_flags else set())):
+        if token in ({"--cwd", "--scope", "--swarm", "--role", "--host", "--timeout"} | ({"--command"} if allow_command_flag else set()) | ({"--rename"} if allow_edit_flags else set())):
             if idx + 1 >= len(remaining):
                 raise SystemExit(f"{token} requires a value")
             value = remaining[idx + 1]
@@ -1165,6 +1416,13 @@ def _consume_post_name_launch_options(args: argparse.Namespace, command: list[st
                 swarms.append(value)
             elif token == "--role":
                 roles.append(value)
+            elif token == "--host":
+                args.host = value
+            elif token == "--timeout":
+                try:
+                    args.timeout = float(value)
+                except ValueError:
+                    raise SystemExit("--timeout requires a number")
             elif token == "--command":
                 args.command_string = value
             elif token == "--rename":
@@ -1177,19 +1435,90 @@ def _consume_post_name_launch_options(args: argparse.Namespace, command: list[st
     return remaining[idx:]
 
 
+def _resolve_remote_run_tracker(host: str) -> dict:
+    trackers = tracker_rpc("list_trackers", {}, timeout=10.0)
+    if not isinstance(trackers, list):
+        raise SystemExit("remote run requires registry tracker discovery")
+    matches = [t for t in trackers if host in {str(t.get("hostname") or ""), str(t.get("tracker_id") or "")}]
+    if not matches:
+        raise SystemExit(f"remote run host not found: {host}")
+    if len(matches) > 1:
+        raise SystemExit(f"remote run host is ambiguous: {host}")
+    tracker_id = matches[0].get("tracker_id")
+    if not tracker_id:
+        raise SystemExit(f"remote run host has no tracker_id: {host}")
+    return matches[0]
+
+
+def _remote_run_wait_result(request_id: str, timeout_seconds: float) -> dict:
+    initial = tracker_rpc("wait_events", {"since": 0, "timeout": 0})
+    cursor = int((initial or {}).get("last_seq") or 0) if isinstance(initial, dict) else 0
+    deadline = time.time() + max(0.0, min(float(timeout_seconds), 120.0))
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise SystemExit(f"remote run timed out waiting for result request_id={request_id}")
+        wait_timeout = min(remaining, 5.0)
+        result = tracker_rpc("wait_events", {"since": cursor, "timeout": wait_timeout}, timeout=wait_timeout + 2.0)
+        if not isinstance(result, dict):
+            continue
+        cursor = int(result.get("last_seq") or cursor)
+        for event in result.get("events") or []:
+            if event.get("type") == "remote_run_result" and event.get("request_id") == request_id:
+                return event
+
+
+def run_remote(args: argparse.Namespace, command: list[str]) -> None:
+    ensure_tracker()
+    tracker = _resolve_remote_run_tracker(args.host)
+    info = tracker_rpc("tracker_info", {})
+    source_tracker_id = (info or {}).get("tracker_id") if isinstance(info, dict) else None
+    request_id = f"remote-run-{uuid.uuid4().hex[:12]}"
+    payload = {"request_id": request_id, "agent": args.name}
+    if args.cwd:
+        payload["cwd"] = os.path.abspath(os.path.expanduser(args.cwd))
+    if args.scope:
+        payload["scope"] = args.scope
+    if command:
+        payload["command"] = command
+    if source_tracker_id:
+        payload["source_tracker_id"] = source_tracker_id
+        payload["reply_to_tracker_id"] = source_tracker_id
+    publish = tracker_rpc("publish_tracker_event", {"target_tracker_id": tracker["tracker_id"], "event_type": "remote_run_request", "payload": payload}, timeout=10.0)
+    if not isinstance(publish, dict) or not publish.get("success"):
+        raise SystemExit(f"failed to publish remote_run_request to {args.host}")
+    result = _remote_run_wait_result(request_id, getattr(args, "timeout", 30.0))
+    print(json.dumps({"remote_run": result, "target_tracker": tracker}, indent=2, sort_keys=True))
+
+
 def run(args: argparse.Namespace) -> None:
     command = _consume_post_name_launch_options(args, list(getattr(args, "command", None) or []))
     if command and command[0] == "--":
         command = command[1:]
-    if not command:
-        raise SystemExit("run requires a command after --")
 
     try:
         validate_agent_name(args.name)
     except ValueError as e:
         raise SystemExit(str(e))
 
-    source_cwd = os.path.abspath(os.path.expanduser(args.cwd)) if args.cwd else os.getcwd()
+    if getattr(args, "host", None):
+        run_remote(args, command)
+        return
+
+    cfg = load_config()
+    spec = (cfg.get("agents") or {}).get(args.name)
+    using_saved_config = False
+    if not command:
+        if spec is None:
+            raise SystemExit(f"run requires a command after --, or a saved agent definition for {args.name!r}")
+        saved_command = spec.get("command")
+        if not saved_command:
+            raise SystemExit(f"saved agent {args.name!r} has no command")
+        command = _parse_command_for_bootstrap(str(saved_command))
+        using_saved_config = True
+
+    source_cwd_value = args.cwd or ((spec or {}).get("cwd") if using_saved_config else None)
+    source_cwd = os.path.abspath(os.path.expanduser(source_cwd_value)) if source_cwd_value else os.getcwd()
     if not os.path.isdir(source_cwd):
         raise SystemExit(f"run source-cwd does not exist or is not a directory: {source_cwd}")
 
@@ -1199,12 +1528,15 @@ def run(args: argparse.Namespace) -> None:
         raise SystemExit(f"agent {args.name!r} is already running; stop or edit it first")
 
     launch_cwd = ephemeral_agent_workspace(args.name)
-    context_path = str(Path(launch_cwd) / "bootstrap.json")
-    if Path(context_path).exists():
-        Path(context_path).unlink()
+    context_path = str(Path(launch_cwd))
 
-    swarms = parse_swarm_args(args)
-    wrapped = _build_bootstrap_track_command(args.name, source_cwd, args.scope, command, context_path)
+    if using_saved_config and not (getattr(args, "swarm", None) or getattr(args, "role", None)):
+        swarms = normalize_swarms((spec or {}).get("swarms") or [])
+    else:
+        swarms = parse_swarm_args(args)
+    scope = args.scope if args.scope is not None else ((spec or {}).get("scope") if using_saved_config else None)
+    immutable = bool(using_saved_config and spec and (spec.get("immutable") or spec.get("non_learning")))
+    wrapped = _build_bootstrap_track_command(args.name, source_cwd, scope, command, context_path)
     wrapped_cmd = shlex.join(wrapped)
     launch = managed_agent_launch_command(
         args.name,
@@ -1212,6 +1544,7 @@ def run(args: argparse.Namespace) -> None:
         wrapped_cmd,
         swarms,
         launch_cwd=launch_cwd,
+        immutable=immutable,
     )
 
     result = tmux(
@@ -1227,7 +1560,7 @@ def run(args: argparse.Namespace) -> None:
     window_id = window_and_pane[0]
     pane_id = window_and_pane[1] if len(window_and_pane) > 1 else ""
     tmux("set-option", "-w", "-t", window_id, MANAGED_AGENT_OPTION, args.name)
-    print(json.dumps({"started": args.name, "window_id": window_id, "pane_id": pane_id, "ephemeral_cwd": launch_cwd, "bootstrap_context": context_path}, indent=2, sort_keys=True))
+    print(json.dumps({"started": args.name, "window_id": window_id, "pane_id": pane_id, "ephemeral_cwd": launch_cwd, "bootstrap_context": context_path, "bootstrap_context_dir": context_path, "configured": using_saved_config, "immutable": immutable}, indent=2, sort_keys=True))
 
 
 def stop(_args: argparse.Namespace) -> None:
@@ -2061,6 +2394,63 @@ def task_mark_result(args: argparse.Namespace) -> None:
     _print_payload(payload, args.json)
 
 
+def safe_context_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "-", name).strip("-._") or "agent"
+
+
+def _markdown_memory_list(title: str, records: list[dict]) -> str:
+    lines = [f"# {title}", ""]
+    if not records:
+        lines.append("No active records.")
+        return "\n".join(lines).rstrip() + "\n"
+    for mem in records:
+        lines.extend([
+            f"## {mem.get('title') or mem.get('memory_id')}",
+            f"- id: `{mem.get('memory_id')}`",
+            f"- type: `{mem.get('type')}`",
+            f"- scope: `{mem.get('scope')}`",
+        ])
+        if mem.get("subject_agent"):
+            lines.append(f"- subject_agent: `{mem.get('subject_agent')}`")
+        if mem.get("source_task_id"):
+            lines.append(f"- source_task: `{mem.get('source_task_id')}`")
+        lines.extend(["", str(mem.get("body") or "").strip(), ""])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dict:
+    path = Path(context_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    memories = payload.get("memory") or []
+    by_type = {typ: [m for m in memories if m.get("type") == typ] for typ in ["fact", "episode", "habit", "expertise", "skill"]}
+    task = payload.get("task") or {}
+    state = payload.get("state") or {}
+    memory_intro = ["# Memory", "", "Durable active memory returned by Broccoli Comms bootstrap.", ""]
+    if task:
+        memory_intro.extend(["## Current task", "", f"- id: `{task.get('task_id')}`", f"- title: {task.get('title') or ''}", f"- status: `{task.get('status')}`", ""])
+        if task.get("description"):
+            memory_intro.extend([textwrap.dedent(str(task.get("description"))).strip(), ""])
+    if state:
+        memory_intro.extend(["## Current working state", "", f"- status: `{state.get('status')}`", f"- activity: {state.get('current_activity') or ''}", f"- next: {state.get('next_step') or ''}", ""])
+    memory_intro.append(_markdown_memory_list("Facts and episodes", by_type["fact"] + by_type["episode"]))
+    files = []
+    for name, content in {
+        "memory.md": "\n".join(memory_intro),
+        "habits.md": _markdown_memory_list("Habits", by_type["habit"]),
+        "expertise.md": _markdown_memory_list("Expertise", by_type["expertise"]),
+    }.items():
+        target = path / name
+        target.write_text(content, encoding="utf-8")
+        files.append(str(target))
+    for mem in by_type["skill"]:
+        skill_name = safe_context_name(str(mem.get("title") or mem.get("memory_id") or "skill"))
+        target = path / "skill" / skill_name / "SKILLS.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_markdown_memory_list("Skill", [mem]), encoding="utf-8")
+        files.append(str(target))
+    return {"context_dir": str(path), "files": files}
+
+
 def task_bootstrap(args: argparse.Namespace) -> None:
     agent = args.agent or os.environ.get("AGENT_NAME") or "agent"
     cwd = Path(args.cwd or os.getcwd())
@@ -2072,6 +2462,8 @@ def task_bootstrap(args: argparse.Namespace) -> None:
     conflicts = duplicate_profile_instances(agent)
     if conflicts:
         payload["profile_conflict"] = {"agent": agent, "instances": conflicts, "message": "duplicate same-profile instances detected; parallel different task chains are allowed, but same-chain queue claiming should be coordinator-resolved"}
+    if getattr(args, "write_context_dir", None):
+        payload["bootstrap_context"] = write_bootstrap_context_files(payload, args.write_context_dir)
     _print_payload(payload, args.json)
 
 
@@ -2166,6 +2558,47 @@ def trusted_memory_actor_from_runtime() -> str:
     return "user"
 
 
+def memory_proposal_fallback_markdown(mem: dict) -> str:
+    lines = [
+        "# Memory proposal",
+        f"Memory: `{mem['memory_id']}`",
+        f"Type: `{mem.get('type')}`",
+        f"Scope: `{mem.get('scope')}`",
+        f"Version: `{mem.get('version')}`",
+        "",
+        f"## {mem.get('title') or 'Untitled'}",
+        "",
+        str(mem.get("body") or ""),
+        "",
+        f"Use `/memory approve {mem['memory_id']}`, `/memory reject {mem['memory_id']}`, or `/memory edit {mem['memory_id']} title | body`.",
+    ]
+    return "\n".join(lines)
+
+
+def notify_memory_proposal(mem: dict) -> dict:
+    message = memory_proposal_fallback_markdown(mem)
+    metadata = {
+        "content_type": "application/vnd.broccoli.memory-proposal+json",
+        "kind": "memory_proposal",
+        "memory_id": mem.get("memory_id"),
+        "memory_type": mem.get("type"),
+        "memory_title": mem.get("title"),
+        "memory_scope": mem.get("scope"),
+        "memory_status": mem.get("status"),
+        "memory_version": mem.get("version"),
+        "source_task_id": mem.get("source_task_id"),
+        "source": "system/memory-kernel",
+        "sender_source": "system",
+    }
+    try:
+        result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": "memory-kernel"})
+        if not result:
+            raise RuntimeError("tracker RPC send_message failed")
+        return {"sent": True, "result": result}
+    except Exception as e:
+        return {"sent": False, "error": str(e)}
+
+
 def memory_propose(args: argparse.Namespace) -> None:
     try:
         ident = verified_memory_runtime_identity()
@@ -2182,6 +2615,8 @@ def memory_propose(args: argparse.Namespace) -> None:
             idempotency_key=args.idempotency_key, proposed_by=agent, proposed_by_instance=instance,
             trusted_actor=trusted_actor, non_learning=immutable_learning_instance(agent, instance),
         )
+        if not payload.get("idempotent"):
+            payload["notification"] = notify_memory_proposal(payload["memory"])
     except (ValueError, json.JSONDecodeError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
@@ -2191,6 +2626,28 @@ def memory_approve(args: argparse.Namespace) -> None:
     try:
         payload = learning_kernel().memory_approve(args.memory_id, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
     except (KeyError, ValueError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def memory_edit(args: argparse.Namespace) -> None:
+    try:
+        metadata = json.loads(args.metadata_json) if args.metadata_json else None
+        payload = learning_kernel().memory_edit(
+            args.memory_id,
+            expected_version=args.expected_version,
+            actor=trusted_memory_actor_from_runtime(),
+            type=args.type,
+            scope=args.scope,
+            subject_agent=args.subject_agent,
+            title=args.title,
+            body=args.body,
+            source_task_id=args.source_task,
+            trusted_manual=args.trusted_manual,
+            tags=args.tag,
+            metadata=metadata,
+        )
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
 
@@ -2244,9 +2701,24 @@ def _parse_discoveries(values: list[str] | None) -> list[dict[str, str]]:
 
 
 def immutable_learning_instance(agent: str | None, instance: str | None) -> bool:
+    if os.environ.get("BROCCOLI_COMMS_IMMUTABLE_INSTANCE", "").lower() in {"1", "true", "yes", "on"}:
+        return True
+    if os.environ.get("BROCCOLI_COMMS_NON_LEARNING", "").lower() in {"1", "true", "yes", "on"}:
+        return True
     immutable = get_toml_config("learning", "immutable_instances", []) or []
     names = {str(item) for item in immutable if isinstance(item, str)} if isinstance(immutable, list) else set()
-    return bool((agent and agent in names) or (instance and instance in names))
+    if (agent and agent in names) or (instance and instance in names):
+        return True
+    if agent:
+        try:
+            spec = (load_config().get("agents") or {}).get(agent)
+            if isinstance(spec, dict) and (spec.get("immutable") or spec.get("non_learning")):
+                return True
+        except SystemExit:
+            raise
+        except Exception:
+            pass
+    return False
 
 
 def approval_fallback_markdown(approval: dict) -> str:
@@ -2394,12 +2866,15 @@ def main() -> None:
     doctor_parser.add_argument("--json", action="store_true", help="Emit JSON doctor results")
     doctor_parser.set_defaults(func=doctor)
 
-    run_parser = sub.add_parser("run", help="Run a named agent command in a fresh /tmp workspace with bootstrap context")
+    run_parser = sub.add_parser("run", help="Run locally, or with --host publish remote_run_request and wait for remote_run_result")
     run_parser.add_argument("name", help="Agent profile name")
     run_parser.add_argument("--cwd", help="Source working directory (defaults to current directory)")
     run_parser.add_argument("--scope", help="Optional task scope filter for bootstrap")
+    run_parser.add_argument("--host", help="Remote registry host/tracker id; publish remote_run_request instead of launching locally")
+    run_parser.add_argument("--timeout", type=float, default=30.0, help="Seconds to wait for remote_run_result with --host")
     run_parser.add_argument("--swarm", action="append", help="Swarm membership name; repeat with --role for multiple swarms")
     run_parser.add_argument("--role", action="append", choices=sorted(VALID_SWARM_ROLES), help="Swarm role for the preceding --swarm")
+    run_parser.add_argument("--json", action="store_true", help="Emit JSON start result")
     run_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to run after --")
     run_parser.set_defaults(func=run)
 
@@ -2459,6 +2934,7 @@ def main() -> None:
     task_bootstrap_parser.add_argument("--scope")
     task_bootstrap_parser.add_argument("--cwd")
     task_bootstrap_parser.add_argument("--instance")
+    task_bootstrap_parser.add_argument("--write-context-dir", help="Write bootstrap context as memory.md/habits.md/expertise.md plus skill/<skill-name>/SKILLS.md files in this directory")
     task_bootstrap_parser.add_argument("--json", action="store_true")
     task_bootstrap_parser.set_defaults(func=task_bootstrap)
     task_submit_parser = task_sub.add_parser("submit-completion")
@@ -2544,7 +3020,7 @@ def main() -> None:
     memory = sub.add_parser("memory", help="Manage durable approved memory")
     memory_sub = memory.add_subparsers(dest="memory_command", required=True)
     memory_propose_parser = memory_sub.add_parser("propose")
-    memory_propose_parser.add_argument("--type", required=True, choices=["fact", "habit", "episode", "expertise"])
+    memory_propose_parser.add_argument("--type", required=True, choices=["fact", "habit", "episode", "expertise", "skill"])
     memory_propose_parser.add_argument("--scope", default="global")
     memory_propose_parser.add_argument("--subject-agent")
     memory_propose_parser.add_argument("--title", required=True)
@@ -2563,6 +3039,20 @@ def main() -> None:
     memory_approve_parser.add_argument("--expected-version", type=int)
     memory_approve_parser.add_argument("--json", action="store_true")
     memory_approve_parser.set_defaults(func=memory_approve)
+    memory_edit_parser = memory_sub.add_parser("edit")
+    memory_edit_parser.add_argument("memory_id")
+    memory_edit_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise", "skill"])
+    memory_edit_parser.add_argument("--scope")
+    memory_edit_parser.add_argument("--subject-agent")
+    memory_edit_parser.add_argument("--title")
+    memory_edit_parser.add_argument("--body")
+    memory_edit_parser.add_argument("--source-task")
+    memory_edit_parser.add_argument("--trusted-manual", action="store_true", default=None)
+    memory_edit_parser.add_argument("--tag", action="append")
+    memory_edit_parser.add_argument("--metadata-json")
+    memory_edit_parser.add_argument("--expected-version", type=int)
+    memory_edit_parser.add_argument("--json", action="store_true")
+    memory_edit_parser.set_defaults(func=memory_edit)
     memory_reject_parser = memory_sub.add_parser("reject")
     memory_reject_parser.add_argument("memory_id")
     memory_reject_parser.add_argument("--reason")
@@ -2577,7 +3067,7 @@ def main() -> None:
     memory_revoke_parser.set_defaults(func=memory_revoke)
     memory_list_parser = memory_sub.add_parser("list")
     memory_list_parser.add_argument("--scope")
-    memory_list_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise"])
+    memory_list_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise", "skill"])
     memory_list_parser.add_argument("--status", choices=["pending", "active", "rejected", "revoked", "superseded"])
     memory_list_parser.add_argument("--agent")
     memory_list_parser.add_argument("--json", action="store_true")
@@ -2664,9 +3154,25 @@ def main() -> None:
 
     agent = sub.add_parser("agent", help="Manage configured agents")
     agent_sub = agent.add_subparsers(dest="agent_command", required=True)
-    agent_list_parser = agent_sub.add_parser("list", help="List configured agents")
+    agent_list_parser = agent_sub.add_parser("list", help="List configured, running, and optionally remote agents")
     agent_list_parser.add_argument("--json", action="store_true", help="Include config/runtime metadata in JSON output")
+    agent_list_parser.add_argument("--include-remote", action="store_true", help="Include remote registry agents")
+    agent_list_parser.add_argument("--configured-only", action="store_true", help="Show only saved configured agents")
+    agent_list_parser.add_argument("--running-only", action="store_true", help="Show only running local agents")
+    agent_list_parser.add_argument("--remote-only", action="store_true", help="Show only remote registry agents")
     agent_list_parser.set_defaults(func=agent_list)
+    agent_status_parser = agent_sub.add_parser("status", help="Show one merged configured/running/remote agent row")
+    agent_status_parser.add_argument("name", help="Agent name or target address")
+    agent_status_parser.add_argument("--include-remote", action="store_true", help="Include remote registry agents")
+    agent_status_parser.add_argument("--json", action="store_true", help="Emit JSON")
+    agent_status_parser.set_defaults(func=agent_status)
+    agent_copy_parser = agent_sub.add_parser("copy", help="Copy a configured/local/remote agent definition")
+    agent_copy_parser.add_argument("source", help="Source agent name or target address")
+    agent_copy_parser.add_argument("new_name", help="New local configured agent name")
+    agent_copy_parser.add_argument("--immutable", action="store_true", help="Mark copy immutable/non-learning")
+    agent_copy_parser.add_argument("--replace", action="store_true", help="Replace an existing saved definition")
+    agent_copy_parser.add_argument("--json", action="store_true", help="Emit JSON")
+    agent_copy_parser.set_defaults(func=agent_copy)
     agent_edit_parser = agent_sub.add_parser("edit", help="Update and restart a live managed agent")
     agent_edit_parser.add_argument("name", help="Existing live managed agent name")
     agent_edit_parser.add_argument("--rename", help="Rename the managed agent")

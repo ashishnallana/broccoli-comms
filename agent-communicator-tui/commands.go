@@ -1,9 +1,8 @@
 package main
 
 import (
-	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
-
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -302,7 +301,9 @@ type composerAction struct {
 	Submit     bool
 	Keys       []string
 	ApprovalID string
+	MemoryID   string
 	Result     string
+	Title      string
 	Original   string
 }
 
@@ -377,6 +378,28 @@ func parseComposerAction(input string) composerAction {
 	}
 	if strings.HasPrefix(trimmed, "/needs ") {
 		return composerAction{Kind: "approval_review", Result: "need_improvements", ApprovalID: firstField(strings.TrimSpace(strings.TrimPrefix(trimmed, "/needs"))), Original: input}
+	}
+	if trimmed == "/memory" {
+		return composerAction{Kind: "memory_action", Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/memory ") {
+		fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(trimmed, "/memory")))
+		action := composerAction{Kind: "memory_action", Original: input}
+		if len(fields) > 0 {
+			action.Result = fields[0]
+		}
+		if len(fields) > 1 {
+			action.MemoryID = fields[1]
+		}
+		if action.Result == "edit" && len(fields) > 2 {
+			rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(trimmed, "/memory")), strings.Join(fields[:2], " ")))
+			parts := strings.SplitN(rest, "|", 2)
+			action.Title = strings.TrimSpace(parts[0])
+			if len(parts) > 1 {
+				action.Body = strings.TrimSpace(parts[1])
+			}
+		}
+		return action
 	}
 	if trimmed == "/broadcast" {
 		return composerAction{Kind: "broadcast", Original: input}
@@ -574,30 +597,63 @@ type agentConfigSpun struct {
 	Err  error
 }
 
-func spinAgentCmd(cfg AgentConfig) tea.Cmd {
+func runConfiguredAgentCmd(name string) tea.Cmd {
 	return func() tea.Msg {
-		dir := cfg.Directory
-		if dir == "" {
-			if d, err := os.Getwd(); err == nil {
-				dir = d
-			} else {
-				dir = "."
-			}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := broccoliCommsCommandContext(ctx, "run", name, "--json")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return agentConfigSpun{Name: name, Err: fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))}
 		}
+		return agentConfigSpun{Name: name}
+	}
+}
 
-		args := append([]string{"spin", dir, cfg.AgentCommand}, cfg.AgentArgs...)
-		cmd := broccoliAgentTrackerCommand(args...)
-		err := cmd.Run()
-		return agentConfigSpun{Name: cfg.Name, Err: err}
+func immutableCopyName(item ConfigSelectionItem) string {
+	base := item.Name
+	if item.TargetAddress != "" {
+		base = item.TargetAddress
+	}
+	base = strings.Trim(strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
+			return r
+		}
+		return '-'
+	}, base), "-._")
+	if base == "" {
+		base = "agent"
+	}
+	return "copy-" + base
+}
+
+func copyAgentImmutableCmd(item ConfigSelectionItem) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		newName := immutableCopyName(item)
+		source := fallback(item.TargetAddress, item.Name)
+		cmd := broccoliCommsCommandContext(ctx, "agent", "copy", source, newName, "--immutable", "--json")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return agentConfigSpun{Name: newName, Err: fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))}
+		}
+		return agentConfigSpun{Name: newName}
 	}
 }
 
 type ConfigSelectionItem struct {
-	Name        string
-	Description string
-	IsRemote    bool
-	TrackerID   string
-	Hostname    string
+	Name          string
+	Description   string
+	IsRemote      bool
+	TrackerID     string
+	Hostname      string
+	TargetAddress string
+	Configured    bool
+	Running       bool
+	Launchable    bool
+	Copyable      bool
+	Source        string
 }
 
 type configItemsLoaded struct {
@@ -605,75 +661,117 @@ type configItemsLoaded struct {
 	Err   error
 }
 
+type broccoliAgentListPayload struct {
+	Agents map[string]broccoliAgentListRow `json:"agents"`
+}
+
+type broccoliAgentListRow struct {
+	Name          string `json:"name"`
+	Status        string `json:"status"`
+	ScopeKind     string `json:"scope_kind"`
+	Remote        bool   `json:"remote"`
+	IsConfigured  bool   `json:"is_configured"`
+	Running       bool   `json:"running"`
+	Launchable    bool   `json:"launchable"`
+	Copyable      bool   `json:"copyable"`
+	TargetAddress string `json:"target_address"`
+	Hostname      string `json:"hostname"`
+	TrackerID     string `json:"tracker_id"`
+	RegistryName  string `json:"registry_name"`
+	Command       string `json:"command"`
+	CWD           string `json:"cwd"`
+}
+
+func loadConfigItemsFromBroccoliComms(ctx context.Context) ([]ConfigSelectionItem, error) {
+	cmd := broccoliCommsCommandContext(ctx, "agent", "list", "--include-remote", "--json")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
+	}
+	var payload broccoliAgentListPayload
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return nil, err
+	}
+	items := make([]ConfigSelectionItem, 0, len(payload.Agents))
+	for key, row := range payload.Agents {
+		name := fallback(row.Name, key)
+		descParts := []string{}
+		if row.IsConfigured {
+			descParts = append(descParts, "configured")
+		}
+		if row.Running {
+			descParts = append(descParts, "running")
+		}
+		if row.Remote {
+			descParts = append(descParts, "remote")
+		}
+		if row.Command != "" {
+			descParts = append(descParts, row.Command)
+		}
+		description := strings.Join(descParts, " · ")
+		if description == "" {
+			description = row.Status
+		}
+		items = append(items, ConfigSelectionItem{
+			Name:          name,
+			Description:   description,
+			IsRemote:      row.Remote,
+			TrackerID:     row.TrackerID,
+			Hostname:      row.Hostname,
+			TargetAddress: fallback(row.TargetAddress, key),
+			Configured:    row.IsConfigured,
+			Running:       row.Running,
+			Launchable:    row.Launchable,
+			Copyable:      row.Copyable,
+			Source:        "broccoli-comms",
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].IsRemote != items[j].IsRemote {
+			return !items[i].IsRemote
+		}
+		return items[i].Name < items[j].Name
+	})
+	return items, nil
+}
+
 func loadConfigItemsCmd(local localClient) tea.Cmd {
 	return func() tea.Msg {
-		var items []ConfigSelectionItem
-
-		// 1. Load Local custom configurations
-		localConfigs, localKeys, err := LoadAgentConfigs()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		items, err := loadConfigItemsFromBroccoliComms(ctx)
 		if err == nil {
+			return configItemsLoaded{Items: items}
+		}
+
+		var fallbackItems []ConfigSelectionItem
+		localConfigs, localKeys, localErr := LoadAgentConfigs()
+		if localErr == nil {
 			for _, key := range localKeys {
 				cfg := localConfigs[key]
-				items = append(items, ConfigSelectionItem{
-					Name:        cfg.Name,
-					Description: cfg.Description,
-					IsRemote:    false,
-				})
+				fallbackItems = append(fallbackItems, ConfigSelectionItem{Name: cfg.Name, Description: cfg.Description, IsRemote: false, Configured: true, Launchable: true, Copyable: true, Source: "legacy"})
 			}
 		}
-
-		// 2. Fetch Remote Configurations from Registry
-		if local != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			trackers, err := local.ListTrackers(ctx)
-			if err == nil {
-				ownTrackerID := config.GetString("", "tracker", "tracker_id")
-				if ownTrackerID == "" {
-					ownTrackerID = os.Getenv("AGENT_TRACKER_ID")
-				}
-				ownHostname := config.GetString("", "tracker", "hostname")
-				if ownHostname == "" {
-					ownHostname = os.Getenv("AGENT_TRACKER_HOSTNAME")
-				}
-				if ownHostname == "" {
-					ownHostname, _ = os.Hostname()
-				}
-				for _, t := range trackers {
-					if t.TrackerID == ownTrackerID || t.Hostname == ownHostname {
-						continue // Skip local tracker remote configs
-					}
-					for _, cfg := range t.AgentConfigs {
-						items = append(items, ConfigSelectionItem{
-							Name:        cfg.Name,
-							Description: cfg.Description,
-							IsRemote:    true,
-							TrackerID:   t.TrackerID,
-							Hostname:    t.Hostname,
-						})
-					}
-				}
-			}
+		if len(fallbackItems) > 0 {
+			return configItemsLoaded{Items: fallbackItems, Err: nil}
 		}
-
-		return configItemsLoaded{Items: items, Err: err}
+		return configItemsLoaded{Items: nil, Err: err}
 	}
 }
 
 func spinRemoteAgentCmd(local localClient, targetTrackerID, configName string) tea.Cmd {
 	return func() tea.Msg {
-		if local == nil {
-			return agentConfigSpun{Name: configName, Err: errors.New("local client unavailable")}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-
-		payload := map[string]any{
-			"config_name": configName,
+		// Remote runs use the canonical Broccoli Comms launch path.  The CLI
+		// publishes remote_run_request and waits for remote_run_result; it does
+		// not launch tmux directly from the TUI.
+		cmd := broccoliCommsCommandContext(ctx, "run", "--host", targetTrackerID, configName, "--json")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return agentConfigSpun{Name: configName, Err: fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))}
 		}
-
-		err := local.PublishTrackerEvent(ctx, targetTrackerID, "spin_request", payload)
-		return agentConfigSpun{Name: configName, Err: err}
+		return agentConfigSpun{Name: configName}
 	}
 }
 

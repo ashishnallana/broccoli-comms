@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"sort"
@@ -12,7 +13,7 @@ import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
-var agentListProvider = loadAgentsFromRPC
+var agentListProvider = loadAgentsFromBroccoliComms
 
 func broccoliAgentTrackerCommand(args ...string) *exec.Cmd {
 	return broccoliAgentTrackerCommandContext(context.Background(), args...)
@@ -55,6 +56,23 @@ func loadAgents(local localClient) tea.Cmd {
 	}
 }
 
+func loadAgentsFromBroccoliComms(ctx context.Context, local localClient) ([]agentRow, error) {
+	cmd := broccoliCommsCommandContext(ctx, "agent", "list", "--include-remote", "--json")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		var payload broccoliAgentListPayload
+		if err := json.Unmarshal(out, &payload); err == nil {
+			rows := make([]agentRow, 0, len(payload.Agents))
+			for key, row := range payload.Agents {
+				rows = append(rows, rowFromBroccoliAgent(key, row))
+			}
+			sortRows(rows)
+			return rows, nil
+		}
+	}
+	return loadAgentsFromRPC(ctx, local)
+}
+
 func loadAgentsFromRPC(ctx context.Context, local localClient) ([]agentRow, error) {
 	if local == nil {
 		return nil, nil
@@ -74,6 +92,28 @@ func loadAgentsFromRPC(ctx context.Context, local localClient) ([]agentRow, erro
 	sortRows(rows)
 	return rows, nil
 }
+
+func rowFromBroccoliAgent(key string, agent broccoliAgentListRow) agentRow {
+	scope := "local"
+	if agent.Remote || agent.ScopeKind == "remote" {
+		scope = "remote"
+	}
+	name := fallback(agent.Name, key)
+	if scope == "remote" {
+		host, remoteName := splitRemoteTarget(fallback(agent.TargetAddress, key))
+		if agent.Hostname != "" {
+			host = agent.Hostname
+		}
+		if remoteName == "" {
+			remoteName = name
+		}
+		name = remoteDisplayName(fallback(agent.TargetAddress, key), host, remoteName)
+		return agentRow{Name: name, TargetAddress: fallback(agent.TargetAddress, key), AgentName: remoteName, Scope: scope, Status: agent.Status, CWD: fallback(agent.CWD, "unavailable"), Hostname: host, TrackerID: agent.TrackerID, RegistryName: agent.RegistryName, Configured: agentBoolPtr(agent.IsConfigured), Running: agentBoolPtr(agent.Running), Launchable: agentBoolPtr(agent.Launchable)}
+	}
+	return agentRow{Name: name, TargetAddress: fallback(agent.TargetAddress, key), AgentName: name, Scope: scope, Status: agent.Status, CWD: fallback(agent.CWD, "unknown"), Hostname: agent.Hostname, Configured: agentBoolPtr(agent.IsConfigured), Running: agentBoolPtr(agent.Running), Launchable: agentBoolPtr(agent.Launchable)}
+}
+
+func agentBoolPtr(v bool) *bool { return &v }
 
 func sortRows(rows []agentRow) {
 	sort.Slice(rows, func(i, j int) bool {

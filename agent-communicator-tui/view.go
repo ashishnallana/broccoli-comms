@@ -296,13 +296,17 @@ func (m model) renderPromptMenu(width, height int) string {
 
 func (m model) renderConfigMenu(width, height int) string {
 	var body string
+	items := m.filteredConfigItems()
+	query := string(m.configQuery)
 	if len(m.configItems) == 0 {
 		body = lipgloss.NewStyle().
 			Foreground(colors.Error).
-			Render("No custom agent configurations found.\nPlace config.json in ~/.config/agent-tracker/agents/<name>/")
+			Render("No configured, running, or remote agents found via broccoli-comms agent list.")
+	} else if len(items) == 0 {
+		body = lipgloss.NewStyle().Foreground(colors.Error).Render("No agents match search: "+query)
 	} else {
 		var listLines []string
-		for i, item := range m.configItems {
+		for i, item := range items {
 			style := lipgloss.NewStyle().Foreground(colors.Text)
 			prefix := "  "
 			if i == m.configSelected {
@@ -310,9 +314,13 @@ func (m model) renderConfigMenu(width, height int) string {
 				prefix = "> "
 			}
 
-			scopePrefix := fmt.Sprintf("[%s] (local) ", shortHost(localHostname()))
+			scopePrefix := fmt.Sprintf("[%s] ", shortHost(localHostname()))
 			if item.IsRemote {
-				scopePrefix = fmt.Sprintf("[%s] ", shortHost(item.Hostname))
+				scopePrefix = fmt.Sprintf("[%s] remote ", shortHost(item.Hostname))
+			} else if item.Running {
+				scopePrefix = fmt.Sprintf("[%s] running ", shortHost(localHostname()))
+			} else if item.Configured {
+				scopePrefix = fmt.Sprintf("[%s] configured ", shortHost(localHostname()))
 			}
 
 			scopeStyle := lipgloss.NewStyle().Foreground(colors.Muted)
@@ -323,12 +331,18 @@ func (m model) renderConfigMenu(width, height int) string {
 				scopeStyle = scopeStyle.Background(colors.SelectedBg).Foreground(colors.SelectedFg)
 			}
 
-			listLines = append(listLines, prefix+scopeStyle.Render(scopePrefix)+style.Render(item.Name)+" - "+item.Description)
+			action := "Enter: run"
+			if item.IsRemote || !item.Launchable {
+				action = "Enter: immutable copy"
+			} else if item.Copyable {
+				action = "Enter: run · c: copy"
+			}
+			listLines = append(listLines, prefix+scopeStyle.Render(scopePrefix)+style.Render(item.Name)+" - "+item.Description+mutedStyle.Render(" · "+action))
 		}
 		body = strings.Join(listLines, "\n")
 	}
 
-	title := titleStyle.Render("Custom Agent Configurations")
-	boxContent := title + "\n\n" + body
+	title := titleStyle.Render("Agents (search/run/copy)")
+	boxContent := title + "\n" + mutedStyle.Render("Search: "+query+"  ·  Enter runs configured agents; remote/unlaunchable entries are copied immutable") + "\n\n" + body
 	return box(boxContent, width, height)
 }

@@ -547,6 +547,13 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
             "event_seq_at_submission",
             "source",
             "sender_source",
+            "memory_id",
+            "memory_type",
+            "memory_title",
+            "memory_scope",
+            "memory_status",
+            "memory_version",
+            "source_task_id",
         ):
             if key in content_metadata:
                 payload[key] = content_metadata[key]

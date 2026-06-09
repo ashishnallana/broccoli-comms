@@ -916,6 +916,168 @@ class TestHttpAndRegistry(unittest.TestCase):
         register.assert_called_once()
         ack.assert_called_once_with("e1")
 
+    def test_event_loop_dispatches_remote_run_request(self):
+        event = {
+            "event_id": "e-run",
+            "event_type": "remote_run_request",
+            "payload": {"request_id": "rr-1", "agent": "coder", "cwd": "/tmp/repo", "scope": "project:x", "command": "pi"},
+        }
+
+        class InlineThread:
+            def __init__(self, target, args=(), kwargs=None, daemon=None):
+                self.target = target
+                self.args = args
+                self.kwargs = kwargs or {}
+            def start(self):
+                self.target(*self.args, **self.kwargs)
+
+        with mock.patch.object(registry_client, "fetch_events", side_effect=[(200, {"events": [event]}), SystemExit]), \
+             mock.patch.object(registry_client, "ack_event") as ack, \
+             mock.patch.object(registry_client, "_handle_remote_run_request") as handle_run, \
+             mock.patch("registry_client.threading.Thread", new=InlineThread):
+            with self.assertRaises(SystemExit):
+                registry_client._event_loop()
+
+        handle_run.assert_called_once_with(event["payload"])
+        ack.assert_called_once_with("e-run")
+
+    def test_spin_request_routes_to_remote_run_with_deprecation_log(self):
+        event = {"event_id": "e-spin", "event_type": "spin_request", "payload": {"config_name": "legacy-coder"}}
+
+        class InlineThread:
+            def __init__(self, target, args=(), kwargs=None, daemon=None):
+                self.target = target
+                self.args = args
+                self.kwargs = kwargs or {}
+            def start(self):
+                self.target(*self.args, **self.kwargs)
+
+        with mock.patch.object(registry_client, "fetch_events", side_effect=[(200, {"events": [event]}), SystemExit]), \
+             mock.patch.object(registry_client, "ack_event"), \
+             mock.patch.object(registry_client, "_handle_remote_run_request") as handle_run, \
+             mock.patch("registry_client.threading.Thread", new=InlineThread), \
+             self.assertLogs("agent-tracker.registry", level="WARNING") as logs:
+            with self.assertRaises(SystemExit):
+                registry_client._event_loop()
+
+        handle_run.assert_called_once()
+        self.assertEqual(handle_run.call_args.args[0]["agent"], "legacy-coder")
+        self.assertIn("spin_request is deprecated", "\n".join(logs.output))
+
+    def test_handle_remote_run_request_uses_concise_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = mock.Mock(returncode=0, stdout=json.dumps({"started": "coder"}), stderr="")
+            with mock.patch.dict(os.environ, {"BROCCOLI_COMMS_CLI": ""}, clear=False), \
+                 mock.patch.object(registry_client.subprocess, "run", return_value=proc) as run, \
+                 mock.patch.object(registry_client, "publish_tracker_event", return_value=202) as publish, \
+                 mock.patch.object(registry_client, "remote_run_enabled", return_value=True):
+                registry_client._handle_remote_run_request({
+                    "request_id": "rr-2",
+                    "agent": "coder",
+                    "cwd": tmp,
+                    "scope": "project:remote-run-request",
+                    "command": ["pi", "--fast"],
+                    "source_tracker_id": "tracker-a",
+                })
+
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:4], ["broccoli-comms", "run", "coder", "--json"])
+        self.assertIn("--cwd", argv)
+        self.assertIn(tmp, argv)
+        self.assertIn("--scope", argv)
+        self.assertIn("project:remote-run-request", argv)
+        self.assertEqual(argv[-3:], ["--", "pi", "--fast"])
+        publish.assert_called_once()
+        self.assertEqual(publish.call_args.args[0], "tracker-a")
+        self.assertEqual(publish.call_args.args[1], "remote_run_result")
+        self.assertTrue(publish.call_args.args[2]["ok"])
+
+    def test_remote_run_request_omitted_cwd_command_uses_broccoli_saved_config_semantics(self):
+        proc = mock.Mock(returncode=0, stdout=json.dumps({"started": "coder"}), stderr="")
+        with mock.patch.dict(os.environ, {"BROCCOLI_COMMS_CLI": ""}, clear=False), \
+             mock.patch.object(registry_client.subprocess, "run", return_value=proc) as run, \
+             mock.patch.object(registry_client, "publish_tracker_event", return_value=202), \
+             mock.patch.object(registry_client, "_load_remote_run_config") as load_legacy, \
+             mock.patch.object(registry_client, "remote_run_enabled", return_value=True):
+            registry_client._handle_remote_run_request({"request_id": "rr-saved", "agent": "coder", "reply_to_tracker_id": "tracker-a"})
+
+        load_legacy.assert_not_called()
+        argv = run.call_args.args[0]
+        self.assertEqual(argv, ["broccoli-comms", "run", "coder", "--json"])
+        self.assertNotIn("/legacy/cwd", argv)
+        self.assertNotIn("legacy-command", argv)
+
+    def test_remote_run_request_publishes_failure_result(self):
+        proc = mock.Mock(returncode=2, stdout="", stderr="boom")
+        with mock.patch.object(registry_client.subprocess, "run", return_value=proc), \
+             mock.patch.object(registry_client, "publish_tracker_event", return_value=202) as publish, \
+             mock.patch.object(registry_client, "remote_run_enabled", return_value=True):
+            registry_client._handle_remote_run_request({"request_id": "rr-fail", "agent": "coder", "command": "pi", "reply_to_tracker_id": "tracker-a"})
+        result = publish.call_args.args[2]
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "boom")
+        self.assertEqual(result["request_id"], "rr-fail")
+
+    def test_remote_run_request_can_be_disabled(self):
+        with mock.patch.dict(os.environ, {"AGENT_TRACKER_REMOTE_RUN_ENABLED": "0"}, clear=False), \
+             mock.patch.object(registry_client.subprocess, "run") as run:
+            registry_client._handle_remote_run_request({"request_id": "rr-disabled", "agent": "coder", "command": "pi"})
+        run.assert_not_called()
+
+    def test_remote_run_request_drops_non_dict_payload(self):
+        with mock.patch.object(registry_client.subprocess, "run") as run, \
+             self.assertLogs("agent-tracker.registry", level="WARNING") as logs:
+            registry_client._handle_remote_run_request(["not", "a", "dict"])
+        run.assert_not_called()
+        self.assertIn("payload must be an object", "\n".join(logs.output))
+
+    def test_remote_run_request_drops_oversized_id_fields(self):
+        too_long = "x" * (registry_client.REMOTE_RUN_ID_MAX + 1)
+        for payload in [
+            {"request_id": too_long, "agent": "coder", "command": "pi"},
+            {"request_id": "ok", "agent": too_long, "command": "pi"},
+            {"request_id": "ok", "agent": "coder", "reply_to_tracker_id": too_long, "command": "pi"},
+            {"request_id": "ok", "agent": "coder", "source_tracker_id": too_long, "command": "pi"},
+        ]:
+            with self.subTest(payload=list(payload.keys())), \
+                 mock.patch.object(registry_client.subprocess, "run") as run:
+                registry_client._handle_remote_run_request(payload)
+                run.assert_not_called()
+
+    def test_remote_run_request_drops_oversized_cwd_scope_and_command(self):
+        cases = [
+            {"agent": "coder", "cwd": "x" * (registry_client.REMOTE_RUN_PATH_MAX + 1), "command": "pi"},
+            {"agent": "coder", "scope": "x" * (registry_client.REMOTE_RUN_SCOPE_MAX + 1), "command": "pi"},
+            {"agent": "coder", "command": "x" * (registry_client.REMOTE_RUN_COMMAND_MAX + 1)},
+            {"agent": "coder", "command": ["x"] * (registry_client.REMOTE_RUN_COMMAND_PARTS_MAX + 1)},
+            {"agent": "coder", "command": ["x" * (registry_client.REMOTE_RUN_COMMAND_PART_MAX + 1)]},
+            {"agent": "coder", "command": ["pi", {"bad": "part"}]},
+        ]
+        for payload in cases:
+            with self.subTest(payload_type=type(payload.get("command")).__name__), \
+                 mock.patch.object(registry_client.subprocess, "run") as run:
+                registry_client._handle_remote_run_request(payload)
+                run.assert_not_called()
+
+    def test_remote_run_request_invalid_event_payload_does_not_crash_or_launch(self):
+        event = {"event_id": "e-bad-run", "event_type": "remote_run_request", "payload": "not-a-dict"}
+
+        class InlineThread:
+            def __init__(self, target, args=(), kwargs=None, daemon=None):
+                self.target = target
+                self.args = args
+                self.kwargs = kwargs or {}
+            def start(self):
+                self.target(*self.args, **self.kwargs)
+
+        with mock.patch.object(registry_client, "fetch_events", side_effect=[(200, {"events": [event]}), SystemExit]), \
+             mock.patch.object(registry_client, "ack_event"), \
+             mock.patch.object(registry_client.subprocess, "run") as run, \
+             mock.patch("registry_client.threading.Thread", new=InlineThread):
+            with self.assertRaises(SystemExit):
+                registry_client._event_loop()
+        run.assert_not_called()
+
     def test_handle_remote_save(self):
         with tempfile.TemporaryDirectory() as tmp:
             def side_effect(path):

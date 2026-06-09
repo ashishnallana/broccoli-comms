@@ -89,6 +89,7 @@ class TestBroccoliCommsApp(unittest.TestCase):
             "AGENT_NAME": "agent-name",
             "AGENT_UUID": "agent-id",
             "SUGGESTED_AGENT_NAME": "suggested",
+            "BROCCOLI_COMMS_CLI": "/stale/broccoli-comms",
             "TMUX": "tmux-env",
             "TMUX_PANE": "%1",
             "PATH": "/bin",
@@ -99,6 +100,7 @@ class TestBroccoliCommsApp(unittest.TestCase):
         self.assertNotIn("AGENT_NAME", env)
         self.assertNotIn("AGENT_UUID", env)
         self.assertNotIn("SUGGESTED_AGENT_NAME", env)
+        self.assertNotIn("BROCCOLI_COMMS_CLI", env)
         self.assertNotIn("TMUX", env)
         self.assertNotIn("TMUX_PANE", env)
 
@@ -247,7 +249,9 @@ agent_communicator_tui = "/config/agent-communicator"
         new_window_calls = [call for call, _ in calls if call and call[0] == "new-window"]
         self.assertEqual(len(new_window_calls), 1)
         launched = new_window_calls[0][-1]
-        self.assertIn("bootstrap.json", launched)
+        self.assertNotIn("bootstrap.json", launched)
+        self.assertNotIn("skills/planner", launched)
+        self.assertIn("--write-context-dir", launched)
         self.assertIn("set -euo pipefail", launched)
         self.assertIn("AGENT_TRACKER_SOCKET", launched)
         self.assertIn("task bootstrap", launched)
@@ -376,6 +380,126 @@ agent_communicator_tui = "/config/agent-communicator"
                         autostart=None,
                     ))
 
+    def test_run_with_host_publishes_remote_request_without_local_tmux(self):
+        rpc_calls = []
+
+        def fake_rpc(method, params=None, **_kwargs):
+            rpc_calls.append((method, params or {}))
+            if method == "list_trackers":
+                return [{"hostname": "remote-host", "tracker_id": "tracker-remote"}]
+            if method == "tracker_info":
+                return {"tracker_id": "tracker-local"}
+            if method == "publish_tracker_event":
+                return {"success": True}
+            if method == "wait_events":
+                if params.get("timeout") == 0:
+                    return {"events": [], "last_seq": 0}
+                return {"events": [{"type": "remote_run_result", "request_id": "remote-run-fixed1234567", "ok": True}], "last_seq": 1}
+            return None
+
+        with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+             mock.patch.object(broccoli_comms_app, "ensure_tmux") as ensure_tmux, \
+             mock.patch.object(broccoli_comms_app, "tmux") as tmux, \
+             mock.patch.object(broccoli_comms_app.uuid, "uuid4", return_value=mock.Mock(hex="fixed1234567890")), \
+             mock.patch.object(broccoli_comms_app, "tracker_rpc", side_effect=fake_rpc):
+            broccoli_comms_app.run(argparse.Namespace(name="planner", host="remote-host", timeout=1, cwd=None, scope=None, swarm=None, role=None, command=[]))
+
+        ensure_tmux.assert_not_called()
+        tmux.assert_not_called()
+        publish = [params for method, params in rpc_calls if method == "publish_tracker_event"][0]
+        self.assertEqual(publish["target_tracker_id"], "tracker-remote")
+        self.assertEqual(publish["event_type"], "remote_run_request")
+        self.assertEqual(publish["payload"]["agent"], "planner")
+        self.assertNotIn("cwd", publish["payload"])
+        self.assertNotIn("command", publish["payload"])
+
+    def test_run_with_host_forwards_optional_overrides(self):
+        def fake_rpc(method, params=None, **_kwargs):
+            if method == "list_trackers":
+                return [{"hostname": "remote-host", "tracker_id": "tracker-remote"}]
+            if method == "tracker_info":
+                return {"tracker_id": "tracker-local"}
+            if method == "publish_tracker_event":
+                fake_rpc.publish = params
+                return {"success": True}
+            if method == "wait_events":
+                return {"events": [{"type": "remote_run_result", "request_id": "remote-run-fixed1234567", "ok": True}], "last_seq": 1}
+        fake_rpc.publish = None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                 mock.patch.object(broccoli_comms_app.uuid, "uuid4", return_value=mock.Mock(hex="fixed1234567890")), \
+                 mock.patch.object(broccoli_comms_app, "tracker_rpc", side_effect=fake_rpc):
+                broccoli_comms_app.run(argparse.Namespace(name="planner", host="remote-host", timeout=1, cwd=tmp, scope="project:x", swarm=None, role=None, command=["pi", "--fast"]))
+
+        payload = fake_rpc.publish["payload"]
+        self.assertEqual(payload["cwd"], tmp)
+        self.assertEqual(payload["scope"], "project:x")
+        self.assertEqual(payload["command"], ["pi", "--fast"])
+
+    def test_run_without_command_uses_saved_agent_definition(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.json").write_text(json.dumps({"agents": {"planner": {"cwd": tmp, "command": "sleep 60", "scope": "repo:saved", "immutable": True}}}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=None, scope=None, swarm=None, role=None, command=[], json=True))
+
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertIn("sleep 60", launched)
+        self.assertIn("--scope repo:saved", launched)
+        self.assertIn("BROCCOLI_COMMS_IMMUTABLE_INSTANCE=1", launched)
+
+    def test_agent_list_merges_configured_running_and_remote(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.json").write_text(json.dumps({"agents": {"configured-only": {"cwd": tmp, "command": "pi"}}}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "tmux_up", return_value=True), \
+                     mock.patch.object(broccoli_comms_app, "can_connect", return_value=True), \
+                     mock.patch.object(broccoli_comms_app, "managed_windows", return_value=[{"managed_agent": "running-only", "window_id": "%1"}]), \
+                     mock.patch.object(broccoli_comms_app, "_tracker_agents_with_remote", return_value={"running-only": {"status": "idle"}, "host/remote": {"scope": "remote", "target_address": "host/remote"}}), \
+                     mock.patch.object(broccoli_comms_app, "_remote_registry_agents", return_value={}):
+                    payload = broccoli_comms_app.agent_list_payload(argparse.Namespace(include_remote=True, configured_only=False, running_only=False, remote_only=False))
+        self.assertEqual(set(payload["agents"]), {"configured-only", "running-only", "host/remote"})
+        self.assertTrue(payload["agents"]["configured-only"]["is_configured"])
+        self.assertTrue(payload["agents"]["running-only"]["running"])
+        self.assertTrue(payload["agents"]["host/remote"]["remote"])
+
+    def test_agent_copy_saves_immutable_definition(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.json").write_text(json.dumps({"agents": {"planner": {"cwd": tmp, "command": "pi --fast", "scope": "repo:test"}}}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                broccoli_comms_app.agent_copy(argparse.Namespace(source="planner", new_name="planner-copy", immutable=True, replace=False, json=True))
+                cfg = json.loads((cfg_dir / "config.json").read_text())
+        self.assertTrue(cfg["agents"]["planner-copy"]["immutable"])
+        self.assertTrue(cfg["agents"]["planner-copy"]["non_learning"])
+        self.assertEqual(cfg["agents"]["planner-copy"]["command"], "pi --fast")
+
+    def test_immutable_learning_instance_checks_saved_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.json").write_text(json.dumps({"agents": {"copied": {"cwd": tmp, "command": "pi", "immutable": True}}}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                self.assertTrue(broccoli_comms_app.immutable_learning_instance("copied", None))
+
     def test_invalid_swarm_role_is_rejected(self):
         with self.assertRaises(SystemExit):
             broccoli_comms_app.parse_swarm_args(argparse.Namespace(swarm=["s1"], role=["worker"]))
@@ -443,7 +567,7 @@ agent_communicator_tui = "/config/agent-communicator"
                 "/src/tree",
                 "repo:test",
                 ["pi", "--flag"],
-                "/tmp/bootstrap.json",
+                "/tmp/agent-workspace",
             )
 
         self.assertEqual(command[:2], ["bash", "-lc"])

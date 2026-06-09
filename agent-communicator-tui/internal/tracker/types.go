@@ -125,6 +125,13 @@ type Message struct {
 	TaskVersionAtSubmission int          `json:"task_version_at_submission,omitempty"`
 	CreatedEventSeq         int64        `json:"created_event_seq,omitempty"`
 	EventSeqAtSubmission    int64        `json:"event_seq_at_submission,omitempty"`
+	MemoryID                string       `json:"memory_id,omitempty"`
+	MemoryType              string       `json:"memory_type,omitempty"`
+	MemoryTitle             string       `json:"memory_title,omitempty"`
+	MemoryScope             string       `json:"memory_scope,omitempty"`
+	MemoryStatus            string       `json:"memory_status,omitempty"`
+	MemoryVersion           int          `json:"memory_version,omitempty"`
+	SourceTaskID            string       `json:"source_task_id,omitempty"`
 	Source                  string       `json:"source,omitempty"`
 	SenderSource            string       `json:"sender_source,omitempty"`
 	Timestamp               string       `json:"timestamp"`

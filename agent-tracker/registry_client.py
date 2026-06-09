@@ -1,4 +1,4 @@
-import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error, urllib.parse, urllib.request, uuid, shlex
+import fcntl, hashlib, json, logging, os, socket, threading, time, urllib.error, urllib.parse, urllib.request, uuid, shlex, subprocess
 import state
 import rpc_handler
 import config
@@ -639,53 +639,221 @@ def publish_tracker_event(target_tracker_id, event_type, payload):
     return None
 
 
-def _handle_remote_spin(config_name):
-    """Loads local config for config_name and spins a new agent securely locally."""
-    home = os.path.expanduser("~")
-    config_path = os.path.join(home, ".config", "agent-tracker", "agents", config_name, "config.json")
+def remote_run_enabled() -> bool:
+    """Remote run is enabled by default; env/config can explicitly disable it."""
+    env = os.environ.get("AGENT_TRACKER_REMOTE_RUN_ENABLED") or os.environ.get("BROCCOLI_COMMS_REMOTE_RUN_ENABLED")
+    if env is not None:
+        return env.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(config.get("registry", "remote_run_enabled", True))
+
+
+def _remote_run_base_env(scope=None) -> dict:
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "TERM": os.environ.get("TERM", "xterm-256color"),
+        "HOME": os.environ.get("HOME", os.path.expanduser("~")),
+        "USER": os.environ.get("USER", os.environ.get("LOGNAME", "")),
+    }
+    if scope:
+        env["BROCCOLI_COMMS_SCOPE"] = str(scope)
+        env["BROCCOLI_COMMS_REMOTE_RUN_SCOPE"] = str(scope)
+    return env
+
+
+def _legacy_agent_config_path(agent: str) -> str:
+    return os.path.join(os.path.expanduser("~"), ".config", "agent-tracker", "agents", agent, "config.json")
+
+
+def _load_remote_run_config(agent: str):
+    config_path = _legacy_agent_config_path(agent)
     if not os.path.isfile(config_path):
-        LOG.warning("remote spin request for missing config: %s", config_name)
+        return None, None
+    with open(config_path, "r") as f:
+        cfg = json.load(f)
+    directory = cfg.get("directory") or os.path.expanduser("~")
+    directory = os.path.abspath(os.path.expanduser(directory))
+    agent_command = cfg.get("agent-command")
+    agent_args = cfg.get("agent-args") or []
+    if not agent_command:
+        LOG.warning("remote_run_request config missing agent-command: %s", agent)
+        return directory, None
+    return directory, shlex.join([agent_command] + agent_args)
+
+
+REMOTE_RUN_ID_MAX = 200
+REMOTE_RUN_PATH_MAX = 1000
+REMOTE_RUN_SCOPE_MAX = 500
+REMOTE_RUN_COMMAND_MAX = 4096
+REMOTE_RUN_COMMAND_PART_MAX = 1000
+REMOTE_RUN_COMMAND_PARTS_MAX = 64
+
+
+def _remote_run_optional_str(payload: dict, key: str, *, max_len: int):
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string")
+    value = value.strip()
+    if len(value) > max_len:
+        raise ValueError(f"{key} exceeds {max_len} characters")
+    return value or None
+
+
+def _remote_run_first_str(payload: dict, keys: list[str], *, max_len: int):
+    for key in keys:
+        value = _remote_run_optional_str(payload, key, max_len=max_len)
+        if value:
+            return value
+    return None
+
+
+def _remote_run_command(payload: dict):
+    command = payload.get("command")
+    if command is None:
+        return None
+    if isinstance(command, str):
+        command = command.strip()
+        if len(command) > REMOTE_RUN_COMMAND_MAX:
+            raise ValueError(f"command exceeds {REMOTE_RUN_COMMAND_MAX} characters")
+        return command or None
+    if isinstance(command, list):
+        if len(command) > REMOTE_RUN_COMMAND_PARTS_MAX:
+            raise ValueError(f"command list exceeds {REMOTE_RUN_COMMAND_PARTS_MAX} parts")
+        parts = []
+        for part in command:
+            if not isinstance(part, str):
+                raise ValueError("command list entries must be strings")
+            if len(part) > REMOTE_RUN_COMMAND_PART_MAX:
+                raise ValueError(f"command list entry exceeds {REMOTE_RUN_COMMAND_PART_MAX} characters")
+            parts.append(part)
+        joined = shlex.join(parts)
+        if len(joined) > REMOTE_RUN_COMMAND_MAX:
+            raise ValueError(f"command exceeds {REMOTE_RUN_COMMAND_MAX} characters")
+        return joined or None
+    raise ValueError("command must be a string or list of strings")
+
+
+def _normalize_remote_run_payload(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    request_id = _remote_run_optional_str(payload, "request_id", max_len=REMOTE_RUN_ID_MAX)
+    agent = _remote_run_first_str(payload, ["agent", "name", "config_name"], max_len=REMOTE_RUN_ID_MAX)
+    cwd = _remote_run_first_str(payload, ["cwd", "directory"], max_len=REMOTE_RUN_PATH_MAX)
+    scope = _remote_run_optional_str(payload, "scope", max_len=REMOTE_RUN_SCOPE_MAX)
+    command = _remote_run_command(payload)
+    reply_to_tracker_id = _remote_run_first_str(payload, ["reply_to_tracker_id", "source_tracker_id"], max_len=REMOTE_RUN_ID_MAX)
+    source_tracker_id = _remote_run_first_str(payload, ["source_tracker_id", "reply_to_tracker_id"], max_len=REMOTE_RUN_ID_MAX)
+    session = _remote_run_optional_str(payload, "session", max_len=REMOTE_RUN_ID_MAX)
+    return {
+        "request_id": request_id,
+        "agent": agent,
+        "cwd": cwd,
+        "scope": scope,
+        "command": command,
+        "reply_to_tracker_id": reply_to_tracker_id,
+        "source_tracker_id": source_tracker_id,
+        "session": session,
+    }
+
+
+def _bounded_remote_run_error(value, limit=1000):
+    text = str(value or "")
+    return text[:limit]
+
+
+def _broccoli_comms_run_argv(req: dict) -> list[str]:
+    agent = req.get("agent")
+    argv = [os.environ.get("BROCCOLI_COMMS_CLI") or "broccoli-comms", "run", agent, "--json"]
+    if req.get("cwd"):
+        argv.extend(["--cwd", req["cwd"]])
+    if req.get("scope"):
+        argv.extend(["--scope", req["scope"]])
+    command = req.get("command")
+    if command:
+        argv.append("--")
+        argv.extend(shlex.split(command))
+    return argv
+
+
+def _remote_run_result_payload(req: dict, ok: bool, *, launch_result=None, error=None) -> dict:
+    payload = {
+        "request_id": req.get("request_id"),
+        "ok": bool(ok),
+        "agent": req.get("agent"),
+        "host": HOSTNAME,
+        "tracker_id": TRACKER_ID,
+    }
+    if launch_result is not None:
+        payload["launch_result"] = launch_result
+    if error:
+        payload["error"] = _bounded_remote_run_error(error)
+    return {k: v for k, v in payload.items() if v is not None}
+
+
+def _publish_remote_run_result(req: dict, result: dict) -> None:
+    target_tracker_id = req.get("reply_to_tracker_id") or req.get("source_tracker_id")
+    if not target_tracker_id:
+        return
+    status = publish_tracker_event(target_tracker_id, "remote_run_result", result)
+    if status not in (200, 202):
+        LOG.warning("failed to publish remote_run_result request_id=%s target_tracker_id=%s status=%s", req.get("request_id"), target_tracker_id, status)
+
+
+def _handle_remote_run(payload: dict):
+    """Run a remote_run_request via canonical local `broccoli-comms run`."""
+    try:
+        req = _normalize_remote_run_payload(payload)
+    except ValueError as e:
+        LOG.warning("dropping invalid remote_run_request: %s", e)
+        return
+    request_id = req.get("request_id")
+    agent = req.get("agent")
+    if not remote_run_enabled():
+        LOG.warning("remote_run_request disabled request_id=%s agent=%s", request_id, agent)
+        _publish_remote_run_result(req, _remote_run_result_payload(req, False, error="remote run disabled"))
+        return
+    if not agent:
+        LOG.warning("remote_run_request missing agent request_id=%s", request_id)
         return
 
     try:
-        with open(config_path, "r") as f:
-            cfg = json.load(f)
-        
-        directory = cfg.get("directory")
-        if not directory:
-            directory = home # fallback
-        directory = os.path.abspath(os.path.expanduser(directory))
-
-        agent_command = cfg.get("agent-command")
-        agent_args = cfg.get("agent-args") or []
-        if not agent_command:
-            LOG.warning("remote spin request config missing agent-command: %s", config_name)
-            return
-
-        # Generate session name from directory leaf
-        from ctl_commands.common import spin_session_name
-        session = spin_session_name(directory)
-        
-        command = shlex.join([agent_command] + agent_args)
-
-        from rpc_handler import handle_spin_agent
-        env = {
-            "PATH": os.environ.get("PATH", ""),
-            "TERM": os.environ.get("TERM", "xterm-256color"),
-            "HOME": os.environ.get("HOME", os.path.expanduser("~")),
-            "USER": os.environ.get("USER", os.environ.get("LOGNAME", "")),
-        }
-        resolved_name = handle_spin_agent({
-            "session": session,
-            "command": command,
-            "directory": directory,
-            "name": session,
-            "env": env,
-        })
-        LOG.info("remote spin request successfully executed for %s: spun as %s", config_name, resolved_name)
-
+        argv = _broccoli_comms_run_argv(req)
+        proc = subprocess.run(argv, text=True, capture_output=True, timeout=60)
+        stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
+        launch_result = None
+        if stdout:
+            try:
+                launch_result = json.loads(stdout)
+            except Exception:
+                launch_result = {"stdout": _bounded_remote_run_error(stdout)}
+        if proc.returncode == 0:
+            result = _remote_run_result_payload(req, True, launch_result=launch_result or {})
+            _publish_remote_run_result(req, result)
+            LOG.info("remote_run_request completed request_id=%s agent=%s", request_id, agent)
+            return result
+        error = stderr or stdout or f"broccoli-comms run exited {proc.returncode}"
+        result = _remote_run_result_payload(req, False, launch_result=launch_result, error=error)
+        _publish_remote_run_result(req, result)
+        LOG.warning("remote_run_request failed request_id=%s agent=%s code=%s error=%s", request_id, agent, proc.returncode, _bounded_remote_run_error(error, 300))
+        return result
     except Exception as e:
-        LOG.error("failed to execute remote spin request for %s: %s", config_name, e)
+        result = _remote_run_result_payload(req, False, error=e)
+        _publish_remote_run_result(req, result)
+        LOG.error("failed remote_run_request request_id=%s agent=%s: %s", request_id, agent, e)
+        return result
+
+
+def _handle_remote_run_request(payload: dict):
+    """Compatibility wrapper for the P1 handler name."""
+    return _handle_remote_run(payload)
+
+
+def _handle_remote_spin(config_name):
+    """Deprecated compatibility wrapper for legacy spin_request config names."""
+    LOG.warning("spin_request is deprecated; routing config_name=%s through remote_run_request", config_name)
+    _handle_remote_run_request({"request_id": f"legacy-spin-{uuid.uuid4()}", "agent": config_name})
 
 
 def _handle_remote_save(agent_to_save, agent_name=None, command=None, description=None, cwd=None):
@@ -937,11 +1105,19 @@ def _event_loop(client=None):
                         "target_agent_name": group_id,
                         "sender": message_payload.get("sender")
                     })
+            elif event.get("event_type") == "remote_run_result":
+                payload = event.get("payload") or {}
+                LOG.info("publishing remote_run_result locally: %s", payload)
+                state.publish_event("remote_run_result", payload)
+            elif event.get("event_type") == "remote_run_request":
+                payload = event.get("payload") or {}
+                threading.Thread(target=_handle_remote_run_request, args=(payload,), daemon=True).start()
             elif event.get("event_type") == "spin_request":
                 payload = event.get("payload") or {}
-                config_name = payload.get("config_name")
-                if config_name:
-                    threading.Thread(target=_handle_remote_spin, args=(config_name,), daemon=True).start()
+                LOG.warning("spin_request is deprecated; route remote launches with remote_run_request")
+                if payload.get("config_name") and not payload.get("agent"):
+                    payload = {**payload, "agent": payload.get("config_name")}
+                threading.Thread(target=_handle_remote_run_request, args=(payload,), daemon=True).start()
             elif event.get("event_type") == "save_request":
                 payload = event.get("payload") or {}
                 agent_to_save = payload.get("agent_to_save")

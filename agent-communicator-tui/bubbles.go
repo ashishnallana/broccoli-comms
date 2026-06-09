@@ -13,6 +13,7 @@ var bubbleBorder = lipgloss.RoundedBorder()
 
 const taskApprovalContentType = "application/vnd.broccoli.task-approval+json"
 const taskUpdateContentType = "application/vnd.broccoli.task-update+json"
+const memoryProposalContentType = "application/vnd.broccoli.memory-proposal+json"
 
 func isApprovalRequestMessage(msg tracker.Message) bool {
 	return msg.ContentType == taskApprovalContentType || msg.Kind == "task_completion_approval_request"
@@ -20,6 +21,10 @@ func isApprovalRequestMessage(msg tracker.Message) bool {
 
 func isTaskUpdateMessage(msg tracker.Message) bool {
 	return msg.ContentType == taskUpdateContentType || msg.Kind == "task_update" || msg.Kind == "task_status_changed"
+}
+
+func isMemoryProposalMessage(msg tracker.Message) bool {
+	return msg.ContentType == memoryProposalContentType || msg.Kind == "memory_proposal"
 }
 
 func renderTaskUpdateBody(msg tracker.Message, width int, bg lipgloss.Color) string {
@@ -41,6 +46,33 @@ func renderTaskUpdateBody(msg tracker.Message, width int, bg lipgloss.Color) str
 	if msg.TaskNextStep != "" {
 		lines = append(lines, "", "Next: "+msg.TaskNextStep)
 	}
+	return renderMarkdown(strings.Join(lines, "\n"), width, bg)
+}
+
+func renderMemoryProposalBody(msg tracker.Message, width int, bg lipgloss.Color) string {
+	lines := []string{fgOnBg(colors.AccentStrong, bg).Bold(true).Render("Memory proposal")}
+	if msg.MemoryID != "" {
+		lines = append(lines, "Memory: `"+msg.MemoryID+"`")
+	}
+	if msg.MemoryType != "" {
+		lines = append(lines, "Type: `"+msg.MemoryType+"`")
+	}
+	if msg.MemoryScope != "" {
+		lines = append(lines, "Scope: `"+msg.MemoryScope+"`")
+	}
+	if msg.MemoryVersion > 0 {
+		lines = append(lines, "Version: `"+strconv.Itoa(msg.MemoryVersion)+"`")
+	}
+	if msg.SourceTaskID != "" {
+		lines = append(lines, "Source task: `"+msg.SourceTaskID+"`")
+	}
+	if msg.MemoryTitle != "" {
+		lines = append(lines, "", "## "+msg.MemoryTitle)
+	}
+	if msg.Body != "" {
+		lines = append(lines, "", msg.Body)
+	}
+	lines = append(lines, "", fgOnBg(colors.Warning, bg).Render("Use `/memory approve`, `/memory reject`, or `/memory edit <id> title | body`."))
 	return renderMarkdown(strings.Join(lines, "\n"), width, bg)
 }
 
@@ -75,7 +107,7 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	bodyBg := colors.BaseBg
 	if useBg {
 		bodyBg = colors.IncomingBubbleBg
-		if isTaskUpdateMessage(msg) {
+		if isTaskUpdateMessage(msg) || isMemoryProposalMessage(msg) {
 			bodyBg = colors.TaskUpdateBg
 		} else if isPaneCapture {
 			bodyBg = colors.CapturePaneBg
@@ -85,6 +117,8 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 		body = displayBody
 	} else if isTaskUpdateMessage(msg) {
 		body = renderTaskUpdateBody(msg, innerWidth, bodyBg)
+	} else if isMemoryProposalMessage(msg) {
+		body = renderMemoryProposalBody(msg, innerWidth, bodyBg)
 	} else if isApprovalRequestMessage(msg) {
 		body = renderApprovalRequestBody(msg, innerWidth, bodyBg)
 	} else if msg.ContentType == "" || msg.ContentType == "text/markdown" {

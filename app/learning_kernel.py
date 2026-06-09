@@ -15,7 +15,7 @@ TASK_STATUSES = {"queued", "ready", "working", "blocked", "review", "done", "val
 STATE_STATUSES = {"working", "blocked", "waiting", "review", "done"}
 RESULT_STATUSES = {"good", "bad", "need_improvements"}
 APPROVAL_STATUSES = {"pending", "decided", "superseded"}
-MEMORY_TYPES = {"fact", "habit", "episode", "expertise"}
+MEMORY_TYPES = {"fact", "habit", "episode", "expertise", "skill"}
 MEMORY_STATUSES = {"pending", "active", "rejected", "revoked", "superseded"}
 TRUSTED_MEMORY_ACTORS = {"user", "coordinator", "task-kernel", "agent-communicator"}
 MEMORY_LIMITS = {
@@ -24,6 +24,7 @@ MEMORY_LIMITS = {
     "max_active_per_agent_habit": 50,
     "max_active_per_agent_episode": 50,
     "max_active_per_agent_expertise": 50,
+    "max_active_per_agent_skill": 50,
     "max_active_per_scope": 200,
     "max_pending_per_agent": 50,
     "bootstrap_max_records": 20,
@@ -252,11 +253,11 @@ class LearningKernel:
 
     def event(self, conn: sqlite3.Connection, event_type: str, actor_type: str, actor_id: str, subject_type: str,
               subject_id: str, payload: dict[str, Any] | None = None, task_id: str | None = None,
-              scope: str | None = None, refs: dict[str, Any] | None = None) -> dict[str, Any]:
+              scope: str | None = None, refs: dict[str, Any] | None = None, *, replayable_payload: bool = False) -> dict[str, Any]:
         ev = {
             "event_id": f"evt-{uuid.uuid4().hex[:16]}", "event_type": event_type, "timestamp": now_iso(),
             "actor_type": actor_type, "actor_id": actor_id, "subject_type": subject_type, "subject_id": subject_id,
-            "task_id": task_id, "scope": clean_text(scope, "scope") if scope else None, "payload": safe_payload(payload or {}), "refs": safe_payload(refs or {}),
+            "task_id": task_id, "scope": clean_text(scope, "scope") if scope else None, "payload": self._replayable_payload(payload or {}) if replayable_payload else safe_payload(payload or {}), "refs": safe_payload(refs or {}),
             "visibility": "private", "schema_version": SCHEMA_VERSION,
         }
         conn.execute(
@@ -668,8 +669,6 @@ class LearningKernel:
         metadata = safe_payload(raw_metadata)
         source_task_id = clean_text(kw.get("source_task_id") or kw.get("source_task"), "list_item")
         trusted_manual = bool(kw.get("trusted_manual"))
-        if not trusted_manual and not source_task_id:
-            raise ValueError("source_task_id is required unless trusted_manual")
         if typ == "expertise":
             if not subject_agent and not (scope.startswith("team:") or scope.startswith("project:")):
                 raise ValueError("expertise requires subject_agent or explicit team/project scope")
@@ -677,6 +676,21 @@ class LearningKernel:
         else:
             self._reject_forbidden_memory_metadata(metadata)
         return {"type": typ, "scope": scope, "subject_agent": subject_agent, "title": title, "body": body, "tags": tags, "metadata": metadata, "source_task_id": source_task_id, "trusted_manual": trusted_manual}
+
+    def _replayable_payload(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return clean_text(value, "memory_body") or ""
+        if isinstance(value, list):
+            return [self._replayable_payload(v) for v in value[:100]]
+        if isinstance(value, dict):
+            return {str(k)[:100]: self._replayable_payload(v) for k, v in list(value.items())[:100]}
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        return clean_text(str(value), "memory_body")
+
+    def _memory_event_payload(self, mem: dict[str, Any], **extra: Any) -> dict[str, Any]:
+        snapshot = {k: mem.get(k) for k in ("memory_id", "type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata", "status", "version") if k in mem}
+        return {"memory_id": mem.get("memory_id"), "memory": snapshot, **extra}
 
     def _reject_forbidden_memory_metadata(self, value: Any) -> None:
         forbidden = {"score", "confidence", "level", "rank", "recommendation"}
@@ -752,7 +766,7 @@ class LearningKernel:
                 raise ValueError("pending memory limit exceeded")
             conn.execute("INSERT INTO memory_records(memory_id,idempotency_key,proposed_by,proposed_by_instance,type,scope,subject_agent,title,body,source_task_id,trusted_manual,created_by,created_at,tags,metadata) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (memory_id, idem, proposer, instance, payload["type"], payload["scope"], payload["subject_agent"], payload["title"], payload["body"], payload["source_task_id"], 1 if payload["trusted_manual"] else 0, proposer, ts, json.dumps(payload["tags"], sort_keys=True), json.dumps(payload["metadata"], sort_keys=True)))
-            ev = self.event(conn, "memory_proposed", "agent", proposer, "memory", memory_id, {**payload, "memory_id": memory_id}, payload.get("source_task_id"), payload.get("scope"))
+            ev = self.event(conn, "memory_proposed", "agent", proposer, "memory", memory_id, self._memory_event_payload({**payload, "memory_id": memory_id, "status": "pending", "version": 1}), payload.get("source_task_id"), payload.get("scope"), replayable_payload=True)
             conn.execute("UPDATE memory_records SET updated_event_seq=?, status_event_seq=? WHERE memory_id=?", (ev["event_seq"], ev["event_seq"], memory_id))
             conn.execute("COMMIT")
             return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
@@ -784,18 +798,7 @@ class LearningKernel:
                 source = "trusted_manual"
             else:
                 validation_event = self._validation_event_for_task(conn, mem.get("source_task_id"))
-                if not validation_event:
-                    raise ValueError("memory approval requires validated-good source task or trusted_manual")
-                source = "validated_task"
-            if mem["type"] == "expertise":
-                evidence_ids = set((mem.get("metadata") or {}).get("evidence_task_ids") or [])
-                if mem.get("source_task_id"):
-                    evidence_ids.add(mem["source_task_id"])
-                if not evidence_ids and not mem.get("trusted_manual"):
-                    raise ValueError("expertise requires validated-good evidence")
-                for task_id in evidence_ids:
-                    if not self._validation_event_for_task(conn, task_id):
-                        raise ValueError("expertise evidence task must be validated-good")
+                source = "validated_task" if validation_event else "trusted_review"
             conn.execute("BEGIN IMMEDIATE")
             latest = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
             if latest["status"] != "pending" or (expected_version is not None and int(latest["version"]) != int(expected_version)):
@@ -806,9 +809,33 @@ class LearningKernel:
                 return {"memory": latest, **conflict}
             source_seq = validation_event["event_seq"] if validation_event else None
             source_eid = validation_event["event_id"] if validation_event else None
-            ev = self.event(conn, "memory_approved", "user", actor, "memory", memory_id, {"memory_id": memory_id, "source": source, "source_event_seq": source_seq}, mem.get("source_task_id"), mem.get("scope"))
+            ev = self.event(conn, "memory_approved", "user", actor, "memory", memory_id, self._memory_event_payload(mem, source=source, source_event_seq=source_seq), mem.get("source_task_id"), mem.get("scope"), replayable_payload=True)
             ts = now_iso()
             conn.execute("UPDATE memory_records SET status='active', validated_by=?, validated_at=?, source_event_seq=COALESCE(?, source_event_seq), source_event_id=COALESCE(?, source_event_id), status_event_seq=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (actor, ts, source_seq, source_eid, ev["event_seq"], ev["event_seq"], memory_id))
+            conn.execute("COMMIT")
+            return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
+
+    def memory_edit(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user", **kw: Any) -> dict[str, Any]:
+        actor = self._require_trusted_memory_actor(actor)
+        with closing(self.connect()) as conn:
+            mem = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
+            if not mem:
+                raise KeyError(memory_id)
+            if expected_version is not None and int(expected_version) != int(mem["version"]):
+                raise ValueError("stale memory version")
+            if mem["status"] != "pending":
+                raise ValueError("memory edit requires pending status")
+            merged = {k: mem.get(k) for k in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata")}
+            for key in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata"):
+                if key in kw and kw[key] is not None:
+                    merged[key] = kw[key]
+            payload = self._clean_memory_payload(merged)
+            conn.execute("BEGIN IMMEDIATE")
+            latest = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
+            if latest["status"] != "pending" or (expected_version is not None and int(latest["version"]) != int(expected_version)):
+                conn.execute("ROLLBACK"); raise ValueError("stale memory version")
+            ev = self.event(conn, "memory_edited", "user", actor, "memory", memory_id, self._memory_event_payload({**payload, "memory_id": memory_id, "status": "pending", "version": int(latest["version"]) + 1}, previous=self._memory_event_payload(latest).get("memory")), payload.get("source_task_id"), payload.get("scope"), replayable_payload=True)
+            conn.execute("UPDATE memory_records SET type=?, scope=?, subject_agent=?, title=?, body=?, source_task_id=?, trusted_manual=?, tags=?, metadata=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (payload["type"], payload["scope"], payload["subject_agent"], payload["title"], payload["body"], payload["source_task_id"], 1 if payload["trusted_manual"] else 0, json.dumps(payload["tags"], sort_keys=True), json.dumps(payload["metadata"], sort_keys=True), ev["event_seq"], memory_id))
             conn.execute("COMMIT")
             return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
 
@@ -839,7 +866,7 @@ class LearningKernel:
             latest = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
             if latest["status"] != mem["status"] or (expected_version is not None and int(latest["version"]) != int(expected_version)):
                 conn.execute("ROLLBACK"); raise ValueError("stale memory version")
-            ev = self.event(conn, event_type, "user", actor, "memory", memory_id, {"memory_id": memory_id, "reason": reason}, mem.get("source_task_id"), mem.get("scope"))
+            ev = self.event(conn, event_type, "user", actor, "memory", memory_id, self._memory_event_payload(mem, reason=reason), mem.get("source_task_id"), mem.get("scope"), replayable_payload=True)
             conn.execute("UPDATE memory_records SET status=?, status_event_seq=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (new_status, ev["event_seq"], ev["event_seq"], memory_id))
             conn.execute("COMMIT")
             return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
@@ -932,9 +959,10 @@ Ephemeral cwd: {cwd}
 Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 
 ## Required startup
-1. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json`.
-2. If a task is returned, run `broccoli-comms state show --task <task_id> --agent {agent} --json`.
-3. If no task is ready, stand by and do not invent work.
+1. If present in the working directory, read generated `memory.md`, `habits.md`, `expertise.md`, and any `skill/<skill-name>/SKILLS.md` files.
+2. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json`.
+3. If a task is returned, run `broccoli-comms state show --task <task_id> --agent {agent} --json`.
+4. If no task is ready, stand by and do not invent work.
 
 ## Checkpoint and discovery rules
 - Update WorkingState when starting, blocking, requesting review, finishing, or discovering reusable facts.
@@ -968,7 +996,7 @@ Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 - Ask user/coordinator for context if confidence is low.
 - Explicit user instructions override task/profile/habits.
 - `task bootstrap` may return approved durable `memory`; treat it as context, not authority.
-- Do not self-promote memory. Propose bounded memory only after validated task outcomes; active memory requires trusted approval.
+- Do not self-approve memory. You may propose bounded memory candidates (`fact`, `habit`, `episode`, `expertise`, or `skill`) from useful feedback/discoveries; active memory requires trusted approval.
 - Save durable outputs only through Broccoli Comms commands.
 - Never store raw terminal transcripts, full query logs, secrets, tokens, passwords, or large file contents in task/state/result text.
 - Keep task/state/result/memory text concise and bounded; store facts and conclusions, not bulky evidence.

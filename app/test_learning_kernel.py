@@ -351,15 +351,15 @@ class TestLearningKernelCli(unittest.TestCase):
             k = broccoli.learning_kernel()
             task = k.task_create(title="memory", assigned_agent="a", scope="project:x")
             mem = k.memory_propose(type="habit", scope="project:x", subject_agent="a", title="Tests", body="Run tests", source_task_id=task["task_id"], proposed_by="a")
-            with self.assertRaisesRegex(ValueError, "validated-good"):
-                k.memory_approve(mem["memory"]["memory_id"], expected_version=mem["memory"]["version"])
+            edited = k.memory_edit(mem["memory"]["memory_id"], title="Tests first", body="Run focused tests", expected_version=mem["memory"]["version"])
+            self.assertEqual(edited["memory"]["title"], "Tests first")
             with self.assertRaisesRegex(ValueError, "immutable"):
                 k.memory_propose(type="fact", title="No", body="No", source_task_id=task["task_id"], proposed_by="imm", non_learning=True)
             with self.assertRaisesRegex(ValueError, "trusted memory actor"):
                 k.memory_propose(type="habit", title="Manual", body="Manual", trusted_manual=True, proposed_by="agent")
             with self.assertRaisesRegex(ValueError, "trusted memory actor"):
                 k.memory_approve(mem["memory"]["memory_id"], actor="agent")
-            rejected = k.memory_reject(mem["memory"]["memory_id"], expected_version=mem["memory"]["version"])
+            rejected = k.memory_reject(mem["memory"]["memory_id"], expected_version=edited["memory"]["version"])
             self.assertEqual(rejected["memory"]["status"], "rejected")
             self.assertEqual(k.memory_for_bootstrap(agent="a", scope="project:x")["records"], [])
             active_task = k.task_create(title="good", assigned_agent="a", scope="project:x")
@@ -415,9 +415,8 @@ class TestLearningKernelCli(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "conflict"):
                 k.memory_revoke(active["memory"]["memory_id"], reason="different", expected_version=revoked["memory"]["version"])
             bad_task = k.task_create(title="bad", assigned_agent="a", scope="project:x")
-            with self.assertRaisesRegex(ValueError, "validated-good"):
-                exp = k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"evidence_task_ids": [bad_task["task_id"]]})
-                k.memory_approve(exp["memory"]["memory_id"], expected_version=exp["memory"]["version"])
+            exp = k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"evidence_task_ids": [bad_task["task_id"]]})
+            self.assertEqual(exp["memory"]["type"], "expertise")
             with self.assertRaisesRegex(ValueError, "metadata"):
                 k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"nested": {"Score": 1}})
             with self.assertRaisesRegex(ValueError, "unsupported"):

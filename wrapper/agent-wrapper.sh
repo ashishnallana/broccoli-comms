@@ -55,9 +55,9 @@ export BROCCOLI_COMMS_TMUX_SOCKET="${BROCCOLI_COMMS_TMUX_SOCKET:-$tmux_socket}"
 session_name=$("${tmux_cmd[@]}" display-message -p -t "$pane_id" '#S' 2>/dev/null || echo broccoli-comms)
 wrapper_pid="$$"
 suggested_name="${SUGGESTED_AGENT_NAME:-}"
-agent_type=$(basename "$cmd")
-agent_cmd=$(basename "$cmd")
-model_type="${AGENT_MODEL_TYPE:-${MODEL_TYPE:-}}"
+agent_type="${AGENT_TYPE:-$(basename "$cmd")}"
+agent_cmd="${AGENT_CMD:-$(basename "$cmd")}"
+model_type="${AGENT_MODEL_TYPE:-${MODEL_TYPE:-${agent_type}}}"
 agent_id="${AGENT_ID:-$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4())

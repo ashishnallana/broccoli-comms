@@ -38,6 +38,7 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 	case tea.KeyCtrlR:
 		m.showingConfigMenu = true
 		m.configSelected = 0
+		m.configQuery = nil
 		return m, loadConfigItemsCmd(m.local)
 	case tea.KeyCtrlO:
 		m.showingPromptMenu = true
@@ -225,12 +226,45 @@ func (m model) handlePromptMenuKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) filteredConfigItems() []ConfigSelectionItem {
+	query := strings.ToLower(strings.TrimSpace(string(m.configQuery)))
+	if query == "" {
+		return m.configItems
+	}
+	items := []ConfigSelectionItem{}
+	for _, item := range m.configItems {
+		haystack := strings.ToLower(strings.Join([]string{item.Name, item.Description, item.Hostname, item.TargetAddress}, " "))
+		pos := 0
+		matched := true
+		for _, r := range query {
+			idx := strings.IndexRune(haystack[pos:], r)
+			if idx < 0 {
+				matched = false
+				break
+			}
+			pos += idx + 1
+		}
+		if matched {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
 func (m model) handleConfigMenuKey(msg tea.KeyMsg) (model, tea.Cmd) {
+	items := m.filteredConfigItems()
 	switch msg.Type {
 	case tea.KeyCtrlC, tea.KeyCtrlQ:
 		return m, tea.Quit
 	case tea.KeyCtrlR, tea.KeyEsc:
 		m.showingConfigMenu = false
+		m.configQuery = nil
+		return m, nil
+	case tea.KeyBackspace:
+		if len(m.configQuery) > 0 {
+			m.configQuery = m.configQuery[:len(m.configQuery)-1]
+			m.configSelected = min(m.configSelected, max(0, len(m.filteredConfigItems())-1))
+		}
 		return m, nil
 	case tea.KeyUp, tea.KeyCtrlP:
 		if m.configSelected > 0 {
@@ -238,24 +272,30 @@ func (m model) handleConfigMenuKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyDown, tea.KeyCtrlN:
-		if m.configSelected < len(m.configItems)-1 {
+		if m.configSelected < len(items)-1 {
 			m.configSelected++
 		}
 		return m, nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 && (msg.Runes[0] == 'c' || msg.Runes[0] == 'C') && len(items) > 0 {
+			m.showingConfigMenu = false
+			return m, copyAgentImmutableCmd(items[m.configSelected])
+		}
+		m.configQuery = append(m.configQuery, msg.Runes...)
+		m.configSelected = 0
+		return m, nil
+	case tea.KeySpace:
+		m.configQuery = append(m.configQuery, ' ')
+		m.configSelected = 0
+		return m, nil
 	case tea.KeyEnter:
 		m.showingConfigMenu = false
-		if len(m.configItems) > 0 {
-			item := m.configItems[m.configSelected]
-			if item.IsRemote {
-				return m, spinRemoteAgentCmd(m.local, item.TrackerID, item.Name)
-			} else {
-				localConfigs, _, err := LoadAgentConfigs()
-				if err == nil {
-					if cfg, exists := localConfigs[item.Name]; exists {
-						return m, spinAgentCmd(cfg)
-					}
-				}
+		if len(items) > 0 {
+			item := items[m.configSelected]
+			if item.IsRemote || !item.Launchable {
+				return m, copyAgentImmutableCmd(item)
 			}
+			return m, runConfiguredAgentCmd(item.Name)
 		}
 		return m, nil
 	}
@@ -269,6 +309,23 @@ func (m model) handleComposerSubmit() (model, tea.Cmd) {
 	if strings.TrimSpace(string(m.composer)) != "" {
 		input := string(m.composer)
 		action := composerActionForMode(input, m.inputMode)
+		if action.Kind == "memory_action" {
+			if action.Result != "approve" && action.Result != "reject" && action.Result != "edit" {
+				m.err = fmt.Errorf("/memory requires approve|reject|edit")
+				return m, nil
+			}
+			memoryID := action.MemoryID
+			selected, hasSelected := selectedMemoryMessage(m)
+			if memoryID == "" && hasSelected {
+				memoryID = selected.MemoryID
+			}
+			if memoryID == "" {
+				m.err = fmt.Errorf("memory id is required")
+				return m, nil
+			}
+			m.composer = nil
+			return m, memoryActionCmd(memoryMessageForAction(memoryID, selected), action.Result, action.Title, action.Body)
+		}
 		if action.Kind == "approval_review" {
 			if action.Result == "" {
 				m.err = fmt.Errorf("/approval requires good|bad|need_improvements")

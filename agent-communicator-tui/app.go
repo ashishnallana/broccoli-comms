@@ -74,6 +74,7 @@ type model struct {
 	configItems       []ConfigSelectionItem
 	showingConfigMenu bool
 	configSelected    int
+	configQuery       []rune
 
 	// Prompt templates (Ctrl-O)
 	prompts           []promptTemplate
@@ -229,6 +230,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentConfigSpun:
 		m.err = msg.Err
 	case approvalReviewResult:
+		m.err = msg.Err
+		if msg.Err == nil {
+			return m, m.reloadMessages()
+		}
+	case memoryActionResult:
 		m.err = msg.Err
 		if msg.Err == nil {
 			return m, m.reloadMessages()
