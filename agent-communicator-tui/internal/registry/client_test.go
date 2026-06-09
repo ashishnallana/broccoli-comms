@@ -17,11 +17,13 @@ func TestListAgentsParsesRegistryResponseAndSendsAuth(t *testing.T) {
 			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"agents": []Agent{{
-			AgentID:  "id-1",
-			Name:     "alpha",
-			Hostname: "host-a",
-			Status:   "idle",
-			CWD:      "/repo",
+			AgentID:             "id-1",
+			Name:                "alpha",
+			Hostname:            "host-a",
+			Status:              "idle",
+			CurrentTask:         "Implement card",
+			CurrentTaskNextStep: "Run tests",
+			CWD:                 "/repo",
 		}}})
 	}))
 	defer server.Close()
@@ -31,7 +33,7 @@ func TestListAgentsParsesRegistryResponseAndSendsAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAgents: %v", err)
 	}
-	if len(agents) != 1 || agents[0].Name != "alpha" || agents[0].CWD != "/repo" {
+	if len(agents) != 1 || agents[0].Name != "alpha" || agents[0].CWD != "/repo" || agents[0].CurrentTask != "Implement card" || agents[0].CurrentTaskNextStep != "Run tests" {
 		t.Fatalf("agents = %+v", agents)
 	}
 }

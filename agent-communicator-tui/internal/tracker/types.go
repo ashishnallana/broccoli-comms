@@ -31,26 +31,30 @@ type SwarmMembership struct {
 }
 
 type Agent struct {
-	Name            string            `json:"name"`
-	AgentID         string            `json:"agent_id"`
-	UUID            string            `json:"uuid"`
-	Session         string            `json:"session"`
-	TmuxPane        string            `json:"tmux_pane"`
-	Status          string            `json:"status"`
-	WaitingApproval bool              `json:"waiting_approval"`
-	AgentType       string            `json:"agent_type"`
-	AgentCmd        string            `json:"agent_cmd"`
-	ModelType       string            `json:"model_type"`
-	Aliases         []string          `json:"aliases"`
-	IsThisMe        bool              `json:"is_this_me"`
-	CWD             string            `json:"cwd,omitempty"`
-	Scope           string            `json:"scope,omitempty"`
-	Hostname        string            `json:"hostname,omitempty"`
-	TargetAddress   string            `json:"target_address,omitempty"`
-	TrackerID       string            `json:"tracker_id,omitempty"`
-	RegistryName    string            `json:"registry_name,omitempty"`
-	Detection       DetectionStatus   `json:"detection,omitempty"`
-	Swarms          []SwarmMembership `json:"swarms,omitempty"`
+	Name                string            `json:"name"`
+	AgentID             string            `json:"agent_id"`
+	UUID                string            `json:"uuid"`
+	Session             string            `json:"session"`
+	TmuxPane            string            `json:"tmux_pane"`
+	Status              string            `json:"status"`
+	WaitingApproval     bool              `json:"waiting_approval"`
+	AgentType           string            `json:"agent_type"`
+	AgentCmd            string            `json:"agent_cmd"`
+	ModelType           string            `json:"model_type"`
+	CurrentTask         string            `json:"current_task,omitempty"`
+	CurrentTaskID       string            `json:"current_task_id,omitempty"`
+	CurrentTaskStatus   string            `json:"current_task_status,omitempty"`
+	CurrentTaskNextStep string            `json:"current_task_next_step,omitempty"`
+	Aliases             []string          `json:"aliases"`
+	IsThisMe            bool              `json:"is_this_me"`
+	CWD                 string            `json:"cwd,omitempty"`
+	Scope               string            `json:"scope,omitempty"`
+	Hostname            string            `json:"hostname,omitempty"`
+	TargetAddress       string            `json:"target_address,omitempty"`
+	TrackerID           string            `json:"tracker_id,omitempty"`
+	RegistryName        string            `json:"registry_name,omitempty"`
+	Detection           DetectionStatus   `json:"detection,omitempty"`
+	Swarms              []SwarmMembership `json:"swarms,omitempty"`
 }
 
 type Attachment struct {

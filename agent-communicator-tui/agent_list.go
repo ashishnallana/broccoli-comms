@@ -108,9 +108,9 @@ func rowFromBroccoliAgent(key string, agent broccoliAgentListRow) agentRow {
 			remoteName = name
 		}
 		name = remoteDisplayName(fallback(agent.TargetAddress, key), host, remoteName)
-		return agentRow{Name: name, TargetAddress: fallback(agent.TargetAddress, key), AgentName: remoteName, Scope: scope, Status: agent.Status, CWD: fallback(agent.CWD, "unavailable"), Hostname: host, TrackerID: agent.TrackerID, RegistryName: agent.RegistryName, Configured: agentBoolPtr(agent.IsConfigured), Running: agentBoolPtr(agent.Running), Launchable: agentBoolPtr(agent.Launchable)}
+		return agentRow{Name: name, TargetAddress: fallback(agent.TargetAddress, key), AgentName: remoteName, Scope: scope, Status: agent.Status, CWD: fallback(agent.CWD, "unavailable"), Hostname: host, TrackerID: agent.TrackerID, RegistryName: agent.RegistryName, Configured: agentBoolPtr(agent.IsConfigured), Running: agentBoolPtr(agent.Running), Launchable: agentBoolPtr(agent.Launchable), CurrentTask: agent.CurrentTask, CurrentTaskID: agent.CurrentTaskID, CurrentTaskStatus: agent.CurrentTaskStatus, CurrentTaskNextStep: agent.CurrentTaskNextStep}
 	}
-	return agentRow{Name: name, TargetAddress: fallback(agent.TargetAddress, key), AgentName: name, Scope: scope, Status: agent.Status, CWD: fallback(agent.CWD, "unknown"), Hostname: agent.Hostname, Configured: agentBoolPtr(agent.IsConfigured), Running: agentBoolPtr(agent.Running), Launchable: agentBoolPtr(agent.Launchable)}
+	return agentRow{Name: name, TargetAddress: fallback(agent.TargetAddress, key), AgentName: name, Scope: scope, Status: agent.Status, CWD: fallback(agent.CWD, "unknown"), Hostname: agent.Hostname, Configured: agentBoolPtr(agent.IsConfigured), Running: agentBoolPtr(agent.Running), Launchable: agentBoolPtr(agent.Launchable), CurrentTask: agent.CurrentTask, CurrentTaskID: agent.CurrentTaskID, CurrentTaskStatus: agent.CurrentTaskStatus, CurrentTaskNextStep: agent.CurrentTaskNextStep}
 }
 
 func agentBoolPtr(v bool) *bool { return &v }
@@ -129,21 +129,25 @@ func rowFromTrackerAgent(key string, agent tracker.Agent) agentRow {
 	target := fallback(agent.TargetAddress, key)
 	if scope != "remote" {
 		return agentRow{
-			Name:          key,
-			TargetAddress: target,
-			AgentName:     key,
-			Scope:         "local",
-			Status:        agent.Status,
-			CWD:           fallback(agent.CWD, "unknown"),
-			Hostname:      agent.Hostname,
-			TmuxPane:      agent.TmuxPane,
-			AgentCmd:      agent.AgentCmd,
-			AgentType:     agent.AgentType,
-			AgentID:       agent.AgentID,
-			TrackerID:     agent.TrackerID,
-			RegistryName:  agent.RegistryName,
-			ModelType:     agent.ModelType,
-			Detection:     agent.Detection,
+			Name:                key,
+			TargetAddress:       target,
+			AgentName:           key,
+			Scope:               "local",
+			Status:              agent.Status,
+			CWD:                 fallback(agent.CWD, "unknown"),
+			Hostname:            agent.Hostname,
+			TmuxPane:            agent.TmuxPane,
+			AgentCmd:            agent.AgentCmd,
+			AgentType:           agent.AgentType,
+			AgentID:             agent.AgentID,
+			TrackerID:           agent.TrackerID,
+			RegistryName:        agent.RegistryName,
+			ModelType:           agent.ModelType,
+			CurrentTask:         agent.CurrentTask,
+			CurrentTaskID:       agent.CurrentTaskID,
+			CurrentTaskStatus:   agent.CurrentTaskStatus,
+			CurrentTaskNextStep: agent.CurrentTaskNextStep,
+			Detection:           agent.Detection,
 		}
 	}
 	host, name := splitRemoteTarget(target)
@@ -154,21 +158,25 @@ func rowFromTrackerAgent(key string, agent tracker.Agent) agentRow {
 		name = fallback(agent.Name, key)
 	}
 	return agentRow{
-		Name:          remoteDisplayName(target, host, name),
-		TargetAddress: target,
-		Hostname:      host,
-		AgentName:     name,
-		Scope:         "remote",
-		Status:        agent.Status,
-		CWD:           fallback(agent.CWD, "unavailable"),
-		TmuxPane:      agent.TmuxPane,
-		AgentCmd:      agent.AgentCmd,
-		AgentType:     agent.AgentType,
-		AgentID:       agent.AgentID,
-		TrackerID:     agent.TrackerID,
-		RegistryName:  agent.RegistryName,
-		ModelType:     agent.ModelType,
-		Detection:     agent.Detection,
+		Name:                remoteDisplayName(target, host, name),
+		TargetAddress:       target,
+		Hostname:            host,
+		AgentName:           name,
+		Scope:               "remote",
+		Status:              agent.Status,
+		CWD:                 fallback(agent.CWD, "unavailable"),
+		TmuxPane:            agent.TmuxPane,
+		AgentCmd:            agent.AgentCmd,
+		AgentType:           agent.AgentType,
+		AgentID:             agent.AgentID,
+		TrackerID:           agent.TrackerID,
+		RegistryName:        agent.RegistryName,
+		ModelType:           agent.ModelType,
+		CurrentTask:         agent.CurrentTask,
+		CurrentTaskID:       agent.CurrentTaskID,
+		CurrentTaskStatus:   agent.CurrentTaskStatus,
+		CurrentTaskNextStep: agent.CurrentTaskNextStep,
+		Detection:           agent.Detection,
 	}
 }
 

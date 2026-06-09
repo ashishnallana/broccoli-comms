@@ -1028,6 +1028,66 @@ def _remote_registry_agents() -> dict:
     return remote
 
 
+ACTIVE_DURABLE_STATE_STATUSES = {"working", "blocked", "waiting", "review"}
+INACTIVE_DURABLE_TASK_STATUSES = {"done", "validated", "archived"}
+
+
+def _durable_current_tasks_by_agent() -> dict[str, dict]:
+    """Best-effort active task metadata keyed by durable agent/profile names."""
+    try:
+        kernel = learning_kernel()
+        states = kernel.state_list()
+    except Exception:
+        return {}
+    task_cache: dict[str, dict | None] = {}
+    current_by_agent: dict[str, dict] = {}
+    for state_row in states:
+        if state_row.get("status") not in ACTIVE_DURABLE_STATE_STATUSES:
+            continue
+        task_id = state_row.get("task_id")
+        if not task_id:
+            continue
+        if task_id not in task_cache:
+            try:
+                task_cache[task_id] = kernel.task_show(task_id)
+            except Exception:
+                task_cache[task_id] = None
+        task = task_cache.get(task_id) or {}
+        if task.get("status") in INACTIVE_DURABLE_TASK_STATUSES:
+            continue
+        current_task = task.get("title") or state_row.get("current_activity") or task_id
+        metadata = {
+            "current_task": current_task,
+            "current_task_id": task_id,
+            "current_task_status": state_row.get("status") or task.get("status") or "",
+            "current_task_next_step": state_row.get("next_step") or task.get("next_step") or "",
+        }
+        for key in (state_row.get("agent"), state_row.get("instance_id")):
+            if key and key not in current_by_agent:
+                current_by_agent[key] = metadata
+    return current_by_agent
+
+
+def _durable_current_task_for_row(name: str, durable_tasks: dict[str, dict]) -> dict:
+    candidates = [name]
+    if "@" in name:
+        candidates.append(name.split("@", 1)[0])
+    for candidate in candidates:
+        if candidate in durable_tasks:
+            return durable_tasks[candidate]
+    return {}
+
+
+def _tracker_current_task_fields(tracker: dict | None) -> dict:
+    fields = {key: "" for key in ("current_task", "current_task_id", "current_task_status", "current_task_next_step")}
+    if not isinstance(tracker, dict):
+        return fields
+    for key in fields:
+        if key in tracker:
+            fields[key] = tracker.get(key) or ""
+    return fields
+
+
 def merged_agent_rows(*, include_remote: bool = False) -> dict[str, dict]:
     cfg = load_config()
     configured_agents = cfg.get("agents") or {}
@@ -1038,6 +1098,7 @@ def merged_agent_rows(*, include_remote: bool = False) -> dict[str, dict]:
     if include_remote:
         for name, info in _remote_registry_agents().items():
             tracker_by_name.setdefault(name, info)
+    durable_current_tasks = _durable_current_tasks_by_agent()
 
     names = set(configured_agents) | set(windows_by_name) | set(tracker_by_name)
     rows: dict[str, dict] = {}
@@ -1046,6 +1107,8 @@ def merged_agent_rows(*, include_remote: bool = False) -> dict[str, dict]:
         tracker = tracker_by_name.get(name) if isinstance(tracker_by_name.get(name), dict) else None
         remote = bool((tracker or {}).get("scope") == "remote")
         configured_view = _configured_agent_view(name, spec) if spec is not None else None
+        durable_current_task = _durable_current_task_for_row(name, durable_current_tasks) if not remote else {}
+        current_task_fields = {**_tracker_current_task_fields(tracker), **durable_current_task}
         row = {
             "name": name,
             "configured": configured_view,
@@ -1065,6 +1128,7 @@ def merged_agent_rows(*, include_remote: bool = False) -> dict[str, dict]:
             "status": (tracker or {}).get("status") or ("configured" if spec is not None else "unknown"),
             "launchable": bool(spec and spec.get("command")),
             "copyable": bool(spec and spec.get("command")) or bool((tracker or {}).get("command") or (tracker or {}).get("agent_command") or (tracker or {}).get("agent_cmd")),
+            **current_task_fields,
         }
         if spec is not None:
             row.update({

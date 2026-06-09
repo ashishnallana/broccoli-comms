@@ -1,4 +1,7 @@
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 import state
 
@@ -94,16 +97,36 @@ class TestState(unittest.TestCase):
             "session": "s",
             "cwd": "/work/project",
             "swarms": [{"name": "backend-fix", "role": "main"}],
+            "current_task": "reviewing card UX",
+            "current_task_next_step": "run tests",
         })
         self.assertEqual(state.get_agents_for_registry(), [{
-            "agent_id": "id-1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": "/work/project", "swarms": [{"name": "backend-fix", "role": "main"}]
+            "agent_id": "id-1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": "/work/project", "swarms": [{"name": "backend-fix", "role": "main"}], "current_task": "reviewing card UX", "current_task_id": "", "current_task_status": "", "current_task_next_step": "run tests"
         }])
+
+    def test_get_agents_for_registry_uses_durable_current_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = f"{tmp}/learning-kernel.sqlite3"
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE tasks(task_id TEXT, title TEXT, status TEXT, next_step TEXT)")
+            conn.execute("CREATE TABLE working_states(agent TEXT, instance_id TEXT, status TEXT, next_step TEXT, current_activity TEXT, task_id TEXT, updated_at TEXT)")
+            conn.execute("INSERT INTO tasks VALUES('task-1', 'Implement selected card', 'working', 'task next')")
+            conn.execute("INSERT INTO working_states VALUES('agent1', 'agent1@manual', 'working', 'state next', 'coding', 'task-1', '2026-01-01T00:00:00Z')")
+            conn.commit()
+            conn.close()
+            state.set_agent("agent1", {"agent_id": "id-1", "status": "idle"})
+            with mock.patch.object(state, "_learning_db_candidates", return_value=[Path(db_path)]):
+                agents = state.get_agents_for_registry()
+        self.assertEqual(agents[0]["current_task"], "Implement selected card")
+        self.assertEqual(agents[0]["current_task_id"], "task-1")
+        self.assertEqual(agents[0]["current_task_status"], "working")
+        self.assertEqual(agents[0]["current_task_next_step"], "state next")
 
     def test_get_agents_for_registry_skips_no_registry_agents(self):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "no_registry": True})
         state.set_agent("agent2", {"agent_id": "id-2", "status": "working"})
         self.assertEqual(state.get_agents_for_registry(), [{
-            "agent_id": "id-2", "name": "agent2", "aliases": [], "status": "working", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": None, "swarms": []
+            "agent_id": "id-2", "name": "agent2", "aliases": [], "status": "working", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": None, "swarms": [], "current_task": "", "current_task_id": "", "current_task_status": "", "current_task_next_step": ""
         }])
 
     def test_normalize_model_type(self):

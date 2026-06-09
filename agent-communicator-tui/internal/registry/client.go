@@ -11,16 +11,20 @@ import (
 )
 
 type Agent struct {
-	AgentID   string   `json:"agent_id"`
-	Name      string   `json:"name"`
-	Aliases   []string `json:"aliases"`
-	TrackerID string   `json:"tracker_id"`
-	Hostname  string   `json:"hostname"`
-	Status    string   `json:"status"`
-	AgentType string   `json:"agent_type"`
-	AgentCmd  string   `json:"agent_cmd"`
-	LastSeen  float64  `json:"last_seen"`
-	CWD       string   `json:"cwd,omitempty"`
+	AgentID             string   `json:"agent_id"`
+	Name                string   `json:"name"`
+	Aliases             []string `json:"aliases"`
+	TrackerID           string   `json:"tracker_id"`
+	Hostname            string   `json:"hostname"`
+	Status              string   `json:"status"`
+	AgentType           string   `json:"agent_type"`
+	AgentCmd            string   `json:"agent_cmd"`
+	CurrentTask         string   `json:"current_task,omitempty"`
+	CurrentTaskID       string   `json:"current_task_id,omitempty"`
+	CurrentTaskStatus   string   `json:"current_task_status,omitempty"`
+	CurrentTaskNextStep string   `json:"current_task_next_step,omitempty"`
+	LastSeen            float64  `json:"last_seen"`
+	CWD                 string   `json:"cwd,omitempty"`
 }
 
 type Client struct {

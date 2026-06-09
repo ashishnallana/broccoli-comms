@@ -75,9 +75,19 @@ func TestSaveAgentCmdErrorsWhenRemoteTrackerIDMissing(t *testing.T) {
 	}
 }
 
-func TestRowFromTrackerAgentPreservesTrackerID(t *testing.T) {
-	row := rowFromTrackerAgent("host/alpha", tracker.Agent{Scope: "remote", TargetAddress: "host/alpha", TrackerID: "tracker-1"})
+func TestRowFromTrackerAgentPreservesTrackerIDAndCurrentTask(t *testing.T) {
+	row := rowFromTrackerAgent("host/alpha", tracker.Agent{Scope: "remote", TargetAddress: "host/alpha", TrackerID: "tracker-1", CurrentTask: "Remote review", CurrentTaskNextStep: "Ship it"})
 	if row.TrackerID != "tracker-1" {
 		t.Fatalf("tracker id = %q", row.TrackerID)
+	}
+	if row.CurrentTask != "Remote review" || row.CurrentTaskNextStep != "Ship it" {
+		t.Fatalf("current task fields = %+v", row)
+	}
+}
+
+func TestRowFromBroccoliAgentPreservesCurrentTask(t *testing.T) {
+	row := rowFromBroccoliAgent("alpha", broccoliAgentListRow{Name: "alpha", CurrentTask: "Local task", CurrentTaskID: "task-1", CurrentTaskStatus: "working", CurrentTaskNextStep: "Run tests"})
+	if row.CurrentTask != "Local task" || row.CurrentTaskID != "task-1" || row.CurrentTaskStatus != "working" || row.CurrentTaskNextStep != "Run tests" {
+		t.Fatalf("current task fields = %+v", row)
 	}
 }

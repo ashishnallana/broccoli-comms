@@ -18,7 +18,7 @@ func (m model) rightColumn(width, height int) string {
 	}
 	status := m.registryStatusLine()
 	statusH := 2
-	currentH := min(7, max(5, height/4))
+	currentH := min(10, max(9, height/3))
 	listH := max(1, height-currentH-statusH)
 	current := m.currentAgentPanel(width, currentH)
 	list := m.switcherPanel(width, listH)
@@ -49,8 +49,41 @@ func (m model) currentAgentPanel(width, height int) string {
 	line1 := namePrefix + nameText + bgSpaces(gap, colors.SelectedBg) + statusBadge
 	line2 := lipgloss.NewStyle().Foreground(colors.SelectedFg).Background(colors.SelectedBg).Faint(true).Render(truncateCells("  "+host+" · "+provider, heroInnerW))
 	hero := lipgloss.NewStyle().Width(heroW).Background(colors.SelectedBg).Foreground(colors.SelectedFg).Bold(true).Padding(1, 1).Render(line1 + "\n" + line2)
-	body := shellTitleStyle.Render("Agent Communicator") + "\n" + hero
+	taskW := max(1, width-4)
+	body := strings.Join([]string{
+		shellTitleStyle.Render("Agent Communicator"),
+		hero,
+		currentTaskLine(row, taskW),
+		nextTaskLine(row, taskW),
+	}, "\n")
 	return lipgloss.NewStyle().Width(width).Height(height).Padding(1, 1).Background(colors.RightColumnBg).Render(truncateLines(body, max(1, height-1)))
+}
+
+func currentTaskLine(row agentRow, width int) string {
+	bg := colors.RightColumnBg
+	label := fgOnBg(colors.BadgeFg, colors.BadgeBg).Bold(true).Render(" Current ")
+	gap := bgSpaces(1, bg)
+	current := strings.TrimSpace(row.CurrentTask)
+	if current == "" {
+		value := fgOnBg(colors.Muted, bg).Faint(true).Render(truncateCells("No active task", max(1, width-lipgloss.Width(label)-lipgloss.Width(gap))))
+		return padStyledLine(label+gap+value, width, bg)
+	}
+	valueBudget := max(1, width-lipgloss.Width(label)-lipgloss.Width(gap))
+	value := fgOnBg(colors.TextStrong, bg).Bold(true).Render(truncateCells(current, valueBudget))
+	return padStyledLine(label+gap+value, width, bg)
+}
+
+func nextTaskLine(row agentRow, width int) string {
+	bg := colors.RightColumnBg
+	label := fgOnBg(colors.Muted, bg).Bold(true).Render("Next")
+	separator := fgOnBg(colors.Muted, bg).Render(": ")
+	next := strings.TrimSpace(row.CurrentTaskNextStep)
+	if next == "" {
+		next = "—"
+	}
+	valueBudget := max(1, width-lipgloss.Width(label)-lipgloss.Width(separator))
+	value := fgOnBg(colors.Muted, bg).Render(truncateCells(next, valueBudget))
+	return padStyledLine(label+separator+value, width, bg)
 }
 
 func (m model) switcherPanel(width, height int) string {

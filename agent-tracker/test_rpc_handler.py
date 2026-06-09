@@ -104,6 +104,15 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual(result["agent1"]["model_type"], "codex")
         self.assertEqual(result["agent1"]["swarms"], [])
 
+    def test_handle_list_includes_durable_current_task(self):
+        state.set_agent("agent1", {"agent_id": "id-1", "status": "idle"})
+        durable = {"agent1": {"current_task": "Implement selected card", "current_task_id": "task-1", "current_task_status": "working", "current_task_next_step": "run tests"}}
+        with mock.patch.object(state, "durable_current_tasks_by_agent", return_value=durable):
+            result = rpc_handler.handle_list({})
+        self.assertEqual(result["agent1"]["current_task"], "Implement selected card")
+        self.assertEqual(result["agent1"]["current_task_id"], "task-1")
+        self.assertEqual(result["agent1"]["current_task_next_step"], "run tests")
+
     @mock.patch("tmux_util.set_pane_title")
     @mock.patch("tmux_util.set_agent_no_registry")
     @mock.patch("tmux_util.set_agent_no_notify_with_send_keys")

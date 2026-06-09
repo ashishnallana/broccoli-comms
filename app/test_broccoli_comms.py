@@ -479,6 +479,38 @@ agent_communicator_tui = "/config/agent-communicator"
         self.assertTrue(payload["agents"]["configured-only"]["is_configured"])
         self.assertTrue(payload["agents"]["running-only"]["running"])
         self.assertTrue(payload["agents"]["host/remote"]["remote"])
+        self.assertIn("current_task", payload["agents"]["configured-only"])
+
+    def test_agent_list_exposes_current_task_from_durable_state_and_remote_tracker(self):
+        fake_kernel = mock.Mock()
+        fake_kernel.state_list.return_value = [{
+            "task_id": "task-1",
+            "agent": "configured-only",
+            "instance_id": "configured-only@manual",
+            "status": "working",
+            "current_activity": "coding",
+            "next_step": "run focused tests",
+        }]
+        fake_kernel.task_show.return_value = {"task_id": "task-1", "title": "Implement current task card", "status": "working", "next_step": "fallback next"}
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.json").write_text(json.dumps({"agents": {"configured-only": {"cwd": tmp, "command": "pi"}}}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel), \
+                     mock.patch.object(broccoli_comms_app, "tmux_up", return_value=True), \
+                     mock.patch.object(broccoli_comms_app, "can_connect", return_value=True), \
+                     mock.patch.object(broccoli_comms_app, "managed_windows", return_value=[]), \
+                     mock.patch.object(broccoli_comms_app, "_tracker_agents_with_remote", return_value={"host/remote": {"scope": "remote", "target_address": "host/remote", "current_task": "Remote audit", "current_task_next_step": "ship remote result"}}), \
+                     mock.patch.object(broccoli_comms_app, "_remote_registry_agents", return_value={}):
+                    payload = broccoli_comms_app.agent_list_payload(argparse.Namespace(include_remote=True, configured_only=False, running_only=False, remote_only=False))
+        local = payload["agents"]["configured-only"]
+        remote = payload["agents"]["host/remote"]
+        self.assertEqual(local["current_task"], "Implement current task card")
+        self.assertEqual(local["current_task_id"], "task-1")
+        self.assertEqual(local["current_task_next_step"], "run focused tests")
+        self.assertEqual(remote["current_task"], "Remote audit")
+        self.assertEqual(remote["current_task_next_step"], "ship remote result")
 
     def test_agent_copy_saves_immutable_definition(self):
         with tempfile.TemporaryDirectory() as tmp:

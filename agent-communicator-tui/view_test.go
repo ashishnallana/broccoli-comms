@@ -123,6 +123,32 @@ func TestCurrentAgentPanelDoesNotRepeatStandaloneHostLine(t *testing.T) {
 	}
 }
 
+func TestCurrentAgentPanelShowsCurrentTaskAndNextOnSeparateLine(t *testing.T) {
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", Status: "working", Hostname: "host-a", ModelType: "pi", CurrentTask: "Implement selected-agent current task display", CurrentTaskNextStep: "Run focused tests and submit review"}}}
+	view := m.currentAgentPanel(58, 10)
+	if !strings.Contains(view, "Current") || !strings.Contains(view, "Implement selected-agent") || !strings.Contains(view, "Next") || !strings.Contains(view, "Run focused tests") {
+		t.Fatalf("current agent panel missing task details:\n%s", view)
+	}
+	currentLine := renderedLineContaining(t, view, "Implement selected-agent")
+	nextLine := renderedLineContaining(t, view, "Run focused tests")
+	if currentLine == nextLine || strings.Contains(currentLine, "Run focused tests") {
+		t.Fatalf("next step should render on a separate line:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > 58 {
+			t.Fatalf("line width=%d want <= 58 line=%q view=\n%s", got, line, view)
+		}
+	}
+}
+
+func TestCurrentAgentPanelShowsNoActiveTaskState(t *testing.T) {
+	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", Status: "idle", Hostname: "host-a", ModelType: "pi"}}}
+	view := m.currentAgentPanel(50, 10)
+	if !strings.Contains(view, "No active task") || !strings.Contains(view, "Next") {
+		t.Fatalf("current agent panel missing no-task state:\n%s", view)
+	}
+}
+
 func TestWideComposerSitsBelowConversationHeader(t *testing.T) {
 	m := model{width: 120, height: 30, rows: []agentRow{{Name: "alpha", Scope: "local"}}, messages: []tracker.Message{{Sender: "agent", Body: "hello"}}}
 	view := m.View()

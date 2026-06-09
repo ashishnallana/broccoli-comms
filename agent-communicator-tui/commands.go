@@ -43,25 +43,29 @@ type messageContextSender interface {
 }
 
 type agentRow struct {
-	Name          string
-	Scope         string
-	Status        string
-	CWD           string
-	TargetAddress string
-	Configured    *bool
-	Running       *bool
-	Launchable    *bool
-	Role          string
-	Hostname      string
-	AgentName     string
-	TmuxPane      string
-	AgentCmd      string
-	AgentType     string
-	AgentID       string
-	TrackerID     string
-	RegistryName  string
-	ModelType     string
-	Detection     tracker.DetectionStatus
+	Name                string
+	Scope               string
+	Status              string
+	CWD                 string
+	TargetAddress       string
+	Configured          *bool
+	Running             *bool
+	Launchable          *bool
+	Role                string
+	Hostname            string
+	AgentName           string
+	TmuxPane            string
+	AgentCmd            string
+	AgentType           string
+	CurrentTask         string
+	CurrentTaskID       string
+	CurrentTaskStatus   string
+	CurrentTaskNextStep string
+	AgentID             string
+	TrackerID           string
+	RegistryName        string
+	ModelType           string
+	Detection           tracker.DetectionStatus
 }
 type mailboxEnsured struct{ Err error }
 
@@ -666,20 +670,24 @@ type broccoliAgentListPayload struct {
 }
 
 type broccoliAgentListRow struct {
-	Name          string `json:"name"`
-	Status        string `json:"status"`
-	ScopeKind     string `json:"scope_kind"`
-	Remote        bool   `json:"remote"`
-	IsConfigured  bool   `json:"is_configured"`
-	Running       bool   `json:"running"`
-	Launchable    bool   `json:"launchable"`
-	Copyable      bool   `json:"copyable"`
-	TargetAddress string `json:"target_address"`
-	Hostname      string `json:"hostname"`
-	TrackerID     string `json:"tracker_id"`
-	RegistryName  string `json:"registry_name"`
-	Command       string `json:"command"`
-	CWD           string `json:"cwd"`
+	Name                string `json:"name"`
+	Status              string `json:"status"`
+	ScopeKind           string `json:"scope_kind"`
+	Remote              bool   `json:"remote"`
+	IsConfigured        bool   `json:"is_configured"`
+	Running             bool   `json:"running"`
+	Launchable          bool   `json:"launchable"`
+	Copyable            bool   `json:"copyable"`
+	TargetAddress       string `json:"target_address"`
+	Hostname            string `json:"hostname"`
+	TrackerID           string `json:"tracker_id"`
+	RegistryName        string `json:"registry_name"`
+	Command             string `json:"command"`
+	CWD                 string `json:"cwd"`
+	CurrentTask         string `json:"current_task"`
+	CurrentTaskID       string `json:"current_task_id"`
+	CurrentTaskStatus   string `json:"current_task_status"`
+	CurrentTaskNextStep string `json:"current_task_next_step"`
 }
 
 func loadConfigItemsFromBroccoliComms(ctx context.Context) ([]ConfigSelectionItem, error) {
