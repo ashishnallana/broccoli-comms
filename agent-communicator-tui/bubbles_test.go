@@ -81,6 +81,17 @@ func TestApprovalRequestMessageRendersTypedCard(t *testing.T) {
 	}
 }
 
+func TestTaskUpdateMessageRendersTypedCard(t *testing.T) {
+	m := model{messages: []tracker.Message{{Sender: "task-kernel", Body: "fallback", ContentType: taskUpdateContentType, Kind: "task_update", TaskID: "task-1", TaskTitle: "Update skill docs", TaskStatus: "review", ResultSummary: "Skill docs updated", TaskNextStep: "Await validation"}}}
+	lines := m.messageBubbleLines(m.messages[0], 0, 100)
+	view := strings.Join(lines, "\n")
+	for _, want := range []string{"Task update", "Update skill docs", "task-1", "review", "Skill docs updated", "Await validation"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("task update card missing %q in:\n%s", want, view)
+		}
+	}
+}
+
 func TestLegacyMessageHeaderStillRendersSender(t *testing.T) {
 	m := model{messages: []tracker.Message{{Sender: "legacy-agent", Body: "hello"}}}
 	view := strings.Join(m.messageLinesForWidth(90), "\n")

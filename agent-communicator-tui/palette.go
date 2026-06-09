@@ -14,6 +14,7 @@ type TerminalTheme struct {
 	PanelBgAlt       lipgloss.Color
 	IncomingBubbleBg lipgloss.Color
 	CapturePaneBg    lipgloss.Color
+	TaskUpdateBg     lipgloss.Color
 	RightColumnBg    lipgloss.Color
 	Text             lipgloss.Color
 	TextStrong       lipgloss.Color
@@ -53,6 +54,7 @@ func defaultTerminalTheme() TerminalTheme {
 		PanelBgAlt:       c("8"),
 		IncomingBubbleBg: c("8"),
 		CapturePaneBg:    c("8"),
+		TaskUpdateBg:     c("4"),
 		RightColumnBg:    c("8"),
 		Text:             c("7"),
 		TextStrong:       c("15"),

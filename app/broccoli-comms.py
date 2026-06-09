@@ -1991,7 +1991,47 @@ def task_next(args: argparse.Namespace) -> None:
     _print_payload(payload, args.json)
 
 
+def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
+    if not task or not updates:
+        return {"sent": False, "skipped": True}
+    status = task.get("status") or "unknown"
+    title = task.get("title") or "Untitled task"
+    task_id = task.get("task_id") or "unknown"
+    lines = [
+        f"Task `{task_id}` updated by {actor}.",
+        f"Status: `{status}`",
+    ]
+    if task.get("result_summary"):
+        lines.extend(["", str(task.get("result_summary"))])
+    metadata = {
+        "content_type": "application/vnd.broccoli.task-update+json",
+        "kind": "task_update",
+        "task_id": task_id,
+        "task_title": title,
+        "task_status": status,
+        "task_next_step": task.get("next_step") or "",
+        "result_summary": task.get("result_summary") or "",
+        "source": "system/task-kernel",
+        "sender_source": "system",
+    }
+    try:
+        result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": "\n".join(lines), "metadata": metadata, "sender_name": "task-kernel"})
+        if not result:
+            raise RuntimeError("tracker RPC send_message failed")
+        return {"sent": True, "result": result}
+    except Exception as e:
+        return {"sent": False, "error": str(e)}
+
+
 def task_update(args: argparse.Namespace) -> None:
+    actor = os.environ.get("AGENT_NAME") or "user"
+    updates = {k: v for k, v in {
+        "status": args.status,
+        "next_step": args.next_step,
+        "blocked_reason": args.blocked_reason,
+        "result_summary": args.result_summary,
+        "assigned_agent": args.assign_agent,
+    }.items() if v is not None}
     try:
         payload = learning_kernel().task_update(
             args.task_id,
@@ -2000,12 +2040,14 @@ def task_update(args: argparse.Namespace) -> None:
             blocked_reason=args.blocked_reason,
             result_summary=args.result_summary,
             assigned_agent=args.assign_agent,
-            actor=os.environ.get("AGENT_NAME") or "user",
+            actor=actor,
         )
     except KeyError:
         raise SystemExit(f"task not found: {args.task_id}")
     except ValueError as e:
         raise SystemExit(str(e))
+    if updates:
+        payload["notification"] = notify_task_update(payload, actor, updates)
     _print_payload(payload, args.json)
 
 

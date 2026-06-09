@@ -12,9 +12,36 @@ import (
 var bubbleBorder = lipgloss.RoundedBorder()
 
 const taskApprovalContentType = "application/vnd.broccoli.task-approval+json"
+const taskUpdateContentType = "application/vnd.broccoli.task-update+json"
 
 func isApprovalRequestMessage(msg tracker.Message) bool {
 	return msg.ContentType == taskApprovalContentType || msg.Kind == "task_completion_approval_request"
+}
+
+func isTaskUpdateMessage(msg tracker.Message) bool {
+	return msg.ContentType == taskUpdateContentType || msg.Kind == "task_update" || msg.Kind == "task_status_changed"
+}
+
+func renderTaskUpdateBody(msg tracker.Message, width int, bg lipgloss.Color) string {
+	lines := []string{fgOnBg(colors.AccentStrong, bg).Bold(true).Render("Task update")}
+	if msg.TaskTitle != "" {
+		lines = append(lines, fgOnBg(colors.TextStrong, bg).Bold(true).Render(msg.TaskTitle))
+	}
+	if msg.TaskID != "" {
+		lines = append(lines, "Task: `"+msg.TaskID+"`")
+	}
+	if msg.TaskStatus != "" {
+		lines = append(lines, "Status: `"+msg.TaskStatus+"`")
+	}
+	if msg.ResultSummary != "" {
+		lines = append(lines, "", "### Result summary", msg.ResultSummary)
+	} else if msg.Body != "" {
+		lines = append(lines, "", msg.Body)
+	}
+	if msg.TaskNextStep != "" {
+		lines = append(lines, "", "Next: "+msg.TaskNextStep)
+	}
+	return renderMarkdown(strings.Join(lines, "\n"), width, bg)
 }
 
 func renderApprovalRequestBody(msg tracker.Message, width int, bg lipgloss.Color) string {
@@ -48,12 +75,16 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	bodyBg := colors.BaseBg
 	if useBg {
 		bodyBg = colors.IncomingBubbleBg
-		if isPaneCapture {
+		if isTaskUpdateMessage(msg) {
+			bodyBg = colors.TaskUpdateBg
+		} else if isPaneCapture {
 			bodyBg = colors.CapturePaneBg
 		}
 	}
 	if isPaneCapture {
 		body = displayBody
+	} else if isTaskUpdateMessage(msg) {
+		body = renderTaskUpdateBody(msg, innerWidth, bodyBg)
 	} else if isApprovalRequestMessage(msg) {
 		body = renderApprovalRequestBody(msg, innerWidth, bodyBg)
 	} else if msg.ContentType == "" || msg.ContentType == "text/markdown" {

@@ -116,6 +116,10 @@ type Message struct {
 	Kind                    string       `json:"kind,omitempty"`
 	ApprovalID              string       `json:"approval_id,omitempty"`
 	TaskID                  string       `json:"task_id,omitempty"`
+	TaskTitle               string       `json:"task_title,omitempty"`
+	TaskStatus              string       `json:"task_status,omitempty"`
+	TaskNextStep            string       `json:"task_next_step,omitempty"`
+	ResultSummary           string       `json:"result_summary,omitempty"`
 	TaskChainID             string       `json:"task_chain_id,omitempty"`
 	RootTaskID              string       `json:"root_task_id,omitempty"`
 	TaskVersionAtSubmission int          `json:"task_version_at_submission,omitempty"`
