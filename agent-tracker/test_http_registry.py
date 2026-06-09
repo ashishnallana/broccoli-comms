@@ -95,7 +95,7 @@ class TestHttpAndRegistry(unittest.TestCase):
             server, base = start(registry_server.make_handler(store=store, token="secret"))
             self.addCleanup(server.shutdown)
             self.addCleanup(server.server_close)
-            payload = {"tracker_id": "t1", "hostname": "host1", "address": "127.0.0.1", "http_port": 19876, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi", "model_type": "pi", "cwd": "/work/project", "swarms": [{"name": "backend-fix", "role": "main"}]}]}
+            payload = {"tracker_id": "t1", "hostname": "host1", "address": "127.0.0.1", "http_port": 19876, "agents": [{"agent_id": "a1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi", "model_type": "pi", "cwd": "/work/project", "swarms": [{"name": "backend-fix", "role": "main"}], "current_task": "Review card UX", "current_task_next_step": "run tests"}]}
             self.assertEqual(post(f"{base}/trackers", payload, token="secret")[0], 201)
             self.assertEqual(post(f"{base}/trackers/t1/agent-update", {"agent_id": "a1", "status": "working"}, token="secret")[0], 200)
             code, body = get(f"{base}/agents/a1", token="secret")
@@ -107,6 +107,8 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.assertEqual(agents[0]["cwd"], "/work/project")
             self.assertEqual(agents[0]["model_type"], "pi")
             self.assertEqual(agents[0]["swarms"], [{"name": "backend-fix", "role": "main"}])
+            self.assertEqual(agents[0]["current_task"], "Review card UX")
+            self.assertEqual(agents[0]["current_task_next_step"], "run tests")
             heartbeat_agents = [{**payload["agents"][0], "swarms": [{"name": "backend-fix", "role": "subagent"}]}]
             self.assertEqual(post(f"{base}/trackers/t1/heartbeat", {"agents": heartbeat_agents}, token="secret")[0], 200)
             self.assertEqual(get(f"{base}/agents", token="secret")[1]["agents"][0]["swarms"], [{"name": "backend-fix", "role": "subagent"}])
@@ -116,6 +118,47 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.addCleanup(setattr, registry_server, "GONE", old_gone)
             store.trackers["t1"]["last_heartbeat"] = time.time() - 5
             self.assertEqual(get(f"{base}/agents", token="secret")[1]["agents"], [])
+
+    def test_registry_current_task_fields_are_bounded(self):
+        long_task = "x" * 5000
+        long_next_step = "y" * 5000
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            server, base = start(registry_server.make_handler(store=store, token="secret"))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            payload = {
+                "tracker_id": "t2",
+                "hostname": "host2",
+                "address": "127.0.0.1",
+                "http_port": 19877,
+                "agents": [
+                    {
+                        "agent_id": "remote-a",
+                        "name": "agent1",
+                        "aliases": [],
+                        "status": "idle",
+                        "agent_type": "pi",
+                        "agent_cmd": "pi",
+                        "model_type": "pi",
+                        "current_task": long_task,
+                        "current_task_id": long_task,
+                        "current_task_status": "working",
+                        "current_task_next_step": long_next_step,
+                    }
+                ],
+            }
+            self.assertEqual(post(f"{base}/trackers", payload, token="secret")[0], 201)
+            agents = get(f"{base}/agents", token="secret")[1]["agents"]
+            self.assertEqual(len(agents), 1)
+            self.assertEqual(len(agents[0]["current_task"]), 200)
+            self.assertEqual(len(agents[0]["current_task_id"]), 200)
+            self.assertEqual(len(agents[0]["current_task_status"]), 7)
+            self.assertEqual(len(agents[0]["current_task_next_step"]), 1000)
+            self.assertEqual(agents[0]["current_task"], "x" * 200)
+            self.assertEqual(agents[0]["current_task_id"], "x" * 200)
+            self.assertEqual(agents[0]["current_task_status"], "working")
+            self.assertEqual(agents[0]["current_task_next_step"], "y" * 1000)
 
     def test_registry_long_poll_client_disconnect_has_no_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:

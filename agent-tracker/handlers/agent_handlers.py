@@ -180,6 +180,7 @@ def _fetch_registry_agents_for_list() -> dict:
                 key = f"{registry_name}:{base_key}"
             remote_agents[key] = {
                 **agent,
+                **state.sanitize_current_task_fields(agent),
                 "name": key,
                 "scope": "remote",
                 "target_address": key,
@@ -202,21 +203,24 @@ def agent_event_payload(name: str, info: dict) -> dict:
     }
 
 
-def _local_agent_list_row(name: str, info: dict) -> dict:
+def _local_agent_list_row(name: str, info: dict, durable_tasks: dict | None = None) -> dict:
+    display_name = info.get("name") or name
     return {
         **info,
-        "name": info.get("name") or name,
+        "name": display_name,
         "scope": "local",
         "hostname": info.get("hostname") or registry_client.HOSTNAME,
         "tracker_id": info.get("tracker_id") or registry_client.TRACKER_ID,
         "target_address": info.get("target_address") or name,
         "model_type": state.normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd")),
         "swarms": normalize_swarms(info.get("swarms", [])),
+        **state.current_task_fields_for_agent(display_name, info, durable_tasks),
     }
 
 
 def _merge_registry_agents_for_list(local_agents: dict, remote_agents: dict) -> dict:
-    merged = {name: _local_agent_list_row(name, info) for name, info in (local_agents or {}).items()}
+    durable_tasks = state.durable_current_tasks_by_agent()
+    merged = {name: _local_agent_list_row(name, info, durable_tasks) for name, info in (local_agents or {}).items()}
     local_agent_ids = {info.get("agent_id") for info in (local_agents or {}).values() if info.get("agent_id")}
     for name, info in (remote_agents or {}).items():
         if info.get("agent_id") in local_agent_ids:
@@ -235,7 +239,8 @@ def handle_list(params: dict, caller_pid: int = None, identify_agent=None) -> di
     if params.get("include_remote"):
         agents = _merge_registry_agents_for_list(agents, _fetch_registry_agents_for_list())
     else:
-        agents = {name: _local_agent_list_row(name, info) for name, info in (agents or {}).items()}
+        durable_tasks = state.durable_current_tasks_by_agent()
+        agents = {name: _local_agent_list_row(name, info, durable_tasks) for name, info in (agents or {}).items()}
     caller_name = identify_agent(params, caller_pid) if identify_agent else None
 
     detection_status = permission_detection.detection_status_snapshot()

@@ -7,6 +7,8 @@ import os
 import hashlib
 import json
 import re
+import sqlite3
+from pathlib import Path
 import tmux_util
 import config
 
@@ -58,6 +60,28 @@ TRANSIENT_COMMS = {
     "ps", "grep", "pgrep", "ls", "cat", "sleep", "which", "sh", "bash", "zsh",
     "fish", "tmux", "home-manager", "nix", "env"
 }
+
+ACTIVE_DURABLE_STATE_STATUSES = {"working", "blocked", "waiting", "review"}
+INACTIVE_DURABLE_TASK_STATUSES = {"done", "validated", "archived"}
+CURRENT_TASK_FIELD_LIMITS = {
+    "current_task": 200,
+    "current_task_id": 200,
+    "current_task_status": 50,
+    "current_task_next_step": 1000,
+}
+CURRENT_TASK_KEYS = tuple(CURRENT_TASK_FIELD_LIMITS)
+
+
+def _bounded_public_text(value, max_len: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = "".join(ch if ord(ch) >= 32 else " " for ch in value).strip()
+    return cleaned[:max_len]
+
+
+def sanitize_current_task_fields(source: dict | None) -> dict:
+    source = source or {}
+    return {key: _bounded_public_text(source.get(key), limit) for key, limit in CURRENT_TASK_FIELD_LIMITS.items()}
 
 
 def normalize_model_type(*values: str | None) -> str:
@@ -395,8 +419,81 @@ def rename_agent(old_name: str, new_name: str) -> bool:
         return True
 
 
+def _learning_db_candidates() -> list[Path]:
+    candidates = []
+    configured_cache = config.get("paths", "cache_dir")
+    if configured_cache:
+        candidates.append(Path(configured_cache) / "learning-kernel.sqlite3")
+    xdg_cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    candidates.append(xdg_cache / "broccoli-comms" / "learning-kernel.sqlite3")
+    seen = set()
+    unique = []
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            unique.append(candidate)
+            seen.add(key)
+    return unique
+
+
+def durable_current_tasks_by_agent() -> dict:
+    """Best-effort active durable task metadata keyed by agent/profile names."""
+    for db_path in _learning_db_candidates():
+        if not db_path.exists():
+            continue
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=0.2)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT ws.agent, ws.instance_id, ws.status AS state_status, ws.next_step AS state_next_step,
+                       ws.current_activity, ws.task_id, t.title AS task_title, t.status AS task_status,
+                       t.next_step AS task_next_step
+                FROM working_states ws
+                LEFT JOIN tasks t ON t.task_id = ws.task_id
+                ORDER BY ws.updated_at DESC
+                """
+            ).fetchall()
+            conn.close()
+        except Exception:
+            continue
+        current = {}
+        for row in rows:
+            if row["state_status"] not in ACTIVE_DURABLE_STATE_STATUSES:
+                continue
+            if row["task_status"] in INACTIVE_DURABLE_TASK_STATUSES:
+                continue
+            title = row["task_title"] or row["current_activity"] or row["task_id"] or ""
+            metadata = {
+                "current_task": title,
+                "current_task_id": row["task_id"] or "",
+                "current_task_status": row["state_status"] or row["task_status"] or "",
+                "current_task_next_step": row["state_next_step"] or row["task_next_step"] or "",
+            }
+            for key in (row["agent"], row["instance_id"]):
+                if key and key not in current:
+                    current[key] = metadata
+        return current
+    return {}
+
+
+def current_task_fields_for_agent(name: str, info: dict, durable_tasks: dict | None = None) -> dict:
+    fields = sanitize_current_task_fields(info)
+    durable_tasks = durable_current_tasks_by_agent() if durable_tasks is None else durable_tasks
+    candidates = [name, info.get("name")]
+    for candidate in list(candidates):
+        if isinstance(candidate, str) and "@" in candidate:
+            candidates.append(candidate.split("@", 1)[0])
+    for candidate in candidates:
+        if candidate in durable_tasks:
+            fields.update(sanitize_current_task_fields(durable_tasks[candidate]))
+            break
+    return fields
+
+
 def get_agents_for_registry() -> list[dict]:
     """Returns a sidecar/registry-safe snapshot of agents."""
+    durable_tasks = durable_current_tasks_by_agent()
     with state_lock:
         return [{
             "agent_id": info.get("agent_id") or agent_id,
@@ -408,6 +505,7 @@ def get_agents_for_registry() -> list[dict]:
             "model_type": normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd")),
             "cwd": info.get("cwd"),
             "swarms": info.get("swarms", []),
+            **current_task_fields_for_agent(info.get("name"), info, durable_tasks),
         } for agent_id, info in state.items() if not info.get("no_registry", False)]
 
 

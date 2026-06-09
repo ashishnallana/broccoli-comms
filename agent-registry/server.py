@@ -33,6 +33,28 @@ DELIVERY_WAIT_SECONDS = config.get("registry", "delivery_wait_seconds", 25)
 REMOTE_PANE_INPUT_MAX_TEXT_BYTES = config.get("registry", "remote_pane_input_max_text_bytes", 4096)
 REMOTE_PANE_INPUT_MAX_KEYS = config.get("registry", "remote_pane_input_max_keys", 16)
 STATE_PATH = config.get("paths", "registry_state", os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "agent-registry", "state.json"))
+CURRENT_TASK_FIELD_LIMITS = {
+    "current_task": 200,
+    "current_task_id": 200,
+    "current_task_status": 50,
+    "current_task_next_step": 1000,
+}
+
+
+def _bounded_public_text(value, max_len):
+    if not isinstance(value, str):
+        return ""
+    cleaned = "".join(ch if ord(ch) >= 32 else " " for ch in value).strip()
+    return cleaned[:max_len]
+
+
+def _sanitize_current_task_fields(agent):
+    agent = agent or {}
+    return {key: _bounded_public_text(agent.get(key), limit) for key, limit in CURRENT_TASK_FIELD_LIMITS.items()}
+
+
+def _sanitize_public_agent_fields(agent):
+    return {**agent, **_sanitize_current_task_fields(agent)}
 
 
 class Store:
@@ -439,12 +461,12 @@ class Store:
 
     def list_agents(self):
         with self.lock:
-            return list(self.agents.values())
+            return [_sanitize_public_agent_fields(agent) for agent in self.agents.values()]
 
     def get_agent(self, agent_id):
         with self.lock:
             agent = self.agents.get(agent_id)
-            return dict(agent) if agent else None
+            return _sanitize_public_agent_fields(dict(agent)) if agent else None
 
     def has_tracker(self, tracker_id):
         with self.lock:
@@ -509,7 +531,7 @@ class Store:
         self.agents = {k: v for k, v in self.agents.items() if v["tracker_id"] != tracker_id}
         for agent in agents:
             self.agents[agent["agent_id"]] = {
-                **agent,
+                **_sanitize_public_agent_fields(agent),
                 "tracker_id": tracker_id,
                 "hostname": tracker["hostname"],
                 "last_seen": now,
@@ -873,7 +895,7 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                 for key in ("name", "hostname", "status"):
                     if query.get(key):
                         agents = [agent for agent in agents if agent.get(key) == query[key][0]]
-                public_keys = ("agent_id", "name", "aliases", "tracker_id", "hostname", "status", "agent_type", "agent_cmd", "model_type", "cwd", "swarms", "last_seen")
+                public_keys = ("agent_id", "name", "aliases", "tracker_id", "hostname", "status", "agent_type", "agent_cmd", "model_type", "cwd", "swarms", "current_task", "current_task_id", "current_task_status", "current_task_next_step", "last_seen")
                 agents = [{k: agent[k] for k in public_keys if k in agent} for agent in agents]
                 return self._json(200, {"agents": agents})
             if parts == ["message-events"]:
