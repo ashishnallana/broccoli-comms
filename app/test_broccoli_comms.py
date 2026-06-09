@@ -608,6 +608,29 @@ agent_communicator_tui = "/config/agent-communicator"
         self.assertIn("--scope", command[2])
         self.assertIn("repo:test", command[2])
 
+    def test_bootstrap_context_writes_agents_md_with_absolute_context_and_skill_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = {
+                "agents_md": "# Agent Operating Contract\n",
+                "memory": [
+                    {"memory_id": "mem-skill", "type": "skill", "title": "Deploy Helper", "body": "secret detailed steps", "metadata": {"description": "Safely deploy things"}},
+                    {"memory_id": "mem-habit", "type": "habit", "title": "Review", "body": "Run tests"},
+                    {"memory_id": "mem-expert", "type": "expertise", "title": "System", "body": "Architecture"},
+                ],
+            }
+            result = broccoli_comms_app.write_bootstrap_context_files(payload, tmp)
+            agents = (Path(result["context_dir"]) / "AGENTS.md").read_text()
+            context = Path(result["context_dir"])
+            self.assertIn(str(context / "memory.md"), agents)
+            self.assertIn(str(context / "habits.md"), agents)
+            self.assertIn(str(context / "expertise.md"), agents)
+            self.assertIn("Deploy Helper", agents)
+            self.assertIn("Safely deploy things", agents)
+            self.assertIn("broccoli-comms memory show mem-skill --json", agents)
+            self.assertIn(str(context / "skills" / "Deploy-Helper" / "SKILL.md"), agents)
+            self.assertIn("Use `broccoli-comms memory ...` commands", agents)
+            self.assertNotIn("secret detailed steps", agents)
+
     def test_ephemeral_agent_workspace_writes_agents_md_from_config_template(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):
             cfg_dir = Path(tmp) / "broccoli-comms"

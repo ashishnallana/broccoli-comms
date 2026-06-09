@@ -343,8 +343,16 @@ class TestLearningKernelCli(unittest.TestCase):
             approved = k.memory_approve(first["memory"]["memory_id"], expected_version=first["memory"]["version"])
             self.assertEqual(approved["memory"]["status"], "active")
             self.assertIsNotNone(approved["memory"].get("source_event_seq"))
+            updated = k.memory_edit(first["memory"]["memory_id"], body="Use /v2/latest", expected_version=approved["memory"]["version"])
+            self.assertEqual(updated["memory"]["status"], "active")
+            self.assertEqual(updated["memory"]["body"], "Use /v2/latest")
+            rolled_back = k.memory_rollback(first["memory"]["memory_id"], target_version=approved["memory"]["version"], expected_version=updated["memory"]["version"])
+            self.assertEqual(rolled_back["memory"]["status"], "active")
+            self.assertEqual(rolled_back["memory"]["body"], "Use /latest")
+            self.assertEqual(rolled_back["memory"]["version"], updated["memory"]["version"] + 1)
             boot = k.memory_for_bootstrap(agent="a", scope="project:x")
             self.assertEqual([m["memory_id"] for m in boot["records"]], [first["memory"]["memory_id"]])
+            self.assertEqual(boot["records"][0]["body"], "Use /latest")
 
     def test_memory_unvalidated_immutable_stale_and_hidden_statuses(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):

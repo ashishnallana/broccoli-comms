@@ -2500,6 +2500,37 @@ def _markdown_memory_list(title: str, records: list[dict]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _bootstrap_agents_md(base: str, path: Path, skills: list[dict]) -> str:
+    memory_path = path / "memory.md"
+    habits_path = path / "habits.md"
+    expertise_path = path / "expertise.md"
+    lines = [
+        base.rstrip(),
+        "",
+        "## Generated bootstrap context",
+        "- At session start, you must read the generated context files for this workspace:",
+        f"  - Memory: `{memory_path}`",
+        f"  - Habits: `{habits_path}`",
+        f"  - Expertise: `{expertise_path}`",
+        "- Use `broccoli-comms memory ...` commands to update durable skills/memory; do not edit generated SKILL.md, memory.md, habits.md, or expertise.md files as the source of truth.",
+    ]
+    if skills:
+        lines.extend(["", "## Available skills from durable memory"])
+        for mem in skills:
+            skill_name = safe_context_name(str(mem.get("title") or mem.get("memory_id") or "skill"))
+            skill_path = path / "skills" / skill_name / "SKILL.md"
+            desc = (mem.get("metadata") or {}).get("description") or ""
+            lines.extend([
+                f"- **{mem.get('title') or mem.get('memory_id')}**",
+                f"  - description: {desc}",
+                f"  - fetch: `broccoli-comms memory show {mem.get('memory_id')} --json`",
+                f"  - local path: `{skill_path}`",
+            ])
+    else:
+        lines.extend(["", "## Available skills from durable memory", "No active skill memories were included in this bootstrap."])
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dict:
     path = Path(context_dir)
     agents_override = os.environ.get("BROCCOLI_AGENTS_DIR")
@@ -2535,6 +2566,9 @@ def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dic
         body = str(mem.get("body") or "").strip()
         target.write_text(f"---\nname: {skill_name}\ndescription: {desc}\n---\n\n{body}\n", encoding="utf-8")
         files.append(str(target))
+    agents_target = path / "AGENTS.md"
+    agents_target.write_text(_bootstrap_agents_md(str(payload.get("agents_md") or ""), path, by_type["skill"]), encoding="utf-8")
+    files.append(str(agents_target))
     return {"context_dir": str(path), "files": files}
 
 
@@ -2698,7 +2732,7 @@ def memory_propose(args: argparse.Namespace) -> None:
         metadata = json.loads(args.metadata_json) if args.metadata_json else {}
         payload = learning_kernel().memory_propose(
             type=args.type, scope=args.scope, subject_agent=args.subject_agent, title=args.title,
-            description=args.description, body=args.body,
+            description=getattr(args, "description", None), body=args.body,
             source_task_id=args.source_task, trusted_manual=args.trusted_manual, tags=args.tag, metadata=metadata,
             idempotency_key=args.idempotency_key, proposed_by=agent, proposed_by_instance=instance,
             trusted_actor=trusted_actor, non_learning=immutable_learning_instance(agent, instance),
@@ -2729,7 +2763,7 @@ def memory_edit(args: argparse.Namespace) -> None:
             scope=args.scope,
             subject_agent=args.subject_agent,
             title=args.title,
-            description=args.description,
+            description=getattr(args, "description", None),
             body=args.body,
             source_task_id=args.source_task,
             trusted_manual=args.trusted_manual,
@@ -2737,6 +2771,14 @@ def memory_edit(args: argparse.Namespace) -> None:
             metadata=metadata,
         )
     except (KeyError, ValueError, json.JSONDecodeError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def memory_rollback(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().memory_rollback(args.memory_id, target_version=args.to_version, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+    except (KeyError, ValueError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
 
@@ -3144,6 +3186,12 @@ def main() -> None:
     memory_edit_parser.add_argument("--expected-version", type=int)
     memory_edit_parser.add_argument("--json", action="store_true")
     memory_edit_parser.set_defaults(func=memory_edit)
+    memory_rollback_parser = memory_sub.add_parser("rollback")
+    memory_rollback_parser.add_argument("memory_id")
+    memory_rollback_parser.add_argument("--to-version", type=int, required=True, help="Previous memory version to restore")
+    memory_rollback_parser.add_argument("--expected-version", type=int)
+    memory_rollback_parser.add_argument("--json", action="store_true")
+    memory_rollback_parser.set_defaults(func=memory_rollback)
     memory_reject_parser = memory_sub.add_parser("reject")
     memory_reject_parser.add_argument("memory_id")
     memory_reject_parser.add_argument("--reason")

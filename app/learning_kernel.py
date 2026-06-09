@@ -827,8 +827,8 @@ class LearningKernel:
                 raise KeyError(memory_id)
             if expected_version is not None and int(expected_version) != int(mem["version"]):
                 raise ValueError("stale memory version")
-            if mem["status"] != "pending":
-                raise ValueError("memory edit requires pending status")
+            if mem["status"] not in {"pending", "active"}:
+                raise ValueError("memory edit requires pending or active status")
             merged = {k: mem.get(k) for k in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata")}
             for key in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata"):
                 if key in kw and kw[key] is not None:
@@ -836,9 +836,53 @@ class LearningKernel:
             payload = self._clean_memory_payload(merged)
             conn.execute("BEGIN IMMEDIATE")
             latest = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
-            if latest["status"] != "pending" or (expected_version is not None and int(latest["version"]) != int(expected_version)):
+            if latest["status"] != mem["status"] or latest["status"] not in {"pending", "active"} or (expected_version is not None and int(latest["version"]) != int(expected_version)):
                 conn.execute("ROLLBACK"); raise ValueError("stale memory version")
-            ev = self.event(conn, "memory_edited", "user", actor, "memory", memory_id, self._memory_event_payload({**payload, "memory_id": memory_id, "status": "pending", "version": int(latest["version"]) + 1}, previous=self._memory_event_payload(latest).get("memory")), payload.get("source_task_id"), payload.get("scope"), replayable_payload=True)
+            ev = self.event(conn, "memory_edited", "user", actor, "memory", memory_id, self._memory_event_payload({**payload, "memory_id": memory_id, "status": latest["status"], "version": int(latest["version"]) + 1}, previous=self._memory_event_payload(latest).get("memory")), payload.get("source_task_id"), payload.get("scope"), replayable_payload=True)
+            conn.execute("UPDATE memory_records SET type=?, scope=?, subject_agent=?, title=?, body=?, source_task_id=?, trusted_manual=?, tags=?, metadata=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (payload["type"], payload["scope"], payload["subject_agent"], payload["title"], payload["body"], payload["source_task_id"], 1 if payload["trusted_manual"] else 0, json.dumps(payload["tags"], sort_keys=True), json.dumps(payload["metadata"], sort_keys=True), ev["event_seq"], memory_id))
+            conn.execute("COMMIT")
+            return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
+
+    def _memory_snapshot_for_version(self, conn: sqlite3.Connection, memory_id: str, target_version: int) -> dict[str, Any] | None:
+        if target_version < 1:
+            return None
+        rows = conn.execute("SELECT rowid AS event_seq, event_type, payload FROM events WHERE subject_type='memory' AND subject_id=? ORDER BY rowid", (memory_id,)).fetchall()
+        snapshots: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            payload = json.loads(row["payload"] or "{}")
+            mem = payload.get("memory") if isinstance(payload, dict) else None
+            if not isinstance(mem, dict):
+                continue
+            version = mem.get("version")
+            if isinstance(version, int):
+                snapshots[version] = mem
+            if row["event_type"] == "memory_approved" and isinstance(version, int):
+                snapshots[version + 1] = {**mem, "status": "active", "version": version + 1}
+        return snapshots.get(target_version)
+
+    def memory_rollback(self, memory_id: str, *, target_version: int, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+        actor = self._require_trusted_memory_actor(actor)
+        target_version = int(target_version)
+        with closing(self.connect()) as conn:
+            mem = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
+            if not mem:
+                raise KeyError(memory_id)
+            if expected_version is not None and int(expected_version) != int(mem["version"]):
+                raise ValueError("stale memory version")
+            if mem["status"] not in {"pending", "active"}:
+                raise ValueError("memory rollback requires pending or active status")
+            if target_version >= int(mem["version"]):
+                raise ValueError("target_version must be a previous memory version")
+            snapshot = self._memory_snapshot_for_version(conn, memory_id, target_version)
+            if not snapshot:
+                raise ValueError("target memory version not found")
+            merged = {k: snapshot.get(k) for k in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata")}
+            payload = self._clean_memory_payload(merged)
+            conn.execute("BEGIN IMMEDIATE")
+            latest = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
+            if latest["status"] != mem["status"] or latest["status"] not in {"pending", "active"} or (expected_version is not None and int(latest["version"]) != int(expected_version)):
+                conn.execute("ROLLBACK"); raise ValueError("stale memory version")
+            ev = self.event(conn, "memory_rolled_back", "user", actor, "memory", memory_id, self._memory_event_payload({**payload, "memory_id": memory_id, "status": latest["status"], "version": int(latest["version"]) + 1}, previous=self._memory_event_payload(latest).get("memory"), target_version=target_version), payload.get("source_task_id"), payload.get("scope"), replayable_payload=True)
             conn.execute("UPDATE memory_records SET type=?, scope=?, subject_agent=?, title=?, body=?, source_task_id=?, trusted_manual=?, tags=?, metadata=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (payload["type"], payload["scope"], payload["subject_agent"], payload["title"], payload["body"], payload["source_task_id"], 1 if payload["trusted_manual"] else 0, json.dumps(payload["tags"], sort_keys=True), json.dumps(payload["metadata"], sort_keys=True), ev["event_seq"], memory_id))
             conn.execute("COMMIT")
             return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
@@ -916,7 +960,7 @@ class LearningKernel:
         for mem in rows:
             if len(selected) >= max_records:
                 omitted += 1; continue
-            item = {k: mem.get(k) for k in ("memory_id", "type", "scope", "subject_agent", "title", "body", "source_task_id", "source_event_seq", "tags")}
+            item = {k: mem.get(k) for k in ("memory_id", "type", "scope", "subject_agent", "title", "body", "source_task_id", "source_event_seq", "tags", "metadata")}
             if len(item["body"] or "") > per:
                 item["body"] = item["body"][:per]; truncated = True
             size = len(item.get("title") or "") + len(item.get("body") or "")
@@ -963,7 +1007,7 @@ Ephemeral cwd: {cwd}
 Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 
 ## Required startup
-1. If present in the working directory, read generated `memory.md`, `habits.md`, `expertise.md`, and any `skills/<skill-name>/SKILL.md` files.
+1. If present in the working directory, read generated `memory.md`, `habits.md`, and `expertise.md`; bootstrap-generated `AGENTS.md` may provide absolute paths for these files and a concise list of available skills.
 2. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json`.
 3. If a task is returned, run `broccoli-comms state show --task <task_id> --agent {agent} --json`.
 4. If no task is ready, stand by and do not invent work.
