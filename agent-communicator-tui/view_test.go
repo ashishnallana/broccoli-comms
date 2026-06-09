@@ -141,6 +141,28 @@ func TestCurrentAgentPanelShowsCurrentTaskAndNextOnSeparateLine(t *testing.T) {
 	}
 }
 
+func TestCurrentAndNextTaskLinesWrapToMaxThreeLines(t *testing.T) {
+	row := agentRow{
+		CurrentTask:         "Implement selected agent card wrapping for a long task title that should span several visible lines without overflowing the panel width",
+		CurrentTaskNextStep: "Run focused regression tests for wrapping behavior then submit the result for review and wait for approval",
+	}
+	current := currentTaskLine(row, 34)
+	next := nextTaskLine(row, 34)
+	if got := lineCount(current); got != 3 {
+		t.Fatalf("current task line count=%d want 3:\n%s", got, current)
+	}
+	if got := lineCount(next); got != 3 {
+		t.Fatalf("next task line count=%d want 3:\n%s", got, next)
+	}
+	for _, rendered := range []string{current, next} {
+		for _, line := range strings.Split(rendered, "\n") {
+			if got := lipgloss.Width(line); got > 34 {
+				t.Fatalf("wrapped line width=%d want <=34 line=%q rendered=\n%s", got, line, rendered)
+			}
+		}
+	}
+}
+
 func TestCurrentAgentPanelShowsNoActiveTaskState(t *testing.T) {
 	m := model{rows: []agentRow{{Name: "alpha", Scope: "local", Status: "idle", Hostname: "host-a", ModelType: "pi"}}}
 	view := m.currentAgentPanel(50, 10)

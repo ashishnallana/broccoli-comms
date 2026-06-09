@@ -1573,6 +1573,7 @@ def run(args: argparse.Namespace) -> None:
         run_remote(args, command)
         return
 
+    requested_command = shlex.join(command) if command else None
     cfg = load_config()
     spec = (cfg.get("agents") or {}).get(args.name)
     using_saved_config = False
@@ -1617,7 +1618,19 @@ def run(args: argparse.Namespace) -> None:
         swarms = parse_swarm_args(args)
     scope = args.scope if args.scope is not None else ((spec or {}).get("scope") if using_saved_config else None)
     immutable = bool(using_saved_config and spec and (spec.get("immutable") or spec.get("non_learning")))
-    wrapped = _build_bootstrap_track_command(args.name, source_cwd, scope, command, context_path)
+    if requested_command is not None:
+        agents = cfg.setdefault("agents", {})
+        agents[args.name] = {
+            **(agents.get(args.name) or {}),
+            "cwd": source_cwd,
+            "command": requested_command,
+            "scope": scope,
+            "swarms": swarms,
+            "autostart": False,
+        }
+        save_config(cfg)
+    bootstrap_cwd = source_cwd if (args.cwd or using_saved_config) else None
+    wrapped = _build_bootstrap_track_command(args.name, bootstrap_cwd, scope, command, context_path)
     wrapped_cmd = shlex.join(wrapped)
     launch = managed_agent_launch_command(
         args.name,
@@ -2691,7 +2704,7 @@ def memory_proposal_fallback_markdown(mem: dict) -> str:
         "",
         str(mem.get("body") or ""),
         "",
-        f"Use `/memory approve {mem['memory_id']}`, `/memory reject {mem['memory_id']}`, or `/memory edit {mem['memory_id']} title | body`.",
+        "Use the Agent Communicator command palette action `Memory Approvals` to approve, edit, reject/delete, or roll back this memory proposal.",
     ]
     return "\n".join(lines)
 
@@ -2803,6 +2816,13 @@ def memory_list(args: argparse.Namespace) -> None:
     _print_payload(learning_kernel().memory_list(scope=args.scope, type=args.type, status=args.status, agent=args.agent), True)
 
 
+def memory_approvals(args: argparse.Namespace) -> None:
+    kernel = learning_kernel()
+    pending = kernel.memory_list(scope=args.scope, type=args.type, status="pending", agent=args.agent)
+    approved = kernel.memory_list(scope=args.scope, type=args.type, status="active", agent=args.agent)
+    _print_payload({"pending": pending, "approved": approved}, True)
+
+
 def memory_search(args: argparse.Namespace) -> None:
     _print_payload(learning_kernel().memory_search(args.query, scope=args.scope), True)
 
@@ -2810,6 +2830,14 @@ def memory_search(args: argparse.Namespace) -> None:
 def memory_show(args: argparse.Namespace) -> None:
     try:
         payload = learning_kernel().memory_show(args.memory_id)
+    except KeyError:
+        raise SystemExit(f"memory not found: {args.memory_id}")
+    _print_payload(payload, True)
+
+
+def memory_history(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().memory_history(args.memory_id)
     except KeyError:
         raise SystemExit(f"memory not found: {args.memory_id}")
     _print_payload(payload, True)
@@ -3207,10 +3235,16 @@ def main() -> None:
     memory_list_parser = memory_sub.add_parser("list")
     memory_list_parser.add_argument("--scope")
     memory_list_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise", "skill"])
-    memory_list_parser.add_argument("--status", choices=["pending", "active", "rejected", "revoked", "superseded"])
+    memory_list_parser.add_argument("--status", choices=["pending", "active", "approved", "rejected", "revoked", "superseded"])
     memory_list_parser.add_argument("--agent")
     memory_list_parser.add_argument("--json", action="store_true")
     memory_list_parser.set_defaults(func=memory_list)
+    memory_approvals_parser = memory_sub.add_parser("approvals", help="List pending memory approvals and approved memory")
+    memory_approvals_parser.add_argument("--scope")
+    memory_approvals_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise", "skill"])
+    memory_approvals_parser.add_argument("--agent")
+    memory_approvals_parser.add_argument("--json", action="store_true")
+    memory_approvals_parser.set_defaults(func=memory_approvals)
     memory_search_parser = memory_sub.add_parser("search")
     memory_search_parser.add_argument("--query", required=True)
     memory_search_parser.add_argument("--scope")
@@ -3220,6 +3254,10 @@ def main() -> None:
     memory_show_parser.add_argument("memory_id")
     memory_show_parser.add_argument("--json", action="store_true")
     memory_show_parser.set_defaults(func=memory_show)
+    memory_history_parser = memory_sub.add_parser("history", help="Show memory version/event history")
+    memory_history_parser.add_argument("memory_id")
+    memory_history_parser.add_argument("--json", action="store_true")
+    memory_history_parser.set_defaults(func=memory_history)
     memory_budget_parser = memory_sub.add_parser("budget")
     memory_budget_parser.add_argument("--agent")
     memory_budget_parser.add_argument("--scope")

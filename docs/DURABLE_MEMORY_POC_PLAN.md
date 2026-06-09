@@ -243,9 +243,11 @@ broccoli-comms memory propose \
 broccoli-comms memory approve MEMORY_ID --expected-version N --json
 broccoli-comms memory reject MEMORY_ID --reason "too broad" --expected-version N --json
 broccoli-comms memory revoke MEMORY_ID --reason "obsolete" --expected-version N --json
-broccoli-comms memory list [--scope S] [--type fact] [--status active] [--agent A] --json
+broccoli-comms memory list [--scope S] [--type fact] [--status active|approved] [--agent A] --json
+broccoli-comms memory approvals [--scope S] [--type fact] [--agent A] --json
 broccoli-comms memory search --query "github cli release" [--scope S] --json
 broccoli-comms memory show MEMORY_ID --json
+broccoli-comms memory history MEMORY_ID --json
 ```
 
 Trusted manual path:
@@ -384,7 +386,7 @@ Do not require convenience promotion in the first POC.
 
 - Add `memory_records` schema.
 - Add bounded sanitization.
-- Add `memory propose/approve/reject/revoke/list/show/search`.
+- Add `memory propose/approve/reject/revoke/list/approvals/show/history/search`.
 - Enforce validation gate and trusted actor/immutable rules.
 - Append memory events atomically with table updates.
 - Tests for memory lifecycle, idempotency, and stale conflicts.

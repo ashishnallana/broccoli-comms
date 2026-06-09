@@ -437,6 +437,65 @@ agent_communicator_tui = "/config/agent-communicator"
         self.assertEqual(payload["scope"], "project:x")
         self.assertEqual(payload["command"], ["pi", "--fast"])
 
+    def test_run_with_command_saves_agent_definition_for_future_list(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.json").write_text(json.dumps({"agents": {}}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope="repo:test", swarm=["alpha"], role=["main"], host=None, command=["pi", "--fast"], json=True))
+
+                cfg = json.loads((cfg_dir / "config.json").read_text())
+                payload = broccoli_comms_app.agent_list_payload(argparse.Namespace(include_remote=False, configured_only=True, running_only=False, remote_only=False))
+
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertIn(" --cwd ", launched)
+        self.assertEqual(cfg["agents"]["planner"]["cwd"], tmp)
+        self.assertEqual(cfg["agents"]["planner"]["command"], "pi --fast")
+        self.assertEqual(cfg["agents"]["planner"]["scope"], "repo:test")
+        self.assertEqual(cfg["agents"]["planner"]["swarms"], [{"name": "alpha", "role": "main"}])
+        self.assertFalse(cfg["agents"]["planner"]["autostart"])
+        self.assertIn("planner", payload["agents"])
+        self.assertTrue(payload["agents"]["planner"]["is_configured"])
+
+    def test_run_without_explicit_cwd_bootstraps_from_ephemeral_cwd(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.json").write_text(json.dumps({"agents": {}}))
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app.os, "getcwd", return_value=tmp), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=None, scope=None, swarm=None, role=None, host=None, command=["pi"], json=True))
+
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertNotIn(" --cwd ", launched)
+
     def test_run_without_command_uses_saved_agent_definition(self):
         calls = []
 

@@ -84,6 +84,12 @@ type model struct {
 	// Command palette (Ctrl-P)
 	commandPalette commandPaletteState
 
+	// Memory approvals manager
+	showingMemoryApprovals bool
+	memoryItems            []memoryRecord
+	memorySelected         int
+	memoryErr              error
+
 	// Save Agent Form (Ctrl-S)
 	showingSaveForm bool
 	saveFormIndex   int // 0: Name, 1: Description, 2: Command, 3: CWD, 4: Save, 5: Cancel
@@ -236,8 +242,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case memoryActionResult:
 		m.err = msg.Err
+		m.memoryErr = msg.Err
 		if msg.Err == nil {
-			return m, m.reloadMessages()
+			return m, tea.Batch(m.reloadMessages(), loadMemoryApprovalsCmd())
+		}
+	case memoryApprovalsLoaded:
+		m.memoryErr = msg.Err
+		if msg.Err == nil {
+			m.memoryItems = msg.Items
+			if m.memorySelected >= len(m.memoryItems) {
+				m.memorySelected = max(0, len(m.memoryItems)-1)
+			}
+		}
+	case memoryEditClosed:
+		m.err = msg.Err
+		m.memoryErr = msg.Err
+		if msg.Err == nil {
+			return m, loadMemoryApprovalsCmd()
 		}
 	}
 	return m, nil

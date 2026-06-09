@@ -27,6 +27,9 @@ func (m model) View() string {
 	if m.commandPalette.Open {
 		return m.commandPaletteView(m.width, m.height)
 	}
+	if m.showingMemoryApprovals {
+		return m.memoryApprovalsView(m.width, m.height)
+	}
 	return m.baseView()
 }
 

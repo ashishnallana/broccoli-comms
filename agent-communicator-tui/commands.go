@@ -365,12 +365,6 @@ func parseComposerAction(input string) composerAction {
 		}
 		return action
 	}
-	if trimmed == "/approve" {
-		return composerAction{Kind: "approval_review", Result: "good", Original: input}
-	}
-	if strings.HasPrefix(trimmed, "/approve ") {
-		return composerAction{Kind: "approval_review", Result: "good", ApprovalID: firstField(strings.TrimSpace(strings.TrimPrefix(trimmed, "/approve"))), Original: input}
-	}
 	if trimmed == "/reject" {
 		return composerAction{Kind: "approval_review", Result: "bad", Original: input}
 	}

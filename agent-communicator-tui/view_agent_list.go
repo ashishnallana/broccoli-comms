@@ -68,9 +68,7 @@ func currentTaskLine(row agentRow, width int) string {
 		value := fgOnBg(colors.Muted, bg).Faint(true).Render(truncateCells("No active task", max(1, width-lipgloss.Width(label)-lipgloss.Width(gap))))
 		return padStyledLine(label+gap+value, width, bg)
 	}
-	valueBudget := max(1, width-lipgloss.Width(label)-lipgloss.Width(gap))
-	value := fgOnBg(colors.TextStrong, bg).Bold(true).Render(truncateCells(current, valueBudget))
-	return padStyledLine(label+gap+value, width, bg)
+	return wrappedAgentTaskLine(label, gap, current, width, 3, fgOnBg(colors.TextStrong, bg).Bold(true), bg)
 }
 
 func nextTaskLine(row agentRow, width int) string {
@@ -81,9 +79,28 @@ func nextTaskLine(row agentRow, width int) string {
 	if next == "" {
 		next = "—"
 	}
-	valueBudget := max(1, width-lipgloss.Width(label)-lipgloss.Width(separator))
-	value := fgOnBg(colors.Muted, bg).Render(truncateCells(next, valueBudget))
-	return padStyledLine(label+separator+value, width, bg)
+	return wrappedAgentTaskLine(label, separator, next, width, 3, fgOnBg(colors.Muted, bg), bg)
+}
+
+func wrappedAgentTaskLine(label, separator, text string, width, maxLines int, valueStyle lipgloss.Style, bg lipgloss.Color) string {
+	prefixWidth := lipgloss.Width(label) + lipgloss.Width(separator)
+	valueBudget := max(1, width-prefixWidth)
+	wrapped := wrapLine(text, valueBudget)
+	if len(wrapped) > maxLines {
+		wrapped = wrapped[:maxLines]
+		wrapped[maxLines-1] = truncateCells(strings.TrimRight(wrapped[maxLines-1], " "), max(1, valueBudget-1)) + "…"
+	}
+	lines := make([]string, 0, len(wrapped))
+	continuationPrefix := bgSpaces(prefixWidth, bg)
+	for i, line := range wrapped {
+		value := valueStyle.Render(truncateCells(line, valueBudget))
+		if i == 0 {
+			lines = append(lines, padStyledLine(label+separator+value, width, bg))
+			continue
+		}
+		lines = append(lines, padStyledLine(continuationPrefix+value, width, bg))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) switcherPanel(width, height int) string {

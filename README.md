@@ -397,8 +397,9 @@ Agent Communicator key highlights:
 - `F3` `/key pane`: explicit direct key mode; `Enter` sends whitespace-separated key tokens.
 - `F4` `/broadcast`: visible but disabled; pressing `Enter` does not send.
 - `n` jumps to the next unread conversation; `Ctrl-N` / `Ctrl-P` keep next/previous agent navigation.
+- `Ctrl-O` opens the command palette. Choose `Memory Approvals` to list pending memory approvals and approved memory, then approve, edit, delete/reject/revoke, or roll back a memory version from the TUI.
 
-Legacy slash commands (`/msg`, `/text`, `/text --no-submit`, `/key`) remain supported. The composer context line shows the selected target plus model badge and machine where known.
+Legacy slash commands (`/msg`, `/text`, `/text --no-submit`, `/key`) remain supported. The composer context line shows the selected target plus model badge and machine where known. Memory approval is handled through the command palette instead of approval slash shortcuts.
 
 `agent focus <name>` selects a running managed-agent window by tmux metadata/window id, and `agent attach <name>` attaches or switches directly to that managed window.
 

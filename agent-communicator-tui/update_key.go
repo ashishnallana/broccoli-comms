@@ -17,6 +17,9 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 	if m.commandPalette.Open {
 		return m.updateCommandPalette(msg)
 	}
+	if m.showingMemoryApprovals {
+		return m.updateMemoryApprovals(msg)
+	}
 	if m.showingSaveForm {
 		return m.updateSaveForm(msg)
 	}

@@ -19,9 +19,14 @@ type memoryActionResult struct {
 }
 
 type memoryRecord struct {
-	MemoryID string `json:"memory_id"`
-	Status   string `json:"status"`
-	Version  int    `json:"version"`
+	MemoryID     string `json:"memory_id"`
+	Status       string `json:"status"`
+	Version      int    `json:"version"`
+	Type         string `json:"type"`
+	Scope        string `json:"scope"`
+	SubjectAgent string `json:"subject_agent"`
+	Title        string `json:"title"`
+	Body         string `json:"body"`
 }
 
 func selectedMemoryMessage(m model) (tracker.Message, bool) {

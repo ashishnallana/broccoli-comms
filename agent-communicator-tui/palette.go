@@ -176,6 +176,21 @@ func commandPaletteActions() []commandAction {
 			},
 		},
 		{
+			ID:       "memory-approvals",
+			Title:    "Memory Approvals",
+			Subtitle: "Review pending and approved memory; approve, edit, delete, or rollback changes.",
+			Category: "Memory",
+			Shortcut: "open",
+			Keywords: []string{"memory", "approval", "pending", "approved", "rollback"},
+			Enabled:  func(model) bool { return true },
+			Run: func(m *model) tea.Cmd {
+				m.showingMemoryApprovals = true
+				m.memorySelected = 0
+				m.memoryErr = nil
+				return loadMemoryApprovalsCmd()
+			},
+		},
+		{
 			ID:       "clear-composer",
 			Title:    "Clear composer",
 			Subtitle: "Remove draft text from the input.",

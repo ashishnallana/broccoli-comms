@@ -926,11 +926,36 @@ class LearningKernel:
             raise KeyError(memory_id)
         return mem
 
+    def memory_history(self, memory_id: str) -> dict[str, Any]:
+        with closing(self.connect()) as conn:
+            mem = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
+            if not mem:
+                raise KeyError(memory_id)
+            rows = conn.execute("SELECT rowid AS event_seq,event_id,event_type,actor_type,actor_id,timestamp,payload FROM events WHERE subject_type='memory' AND subject_id=? ORDER BY rowid", (memory_id,)).fetchall()
+        events = []
+        for row in rows:
+            payload = json.loads(row["payload"] or "{}")
+            events.append({
+                "event_seq": row["event_seq"],
+                "event_id": row["event_id"],
+                "event_type": row["event_type"],
+                "actor_type": row["actor_type"],
+                "actor": row["actor_id"],
+                "created_at": row["timestamp"],
+                "memory": payload.get("memory") if isinstance(payload, dict) else None,
+                "previous": payload.get("previous") if isinstance(payload, dict) else None,
+                "target_version": payload.get("target_version") if isinstance(payload, dict) else None,
+                "reason": payload.get("reason") if isinstance(payload, dict) else None,
+            })
+        return {"memory": mem, "events": events}
+
     def memory_list(self, *, scope: str | None = None, type: str | None = None, status: str | None = None, agent: str | None = None) -> list[dict[str, Any]]:
         clauses, args = [], []
         if scope: clauses.append("scope=?"); args.append(scope)
         if type: clauses.append("type=?"); args.append(type)
-        if status: clauses.append("status=?"); args.append(status)
+        if status:
+            status = "active" if status == "approved" else status
+            clauses.append("status=?"); args.append(status)
         if agent: clauses.append("COALESCE(subject_agent, proposed_by)=?"); args.append(agent)
         with closing(self.connect()) as conn:
             rows = conn.execute("SELECT * FROM memory_records" + (" WHERE " + " AND ".join(clauses) if clauses else "") + " ORDER BY created_at, memory_id", args).fetchall()
@@ -999,6 +1024,14 @@ def _iso_to_epoch(value: str) -> float:
 
 DEFAULT_AGENT_CONTRACT_TEMPLATE = """# Agent Operating Contract
 
+## Critical persona: plan-first for non-specific work
+- For every user task/request that is not specific, check active durable memory only for historical evidence that this exact kind of work has been done successfully with very little change and can be completed right away.
+- Historical evidence must come from memory only; do not use repository contents, event logs, prior chat, guesses, or searches as evidence for skipping approval.
+- If memory does not provide that evidence, or if more input is needed, stop and create a short plan for the user to review before doing anything else.
+- Wait for explicit user approval before reading/searching files, running commands or queries, making web searches, changing code, or otherwise taking action on that non-specific request.
+- Direct, specific requests may be executed without this plan-first gate, while still following safety, task/state, and validation rules.
+- Treat the ephemeral cwd as the source directory unless the user explicitly provided or requested a different cwd; do not assume the launcher/original cwd is the source directory.
+
 You are: {agent}
 Agent profile: {agent}
 Instance: {instance}
@@ -1008,8 +1041,8 @@ Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 
 ## Required startup
 1. If present in the working directory, read generated `memory.md`, `habits.md`, and `expertise.md`; bootstrap-generated `AGENTS.md` may provide absolute paths for these files and a concise list of available skills.
-2. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json`.
-3. If a task is returned, run `broccoli-comms state show --task <task_id> --agent {agent} --json`.
+2. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json` to check whether any pending/ready task is assigned.
+3. If a task is returned, run `broccoli-comms state show --task <task_id> --agent {agent} --json`, then start working on that task unless it is blocked or requires clarification.
 4. If no task is ready, stand by and do not invent work.
 
 ## Checkpoint and discovery rules
