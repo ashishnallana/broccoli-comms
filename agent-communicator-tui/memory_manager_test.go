@@ -146,6 +146,54 @@ func TestMemoryApprovalsRollbackWithoutPreviousVersionReturnsClearError(t *testi
 	}
 }
 
+func TestMemoryApprovalsDeleteRejectsPendingMemory(t *testing.T) {
+	old := runApprovalCLI
+	defer func() { runApprovalCLI = old }()
+	var calls [][]string
+	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return json.Marshal(map[string]any{"ok": true})
+	}
+
+	m := model{showingMemoryApprovals: true, memoryItems: []memoryRecord{{MemoryID: "mem-p", Status: "pending", Version: 2}}, memorySelected: 0}
+	_, cmd := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if cmd == nil {
+		t.Fatalf("delete action should return command for pending memory")
+	}
+	res := cmd().(memoryActionResult)
+	if res.Err != nil {
+		t.Fatalf("delete pending command returned error: %v", res.Err)
+	}
+	want := []string{"memory", "reject", "mem-p", "--expected-version", "2", "--json", "--reason", "removed from Memory Approvals TUI"}
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
+		t.Fatalf("delete pending args = %#v, want %#v", calls, want)
+	}
+}
+
+func TestMemoryApprovalsDeleteRevokesActiveMemory(t *testing.T) {
+	old := runApprovalCLI
+	defer func() { runApprovalCLI = old }()
+	var calls [][]string
+	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, args)
+		return json.Marshal(map[string]any{"ok": true})
+	}
+
+	m := model{showingMemoryApprovals: true, memoryItems: []memoryRecord{{MemoryID: "mem-a", Status: "active", Version: 5}}, memorySelected: 0}
+	_, cmd := m.handleKeyMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if cmd == nil {
+		t.Fatalf("delete action should return command for active memory")
+	}
+	res := cmd().(memoryActionResult)
+	if res.Err != nil {
+		t.Fatalf("delete active command returned error: %v", res.Err)
+	}
+	want := []string{"memory", "revoke", "mem-a", "--expected-version", "5", "--json", "--reason", "removed from Memory Approvals TUI"}
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
+		t.Fatalf("delete active args = %#v, want %#v", calls, want)
+	}
+}
+
 func TestMemoryApprovalsApproveActionCommand(t *testing.T) {
 	old := runApprovalCLI
 	defer func() { runApprovalCLI = old }()

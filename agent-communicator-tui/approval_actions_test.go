@@ -12,6 +12,17 @@ import (
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
+func TestEnvWithoutAgentIdentityStripsAgentVars(t *testing.T) {
+	env := envWithoutAgentIdentity([]string{"AGENT_NAME=agent", "KEEP=1", "AGENT_ID=id", "AGENT_UUID=uuid", "BROCCOLI_COMMS_CLI=/bin/cli"})
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "AGENT_NAME=") || strings.Contains(joined, "AGENT_ID=") || strings.Contains(joined, "AGENT_UUID=") {
+		t.Fatalf("agent identity env should be stripped, got %q", env)
+	}
+	if !strings.Contains(joined, "KEEP=1") || !strings.Contains(joined, "BROCCOLI_COMMS_CLI=/bin/cli") {
+		t.Fatalf("non-agent env should be preserved, got %q", env)
+	}
+}
+
 func trustedApprovalMessage() tracker.Message {
 	return tracker.Message{
 		Sender:                  "task-kernel",

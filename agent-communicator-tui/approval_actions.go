@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -38,7 +39,23 @@ func broccoliCommsCommandContext(ctx context.Context, args ...string) *exec.Cmd 
 	if cli == "" {
 		cli = "broccoli-comms"
 	}
-	return exec.CommandContext(ctx, cli, args...)
+	cmd := exec.CommandContext(ctx, cli, args...)
+	cmd.Env = envWithoutAgentIdentity(os.Environ())
+	return cmd
+}
+
+func envWithoutAgentIdentity(env []string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		switch key {
+		case "AGENT_NAME", "AGENT_ID", "AGENT_UUID":
+			continue
+		default:
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 func runApprovalCLICommand(ctx context.Context, args ...string) ([]byte, error) {
