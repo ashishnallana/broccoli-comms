@@ -667,6 +667,8 @@ class LearningKernel:
         tags = clean_text_list(kw.get("tags") or [], "list_item")[:20]
         raw_metadata = kw.get("metadata") or {}
         metadata = safe_payload(raw_metadata)
+        if kw.get("description"):
+            metadata["description"] = clean_text(kw.get("description"), "memory_body")
         source_task_id = clean_text(kw.get("source_task_id") or kw.get("source_task"), "list_item")
         trusted_manual = bool(kw.get("trusted_manual"))
         if not trusted_manual and not source_task_id and typ not in ("habit", "fact"):
@@ -709,7 +711,7 @@ class LearningKernel:
         if not isinstance(metadata, dict):
             raise ValueError("expertise metadata must be an object")
         self._reject_forbidden_memory_metadata(metadata)
-        allowed = {"task_family", "tools", "evidence_task_ids", "validation_count", "last_validated_at", "known_limits"}
+        allowed = {"task_family", "tools", "evidence_task_ids", "validation_count", "last_validated_at", "known_limits", "description"}
         unknown = set(metadata) - allowed
         if unknown:
             raise ValueError("unsupported expertise metadata field")
@@ -1002,6 +1004,49 @@ Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 - Save durable outputs only through Broccoli Comms commands.
 - Never store raw terminal transcripts, full query logs, secrets, tokens, passwords, or large file contents in task/state/result text.
 - Keep task/state/result/memory text concise and bounded; store facts and conclusions, not bulky evidence.
+
+## Tasks and Memory Management
+
+### Adding a Task
+**Goal-Driven Execution Workflow:**
+When a request is received that expects a concrete verifiable result:
+1. **Convert to Task**: Create a new task first using `broccoli-comms task create` so the goal can be formally tracked.
+2. **Update Status**: Continuously add status updates and state changes to that task as you work using `broccoli-comms state set` or `broccoli-comms task update`.
+3. **Capture Pitfalls**: Ensure any roadblocks, failed experiments, and exact pitfalls encountered during the task are explicitly logged within the task's state/notes (and proposed as memory if valuable).
+
+Example usage:
+```bash
+broccoli-comms task create \
+  --title "Implement feature X" \
+  --description "Detailed description of the feature..." \
+  --agent "coding-agent" \
+  --priority "P0" \
+  --depends-on "task-123,task-456"
+```
+
+### Proposing Memory
+To save durable outputs like discoveries or new skills, propose memory using `broccoli-comms memory propose`. 
+By default, you must provide a `--source-task` unless proposing manually with `--trusted-manual`.
+Example usage:
+```bash
+broccoli-comms memory propose \
+  --type expertise \
+  --title "Test Expertise" \
+  --body "Dummy expertise for testing skills directory generation." \
+  --agent "broccoli-agent" \
+  --trusted-manual
+```
+
+**When to Propose Memory:**
+- **Do NOT propose memory for:** Routine task completions, generic summaries (e.g. "Updated target file"), obvious workflow steps, or information easily found via standard code search.
+- **DO propose memory for:** High-fidelity technical "Aha!" moments, non-obvious workarounds, exact causes of obscure failures, and valuable "Dead Ends" (what was tried, why it failed, and the reason the fix worked).
+
+**Memory Types Classification:**
+- `fact`: Concrete, verifiable data (e.g., specific database names, undocumented file paths, hidden endpoints).
+- `habit`: Reusable behavioral constraints or style rules (e.g., "Always use `blaze` instead of `bazel` for this project").
+- `episode`: A specific sequence of events, particularly useful for logging "Dead Ends" and debugging trajectories.
+- `expertise`: High-level architectural understanding, system patterns, or domain knowledge.
+- `skill`: Actionable, reusable step-by-step instructions or scripts that solve a complex, recurring problem.
 """
 
 

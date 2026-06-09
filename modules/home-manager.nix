@@ -247,19 +247,16 @@ in {
 
         [providers.jetski]
         cmd = "/google/bin/releases/jetski-devs/tools/cli"
-        skillsRootDir = "_agents"
+        agentsDir = "_agents"
 
         [providers.pi]
         cmd = "/google/bin/releases/jetski-devs/tools/cli"
-        skillsRootDir = "_agents"
 
         [providers.codex]
         cmd = "/google/bin/releases/jetski-devs/tools/cli"
-        skillsRootDir = "_agents"
 
         [providers.claude]
         cmd = "/google/bin/releases/jetski-devs/tools/cli"
-        skillsRootDir = "_agents"
 
       '';
     })

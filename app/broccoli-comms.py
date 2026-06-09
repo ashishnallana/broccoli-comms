@@ -725,13 +725,14 @@ def managed_track_env_assignments() -> list[str]:
     return [shell_env_assignment(key, env[key]) for key in keys if key in env and (env.get(key) or key in {"BROCCOLI_COMMS_TRACK_ACTIVE", "AGENT_WRAPPER_DEPTH", "AGENT_NAME", "AGENT_ID", "AGENT_UUID"})]
 
 
-def ephemeral_agent_workspace(name: str) -> str:
+def ephemeral_agent_workspace(name: str, agents_dir: str | None = None) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "-", name).strip("-._") or "agent"
     base = Path(tempfile.gettempdir()) / "broccoli-agents" / safe_name
-    workspace = base / uuid.uuid4().hex[:12]
+    tmp_root = base / uuid.uuid4().hex[:12]
+    workspace = tmp_root / agents_dir if agents_dir else tmp_root
     workspace.mkdir(parents=True, exist_ok=False)
     (workspace / "AGENTS.md").write_text(agent_contract(name, f"{name}@pending", workspace, agent_contract_template()))
-    return str(workspace)
+    return str(tmp_root)
 
 
 def _parse_command_for_bootstrap(command: str) -> list[str]:
@@ -761,7 +762,7 @@ def managed_agent_launch_command(
     launch_cwd: str | None = None,
     scope: str | None = None,
     immutable: bool = False,
-    skills_root_dir: str | None = None,
+    agents_dir: str | None = None,
 ) -> str:
     launch_cwd = launch_cwd or cwd
     command_args = _parse_command_for_bootstrap(command)
@@ -786,8 +787,8 @@ def managed_agent_launch_command(
         f"AGENT_CMD={shlex.quote(actual_agent_cmd)}",
         f"AGENT_MODEL_TYPE={shlex.quote(actual_agent_cmd)}",
     ]
-    if skills_root_dir:
-        launch_parts.append(f"BROCCOLI_SKILLS_ROOT_DIR={shlex.quote(skills_root_dir)}")
+    if agents_dir:
+        launch_parts.append(f"BROCCOLI_AGENTS_DIR={shlex.quote(agents_dir)}")
     if immutable:
         launch_parts.append("BROCCOLI_COMMS_IMMUTABLE_INSTANCE=1")
         launch_parts.append("BROCCOLI_COMMS_NON_LEARNING=1")
@@ -1589,7 +1590,7 @@ def run(args: argparse.Namespace) -> None:
     if not os.path.isdir(source_cwd):
         raise SystemExit(f"run source-cwd does not exist or is not a directory: {source_cwd}")
 
-    skills_root_dir = None
+    agents_dir = None
     if command:
         provider_alias = command[0]
         provider_cfg = get_toml_config("providers", provider_alias, {})
@@ -1599,15 +1600,15 @@ def run(args: argparse.Namespace) -> None:
             if isinstance(default_args, str):
                 default_args = shlex.split(default_args)
             command = [cmd_override] + default_args + command[1:]
-            if "skillsRootDir" in provider_cfg:
-                skills_root_dir = os.path.abspath(os.path.join(source_cwd, provider_cfg["skillsRootDir"]))
+            if "agentsDir" in provider_cfg:
+                agents_dir = provider_cfg["agentsDir"]
 
     ensure_tracker()
     ensure_tmux()
     if window_exists(args.name):
         raise SystemExit(f"agent {args.name!r} is already running; stop or edit it first")
 
-    launch_cwd = ephemeral_agent_workspace(args.name)
+    launch_cwd = ephemeral_agent_workspace(args.name, agents_dir=agents_dir)
     context_path = str(Path(launch_cwd))
 
     if using_saved_config and not (getattr(args, "swarm", None) or getattr(args, "role", None)):
@@ -1625,7 +1626,7 @@ def run(args: argparse.Namespace) -> None:
         swarms,
         launch_cwd=launch_cwd,
         immutable=immutable,
-        skills_root_dir=skills_root_dir,
+        agents_dir=agents_dir,
     )
 
     result = tmux(
@@ -2501,6 +2502,9 @@ def _markdown_memory_list(title: str, records: list[dict]) -> str:
 
 def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dict:
     path = Path(context_dir)
+    agents_override = os.environ.get("BROCCOLI_AGENTS_DIR")
+    if agents_override:
+        path = path / agents_override
     path.mkdir(parents=True, exist_ok=True)
     memories = payload.get("memory") or []
     by_type = {typ: [m for m in memories if m.get("type") == typ] for typ in ["fact", "episode", "habit", "expertise", "skill"]}
@@ -2525,13 +2529,11 @@ def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dic
         files.append(str(target))
     for mem in by_type["skill"]:
         skill_name = safe_context_name(str(mem.get("title") or mem.get("memory_id") or "skill"))
-        skills_override = os.environ.get("BROCCOLI_SKILLS_ROOT_DIR")
-        if skills_override:
-            target = Path(skills_override) / skill_name / "SKILL.md"
-        else:
-            target = path / "skill" / skill_name / "SKILLS.md"
+        target = path / "skill" / skill_name / "SKILLS.md"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_markdown_memory_list("Skill", [mem]), encoding="utf-8")
+        desc = (mem.get("metadata") or {}).get("description") or ""
+        body = str(mem.get("body") or "").strip()
+        target.write_text(f"---\nname: {skill_name}\ndescription: {desc}\n---\n\n{body}\n", encoding="utf-8")
         files.append(str(target))
     return {"context_dir": str(path), "files": files}
 
@@ -2695,7 +2697,8 @@ def memory_propose(args: argparse.Namespace) -> None:
             instance = ident["instance"] if ident["registered"] else None
         metadata = json.loads(args.metadata_json) if args.metadata_json else {}
         payload = learning_kernel().memory_propose(
-            type=args.type, scope=args.scope, subject_agent=args.subject_agent, title=args.title, body=args.body,
+            type=args.type, scope=args.scope, subject_agent=args.subject_agent, title=args.title,
+            description=args.description, body=args.body,
             source_task_id=args.source_task, trusted_manual=args.trusted_manual, tags=args.tag, metadata=metadata,
             idempotency_key=args.idempotency_key, proposed_by=agent, proposed_by_instance=instance,
             trusted_actor=trusted_actor, non_learning=immutable_learning_instance(agent, instance),
@@ -2726,6 +2729,7 @@ def memory_edit(args: argparse.Namespace) -> None:
             scope=args.scope,
             subject_agent=args.subject_agent,
             title=args.title,
+            description=args.description,
             body=args.body,
             source_task_id=args.source_task,
             trusted_manual=args.trusted_manual,
@@ -3109,6 +3113,7 @@ def main() -> None:
     memory_propose_parser.add_argument("--scope", default="global")
     memory_propose_parser.add_argument("--subject-agent")
     memory_propose_parser.add_argument("--title", required=True)
+    memory_propose_parser.add_argument("--description", help="Description of the memory (used for skills front-matter)")
     memory_propose_parser.add_argument("--body", required=True)
     memory_propose_parser.add_argument("--source-task")
     memory_propose_parser.add_argument("--trusted-manual", action="store_true")
@@ -3130,6 +3135,7 @@ def main() -> None:
     memory_edit_parser.add_argument("--scope")
     memory_edit_parser.add_argument("--subject-agent")
     memory_edit_parser.add_argument("--title")
+    memory_edit_parser.add_argument("--description")
     memory_edit_parser.add_argument("--body")
     memory_edit_parser.add_argument("--source-task")
     memory_edit_parser.add_argument("--trusted-manual", action="store_true", default=None)
