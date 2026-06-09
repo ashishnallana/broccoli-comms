@@ -669,6 +669,8 @@ class LearningKernel:
         metadata = safe_payload(raw_metadata)
         source_task_id = clean_text(kw.get("source_task_id") or kw.get("source_task"), "list_item")
         trusted_manual = bool(kw.get("trusted_manual"))
+        if not trusted_manual and not source_task_id and typ not in ("habit", "fact"):
+            raise ValueError("source_task_id is required unless trusted_manual")
         if typ == "expertise":
             if not subject_agent and not (scope.startswith("team:") or scope.startswith("project:")):
                 raise ValueError("expertise requires subject_agent or explicit team/project scope")
