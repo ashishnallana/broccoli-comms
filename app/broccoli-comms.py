@@ -1597,7 +1597,6 @@ def run(args: argparse.Namespace) -> None:
             cmd_override = provider_cfg.get("cmd", provider_alias)
             default_args = provider_cfg.get("defaultArgs", [])
             if isinstance(default_args, str):
-                import shlex
                 default_args = shlex.split(default_args)
             command = [cmd_override] + default_args + command[1:]
             if "skillsRootDir" in provider_cfg:
