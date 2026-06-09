@@ -809,6 +809,9 @@ class LearningKernel:
                 return {"memory": mem, "idempotent": True}
             if mem["status"] != "pending":
                 raise ValueError("memory transition conflict")
+            metadata = mem.get("metadata") or {}
+            if metadata.get("proposal_kind") == "edit":
+                return self._approve_memory_edit_proposal(conn, mem, actor, expected_version)
             validation_event = None
             if mem.get("trusted_manual"):
                 source = "trusted_manual"
@@ -830,6 +833,56 @@ class LearningKernel:
             conn.execute("UPDATE memory_records SET status='active', validated_by=?, validated_at=?, source_event_seq=COALESCE(?, source_event_seq), source_event_id=COALESCE(?, source_event_id), status_event_seq=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (actor, ts, source_seq, source_eid, ev["event_seq"], ev["event_seq"], memory_id))
             conn.execute("COMMIT")
             return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
+
+    def _approve_memory_edit_proposal(self, conn: sqlite3.Connection, proposal: dict[str, Any], actor: str, expected_version: int | None) -> dict[str, Any]:
+        metadata = proposal.get("metadata") or {}
+        target_id = clean_text(metadata.get("target_memory_id"), "list_item", required=True) or ""
+        target_expected = clean_nonnegative_int(metadata.get("target_expected_version"), "expected_version")
+        target = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (target_id,)).fetchone())
+        if not target:
+            raise KeyError(target_id)
+        if target_expected is not None and int(target.get("version") or 0) != int(target_expected):
+            raise ValueError("stale target memory version")
+        payload = self._clean_memory_payload({k: proposal.get(k) for k in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata")})
+        target_metadata = dict(payload.get("metadata") or {})
+        for key in ("proposal_kind", "target_memory_id", "target_expected_version"):
+            target_metadata.pop(key, None)
+        payload["metadata"] = target_metadata
+        conn.execute("BEGIN IMMEDIATE")
+        latest_proposal = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (proposal["memory_id"],)).fetchone())
+        latest_target = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (target_id,)).fetchone())
+        if latest_proposal["status"] != "pending" or (expected_version is not None and int(latest_proposal["version"]) != int(expected_version)):
+            conn.execute("ROLLBACK"); raise ValueError("stale memory version")
+        if target_expected is not None and int(latest_target.get("version") or 0) != int(target_expected):
+            conn.execute("ROLLBACK"); raise ValueError("stale target memory version")
+        edit_ev = self.event(conn, "memory_edited", "user", actor, "memory", target_id, self._memory_event_payload({**payload, "memory_id": target_id, "status": latest_target["status"], "version": int(latest_target["version"]) + 1}, previous=self._memory_event_payload(latest_target).get("memory"), proposal_memory_id=proposal["memory_id"]), payload.get("source_task_id"), payload.get("scope"), replayable_payload=True)
+        conn.execute("UPDATE memory_records SET type=?, scope=?, subject_agent=?, title=?, body=?, source_task_id=?, trusted_manual=?, tags=?, metadata=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (payload["type"], payload["scope"], payload["subject_agent"], payload["title"], payload["body"], payload["source_task_id"], 1 if payload["trusted_manual"] else 0, json.dumps(payload["tags"], sort_keys=True), json.dumps(payload["metadata"], sort_keys=True), edit_ev["event_seq"], target_id))
+        approve_ev = self.event(conn, "memory_edit_proposal_approved", "user", actor, "memory", proposal["memory_id"], self._memory_event_payload(proposal, target_memory_id=target_id, target_event_seq=edit_ev["event_seq"]), proposal.get("source_task_id"), proposal.get("scope"), replayable_payload=True)
+        ts = now_iso()
+        conn.execute("UPDATE memory_records SET status='superseded', validated_by=?, validated_at=?, status_event_seq=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (actor, ts, approve_ev["event_seq"], approve_ev["event_seq"], proposal["memory_id"]))
+        conn.execute("COMMIT")
+        return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (target_id,)).fetchone()), "proposal": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (proposal["memory_id"],)).fetchone()), "event": approve_ev, "idempotent": False}
+
+    def memory_propose_edit(self, memory_id: str, *, expected_version: int | None = None, **kw: Any) -> dict[str, Any]:
+        if kw.get("non_learning"):
+            raise ValueError("immutable/non-learning instance cannot propose memory")
+        proposer = clean_text(kw.get("proposed_by") or kw.get("agent") or "user", "agent", required=True) or "user"
+        instance = clean_text(kw.get("proposed_by_instance") or kw.get("instance"), "agent")
+        with closing(self.connect()) as conn:
+            target = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
+            if not target:
+                raise KeyError(memory_id)
+            if expected_version is not None and int(target["version"]) != int(expected_version):
+                raise ValueError("stale target memory version")
+            merged = {k: target.get(k) for k in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata")}
+            for key in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "tags", "metadata"):
+                if key in kw and kw[key] is not None:
+                    merged[key] = kw[key]
+            metadata = dict(merged.get("metadata") or {})
+            metadata.update({"proposal_kind": "edit", "target_memory_id": memory_id, "target_expected_version": int(target["version"])})
+            merged["metadata"] = metadata
+            merged["trusted_manual"] = False
+            return self.memory_propose(**merged, proposed_by=proposer, proposed_by_instance=instance, non_learning=False)
 
     def memory_edit(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user", **kw: Any) -> dict[str, Any]:
         actor = self._require_trusted_memory_actor(actor)

@@ -359,6 +359,30 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertEqual(params["metadata"]["event_seq_at_submission"], approval["event_seq_at_submission"])
             self.assertEqual(params["metadata"]["source"], "system/task-kernel")
 
+    def test_memory_edit_proposal_applies_to_target_on_approval(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="validated", assigned_agent="a")
+            k.mark_result(task["task_id"], "good")
+            proposed = k.memory_propose(type="habit", scope="global", subject_agent="a", title="Old", body="old", source_task_id=task["task_id"], proposed_by="a")
+            active = k.memory_approve(proposed["memory"]["memory_id"], expected_version=proposed["memory"]["version"])
+
+            edit = k.memory_propose_edit(active["memory"]["memory_id"], expected_version=active["memory"]["version"], body="new", proposed_by="a", source_task_id=task["task_id"], metadata={"user_key": "keep"})
+            self.assertEqual(edit["memory"]["status"], "pending")
+            self.assertEqual(edit["memory"]["metadata"]["proposal_kind"], "edit")
+            self.assertEqual(edit["memory"]["metadata"]["target_memory_id"], active["memory"]["memory_id"])
+
+            approved = k.memory_approve(edit["memory"]["memory_id"], expected_version=edit["memory"]["version"])
+            self.assertEqual(approved["memory"]["memory_id"], active["memory"]["memory_id"])
+            self.assertEqual(approved["memory"]["body"], "new")
+            self.assertEqual(approved["memory"]["metadata"], {"user_key": "keep"})
+            self.assertNotIn("proposal_kind", approved["memory"]["metadata"])
+            self.assertNotIn("target_memory_id", approved["memory"]["metadata"])
+            self.assertNotIn("target_expected_version", approved["memory"]["metadata"])
+            self.assertEqual(approved["proposal"]["status"], "superseded")
+            event_types = [e["event_type"] for e in k.events(subject_id=active["memory"]["memory_id"])]
+            self.assertIn("memory_edited", event_types)
+
     def test_memory_validated_task_lifecycle_idempotency_and_bootstrap(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()

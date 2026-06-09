@@ -2769,13 +2769,18 @@ def notify_memory_proposal(mem: dict) -> dict:
         return {"sent": False, "error": str(e)}
 
 
+def unverified_memory_proposer(args: argparse.Namespace) -> tuple[str, str | None]:
+    agent = args.agent or os.environ.get("AGENT_NAME") or "user"
+    instance = args.instance or os.environ.get("AGENT_ID") or os.environ.get("AGENT_UUID")
+    return agent, instance
+
+
 def memory_propose(args: argparse.Namespace) -> None:
     try:
-        ident = verified_memory_runtime_identity()
-        agent = ident["name"] if ident["registered"] else (args.agent or "user")
-        instance = ident["instance"] if ident["registered"] else args.instance
+        agent, instance = unverified_memory_proposer(args)
         trusted_actor = trusted_memory_actor_from_runtime() if args.trusted_manual else None
         if args.trusted_manual:
+            ident = verified_memory_runtime_identity()
             agent = trusted_actor
             instance = ident["instance"] if ident["registered"] else None
         metadata = json.loads(args.metadata_json) if args.metadata_json else {}
@@ -2789,6 +2794,33 @@ def memory_propose(args: argparse.Namespace) -> None:
         if not payload.get("idempotent"):
             payload["notification"] = notify_memory_proposal(payload["memory"])
     except (ValueError, json.JSONDecodeError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def memory_propose_edit(args: argparse.Namespace) -> None:
+    try:
+        agent, instance = unverified_memory_proposer(args)
+        metadata = json.loads(args.metadata_json) if args.metadata_json else {}
+        payload = learning_kernel().memory_propose_edit(
+            args.memory_id,
+            expected_version=args.expected_version,
+            proposed_by=agent,
+            proposed_by_instance=instance,
+            type=args.type,
+            scope=args.scope,
+            subject_agent=args.subject_agent,
+            title=args.title,
+            description=getattr(args, "description", None),
+            body=args.body,
+            source_task_id=args.source_task,
+            tags=args.tag,
+            metadata=metadata,
+            non_learning=immutable_learning_instance(agent, instance),
+        )
+        if not payload.get("idempotent"):
+            payload["notification"] = notify_memory_proposal(payload["memory"])
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
 
@@ -3236,6 +3268,22 @@ def main() -> None:
     memory_propose_parser.add_argument("--metadata-json", help="JSON object metadata; expertise supports task_family/tools/evidence_task_ids/validation_count/last_validated_at/known_limits")
     memory_propose_parser.add_argument("--json", action="store_true")
     memory_propose_parser.set_defaults(func=memory_propose)
+    memory_propose_edit_parser = memory_sub.add_parser("propose-edit", help="Create a pending proposal to edit an existing memory")
+    memory_propose_edit_parser.add_argument("memory_id")
+    memory_propose_edit_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise", "skill"])
+    memory_propose_edit_parser.add_argument("--scope")
+    memory_propose_edit_parser.add_argument("--subject-agent")
+    memory_propose_edit_parser.add_argument("--title")
+    memory_propose_edit_parser.add_argument("--description")
+    memory_propose_edit_parser.add_argument("--body")
+    memory_propose_edit_parser.add_argument("--source-task")
+    memory_propose_edit_parser.add_argument("--agent")
+    memory_propose_edit_parser.add_argument("--instance")
+    memory_propose_edit_parser.add_argument("--tag", action="append")
+    memory_propose_edit_parser.add_argument("--metadata-json")
+    memory_propose_edit_parser.add_argument("--expected-version", type=int)
+    memory_propose_edit_parser.add_argument("--json", action="store_true")
+    memory_propose_edit_parser.set_defaults(func=memory_propose_edit)
     memory_approve_parser = memory_sub.add_parser("approve")
     memory_approve_parser.add_argument("memory_id")
     memory_approve_parser.add_argument("--expected-version", type=int)

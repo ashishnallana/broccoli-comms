@@ -44,17 +44,20 @@ class TestBroccoliCommsApp(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 broccoli_comms_app.trusted_memory_actor_from_runtime()
 
-    def test_memory_propose_rejects_unreachable_tracker_without_agent_identity(self):
+    def test_memory_propose_allows_unverified_agent_proposals(self):
         args = argparse.Namespace(type="fact", scope="global", subject_agent=None, title="T", body="B", source_task="task-1", trusted_manual=False, tag=None, idempotency_key=None, agent=None, instance=None, metadata_json=None, json=True)
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(broccoli_comms_app, "tracker_rpc", return_value=None):
-            with self.assertRaises(SystemExit):
-                broccoli_comms_app.memory_propose(args)
+        fake_kernel = mock.Mock()
+        fake_kernel.memory_propose.return_value = {"memory": {"memory_id": "mem-1"}}
+        with mock.patch.dict(os.environ, {"AGENT_NAME": "unverified-agent", "AGENT_ID": "agent-id"}, clear=True), mock.patch.object(broccoli_comms_app, "tracker_rpc", return_value=None), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel), mock.patch.object(broccoli_comms_app, "notify_memory_proposal", return_value={"sent": False}):
+            broccoli_comms_app.memory_propose(args)
+        self.assertEqual(fake_kernel.memory_propose.call_args.kwargs["proposed_by"], "unverified-agent")
+        self.assertEqual(fake_kernel.memory_propose.call_args.kwargs["proposed_by_instance"], "agent-id")
 
-    def test_memory_propose_uses_verified_identity_for_immutable_check(self):
-        args = argparse.Namespace(type="fact", scope="global", subject_agent=None, title="T", body="B", source_task="task-1", trusted_manual=False, tag=None, idempotency_key=None, agent="user", instance=None, metadata_json=None, json=True)
+    def test_memory_propose_uses_unverified_identity_for_immutable_check(self):
+        args = argparse.Namespace(type="fact", scope="global", subject_agent=None, title="T", body="B", source_task="task-1", trusted_manual=False, tag=None, idempotency_key=None, agent=None, instance=None, metadata_json=None, json=True)
         fake_kernel = mock.Mock()
         fake_kernel.memory_propose.side_effect = ValueError("immutable/non-learning instance cannot propose memory")
-        with mock.patch.object(broccoli_comms_app, "tracker_rpc", return_value={"name": "immutable-agent", "agent_id": "immutable-id"}), mock.patch.object(broccoli_comms_app, "get_toml_config", return_value=["immutable-id"]), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel):
+        with mock.patch.dict(os.environ, {"AGENT_NAME": "immutable-agent", "AGENT_ID": "immutable-id"}, clear=True), mock.patch.object(broccoli_comms_app, "get_toml_config", return_value=["immutable-id"]), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel):
             with self.assertRaises(SystemExit):
                 broccoli_comms_app.memory_propose(args)
         self.assertTrue(fake_kernel.memory_propose.call_args.kwargs["non_learning"])
@@ -73,11 +76,17 @@ class TestBroccoliCommsApp(unittest.TestCase):
         self.assertEqual(captured["created_by"] if "created_by" in captured else captured["trusted_actor"], "coordinator")
         self.assertEqual(captured["proposed_by_instance"], "coord-id")
 
-    def test_memory_propose_rejects_agent_id_only_unverified_identity(self):
-        args = argparse.Namespace(type="fact", scope="global", subject_agent=None, title="T", body="B", source_task="task-1", trusted_manual=False, tag=None, idempotency_key=None, agent="user", instance=None, metadata_json=None, json=True)
-        with mock.patch.dict(os.environ, {"AGENT_ID": "evil-id"}, clear=True), mock.patch.object(broccoli_comms_app, "tracker_rpc", side_effect=RuntimeError("not identified")):
-            with self.assertRaises(SystemExit):
-                broccoli_comms_app.memory_propose(args)
+    def test_memory_propose_edit_allows_unverified_agent_proposals(self):
+        args = argparse.Namespace(memory_id="mem-active", type=None, scope=None, subject_agent=None, title=None, description=None, body="updated", source_task="task-1", trusted_manual=False, tag=["audit"], expected_version=2, metadata_json=None, agent=None, instance=None, json=True)
+        fake_kernel = mock.Mock()
+        fake_kernel.memory_propose_edit.return_value = {"memory": {"memory_id": "mem-proposal"}}
+        with mock.patch.dict(os.environ, {"AGENT_NAME": "agent-a", "AGENT_ID": "id-a"}, clear=True), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel), mock.patch.object(broccoli_comms_app, "notify_memory_proposal", return_value={"sent": True}):
+            broccoli_comms_app.memory_propose_edit(args)
+        kwargs = fake_kernel.memory_propose_edit.call_args.kwargs
+        self.assertEqual(kwargs["proposed_by"], "agent-a")
+        self.assertEqual(kwargs["proposed_by_instance"], "id-a")
+        self.assertEqual(kwargs["body"], "updated")
+        self.assertEqual(kwargs["expected_version"], 2)
 
     def test_base_env_strips_agent_identity_by_default(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
