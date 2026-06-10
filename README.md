@@ -513,6 +513,29 @@ broccoli-comms start
 broccoli-comms ui
 ```
 
+## Scheduled tracker jobs
+
+The tracker has an extensible scheduled job runner. The first job, `agent_task_nudge`, runs for local controllable agents only. On each interval it checks the agent's durable current task; if the task is present and not blocked, it sends `Escape` to the pane and then types the nudge text directly into the pane to tell the agent to continue work or mark the task blocked to avoid future nudges.
+
+Configure the cadence in `~/.config/broccoli-comms/config.toml`:
+
+```toml
+[scheduled_jobs]
+enabled = true
+
+[scheduled_jobs.agent_task_nudge]
+enabled = true
+interval_seconds = 600
+backoff_multiplier = 2
+max_nudges = 5
+# Optional override for persisted per-task nudge state:
+# state_path = "/Users/me/.cache/broccoli-comms/agent-tracker/scheduled-task-nudges.json"
+```
+
+`interval_seconds` is the base per-task nudge interval. After each nudge for a task, the next eligible time backs off by `interval_seconds * backoff_multiplier^nudge_count`; `max_nudges` stops nudging a task after the configured count.
+
+Future scheduled jobs should use their own `[scheduled_jobs.<name>]` table so each job can have a separate frequency and job-specific settings.
+
 ## Local registry management
 
 `broccoli-comms registry ...` can run the in-repo `agent-registry` rendezvous service under Broccoli Comms runtime/cache/config paths:

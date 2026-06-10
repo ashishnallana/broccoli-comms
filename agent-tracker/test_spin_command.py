@@ -46,6 +46,9 @@ class TestSpinCommand(unittest.TestCase):
             self.assertIn("broccoli-comms task bootstrap", body)
             self.assertIn("database names, table names, commands/tools used", body)
             self.assertIn("task mark-result <task_id> --result good", body)
+            self.assertIn("task submit-completion <task_id>", body)
+            self.assertIn("task summarize-chain <task_chain_id>", body)
+            self.assertIn("Anything that requires investigation must be created and tracked as a task first", body)
             self.assertIn("clarification_count, correction_count, need_improvements_count", body)
             self.assertIn("first_pass_success", body)
             self.assertIn("derivable from `working_state_set` events", body)
@@ -55,7 +58,9 @@ class TestSpinCommand(unittest.TestCase):
             self.assertIn("do not write state checkpoints", body)
             self.assertIn("correction-assisted", body)
             self.assertIn("Never store raw terminal transcripts", body)
-            self.assertIn(params["directory"], body)
+            self.assertIn(f"Ephemeral cwd: {params['directory']}", body)
+            self.assertIn(f"Launch/source cwd: {tmp}", body)
+            self.assertIn("For file/project queries not related to agent memory", body)
 
     def test_spin_agents_contract_can_be_overridden_by_config_toml(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as cfg_tmp, \

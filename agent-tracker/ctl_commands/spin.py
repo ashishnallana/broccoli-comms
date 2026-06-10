@@ -18,8 +18,11 @@ You are: {agent}
 Agent profile: {agent}
 Instance: {instance}
 Ephemeral cwd: {cwd}
+Launch/source cwd: {source_cwd}
 
-Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
+For file/project queries not related to agent memory, read/search files under the ephemeral cwd by default. Use the launch/source cwd only when the user explicitly asks for it or the task names it.
+
+Durable state lives in Broccoli Comms. Do not rely on either cwd for memory.
 
 ## Required startup
 1. Run `broccoli-comms task bootstrap --agent {agent} --json` or `broccoli-comms task next --agent {agent} --include-profile --json`.
@@ -34,6 +37,7 @@ Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 
 ## Result and validation workflow
 - When completing work, update the task with a bounded result_summary suitable for user validation.
+- When a task chain or scoped phase is complete, use task-chain completion submission before review/validation: `broccoli-comms task submit-completion <task_id> --summary ... --task-chain-id <chain> --root-task-id <root> --json`; after it is approved/validated, run `broccoli-comms task summarize-chain <task_chain_id> --json` so future agents can resume from a bounded chain summary.
 - When the user says a result is correct, ensure the task is marked `good`/`validated` with `broccoli-comms task mark-result <task_id> --result good --json` so the append-only event log captures: goal -> checkpoints/discoveries -> result summary -> user validation.
 - For partial or incorrect results, include a remediation next_step with `task mark-result --result bad|need_improvements --next-step ...`.
 
@@ -60,6 +64,11 @@ Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 - Save durable outputs only through Broccoli Comms commands.
 - Never store raw terminal transcripts, full query logs, secrets, tokens, passwords, or large file contents in task/state/result text.
 - Keep task/state/result text concise and bounded; store facts and conclusions, not bulky evidence.
+
+## Tasks and Memory Management
+
+### Adding a Task
+Only skip task creation for true one-off user queries that have easy answers and require no investigation, file/code inspection, command execution, durable state, or verifiable deliverable. Anything that requires investigation must be created and tracked as a task first.
 """
 
 
@@ -86,8 +95,16 @@ def agent_contract_template() -> str | None:
     return None
 
 
-def agent_contract(agent: str, instance: str, cwd: str) -> str:
-    return (agent_contract_template() or DEFAULT_AGENT_CONTRACT_TEMPLATE).format(agent=agent, instance=instance, cwd=cwd)
+def agent_contract(agent: str, instance: str, cwd: str, source_cwd: str | None = None) -> str:
+    source_cwd = source_cwd or cwd
+    return (agent_contract_template() or DEFAULT_AGENT_CONTRACT_TEMPLATE).format(
+        agent=agent,
+        instance=instance,
+        cwd=cwd,
+        ephemeral_cwd=cwd,
+        source_cwd=source_cwd,
+        launch_cwd=source_cwd,
+    )
 
 
 def ephemeral_workspace(agent: str) -> str:
@@ -98,9 +115,9 @@ def ephemeral_workspace(agent: str) -> str:
     return str(path)
 
 
-def write_agents_contract(directory: str, agent: str, instance: str | None = None) -> Path:
+def write_agents_contract(directory: str, agent: str, instance: str | None = None, source_cwd: str | None = None) -> Path:
     path = Path(directory) / "AGENTS.md"
-    path.write_text(agent_contract(agent, instance or f"{agent}@pending", directory))
+    path.write_text(agent_contract(agent, instance or f"{agent}@pending", directory, source_cwd=source_cwd))
     return path
 
 
@@ -175,7 +192,7 @@ def handle(args):
     session = spin_session_name(directory)
     source_directory = directory
     directory = ephemeral_workspace(session)
-    write_agents_contract(directory, session)
+    write_agents_contract(directory, session, source_cwd=source_directory)
     
     command = build_spin_command(args.agent_command, args.agent_args, args.no_fallback)
 

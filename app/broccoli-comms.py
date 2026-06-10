@@ -725,13 +725,13 @@ def managed_track_env_assignments() -> list[str]:
     return [shell_env_assignment(key, env[key]) for key in keys if key in env and (env.get(key) or key in {"BROCCOLI_COMMS_TRACK_ACTIVE", "AGENT_WRAPPER_DEPTH", "AGENT_NAME", "AGENT_ID", "AGENT_UUID"})]
 
 
-def ephemeral_agent_workspace(name: str, agents_dir: str | None = None) -> str:
+def ephemeral_agent_workspace(name: str, agents_dir: str | None = None, source_cwd: str | Path | None = None) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "-", name).strip("-._") or "agent"
     base = Path(tempfile.gettempdir()) / "broccoli-agents" / safe_name
     tmp_root = base / uuid.uuid4().hex[:12]
     workspace = tmp_root / agents_dir if agents_dir else tmp_root
     workspace.mkdir(parents=True, exist_ok=False)
-    (workspace / "AGENTS.md").write_text(agent_contract(name, f"{name}@pending", workspace, agent_contract_template()))
+    (workspace / "AGENTS.md").write_text(agent_contract(name, f"{name}@pending", workspace, agent_contract_template(), source_cwd=source_cwd))
     return str(tmp_root)
 
 
@@ -829,7 +829,7 @@ def reconcile_agents(names: set[str] | None = None, *, autostart_only: bool = Fa
         if not os.path.isdir(cwd):
             raise SystemExit(f"configured cwd for agent {name!r} does not exist: {cwd}")
         command = spec.get("command") or "bash"
-        launch_cwd = ephemeral_agent_workspace(name)
+        launch_cwd = ephemeral_agent_workspace(name, source_cwd=cwd)
         launch = managed_agent_launch_command(
             name,
             cwd,
@@ -1609,7 +1609,7 @@ def run(args: argparse.Namespace) -> None:
     if window_exists(args.name):
         raise SystemExit(f"agent {args.name!r} is already running; stop or edit it first")
 
-    launch_cwd = ephemeral_agent_workspace(args.name, agents_dir=agents_dir)
+    launch_cwd = ephemeral_agent_workspace(args.name, agents_dir=agents_dir, source_cwd=source_cwd)
     context_path = str(Path(launch_cwd))
 
     if using_saved_config and not (getattr(args, "swarm", None) or getattr(args, "role", None)):
@@ -2543,7 +2543,7 @@ def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list
         "- Use `broccoli-comms memory ...` commands to update durable skills/memory; do not edit generated SKILL.md, memory.md, or expertise.md files as the source of truth.",
         "- **Retained habits are mandatory operating instructions.** The active habits are embedded below; follow them across the whole session, especially at task completion, review handoff, validation, and queue-continuation transitions.",
         "- Before reporting a task complete or validated, re-check the embedded retained habits and perform any follow-on action they require, such as notifying a reviewer or starting the next ready task.",
-        "- For long-running/restartable work, use bounded chain summaries: when a task chain is complete, run `broccoli-comms task summarize-chain <task_chain_id> --json`; on startup, resume from the latest chain summary plus the active task/state instead of replaying the full append-only event log. Fall back to bounded recent events only if a summary is missing or stale.",
+        "- For long-running/restartable work, use task-chain completion and bounded summaries: when a task chain or scoped phase is complete, run `broccoli-comms task submit-completion <task_id> --summary ... --task-chain-id <chain> --root-task-id <root> --json` before review/validation; after approval/validation, run `broccoli-comms task summarize-chain <task_chain_id> --json`. On startup, resume from the latest chain summary plus the active task/state instead of replaying the full append-only event log. Fall back to bounded recent events only if a summary is missing or stale.",
     ]
     if habits:
         lines.extend(["", "## Embedded retained habits from durable memory", "These retained habits are mandatory operating instructions. Follow them across turns and before completion, validation, review handoff, or queue-continuation transitions."])
@@ -2621,14 +2621,15 @@ def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dic
 
 def task_bootstrap(args: argparse.Namespace) -> None:
     agent = args.agent or os.environ.get("AGENT_NAME") or "agent"
-    cwd = Path(args.cwd or os.getcwd())
+    source_cwd = Path(args.cwd or os.environ.get("BROCCOLI_COMMS_SOURCE_CWD") or os.getcwd())
+    ephemeral_cwd = Path(getattr(args, "write_context_dir", None) or os.environ.get("BROCCOLI_COMMS_EPHEMERAL_CWD") or os.getcwd())
     payload = learning_kernel().task_next(agent=agent, scope=args.scope, include_profile=True)
     task = payload.get("task") if isinstance(payload, dict) else None
     state = learning_kernel().state_show(task["task_id"], agent) if task else None
     mem = learning_kernel().memory_for_bootstrap(agent=agent, scope=(task or {}).get("scope") or args.scope)
     root_for_summary = (state or {}).get("root_task_id") if isinstance(state, dict) else (task or {}).get("task_id")
     chain_summary = learning_kernel().latest_chain_summary(root_for_summary) if root_for_summary else None
-    payload.update({"state": state, "chain_summary": chain_summary, "memory": mem["records"], "memory_meta": {"truncated": mem["truncated"], "omitted_count": mem["omitted_count"]}, "agents_md": agent_contract(agent, args.instance, cwd, agent_contract_template())})
+    payload.update({"state": state, "chain_summary": chain_summary, "memory": mem["records"], "memory_meta": {"truncated": mem["truncated"], "omitted_count": mem["omitted_count"]}, "agents_md": agent_contract(agent, args.instance, ephemeral_cwd, agent_contract_template(), source_cwd=source_cwd)})
     conflicts = duplicate_profile_instances(agent)
     if conflicts:
         payload["profile_conflict"] = {"agent": agent, "instances": conflicts, "message": "duplicate same-profile instances detected; parallel different task chains are allowed, but same-chain queue claiming should be coordinator-resolved"}

@@ -184,6 +184,9 @@ in {
       registryHeartbeatSeconds = mkOption { type = types.ints.positive; default = 30; };
       enableReliableSendKeys = mkOption { type = types.bool; default = true; };
       capturePaneDefaultLines = mkOption { type = types.ints.positive; default = 20; };
+      agentTaskNudgeIntervalSeconds = mkOption { type = types.ints.positive; default = 600; description = "Base frequency, in seconds, for the local-agent scheduled task nudge job."; };
+      agentTaskNudgeBackoffMultiplier = mkOption { type = types.ints.positive; default = 2; description = "Per-task exponential backoff multiplier for scheduled task nudges."; };
+      agentTaskNudgeMaxNudges = mkOption { type = types.ints.unsigned; default = 5; description = "Maximum number of scheduled nudges to send for a single task."; };
       remotePaneInput.enable = mkOption { type = types.bool; default = false; };
       environment = mkOption { type = types.attrsOf types.str; default = {}; description = "Extra environment for the tracker service."; };
     };
@@ -244,6 +247,15 @@ in {
 
         [core]
         enable_reliable_send_keys = ${if cfg.tracker.enableReliableSendKeys then "true" else "false"}
+
+        [scheduled_jobs]
+        enabled = true
+
+        [scheduled_jobs.agent_task_nudge]
+        enabled = true
+        interval_seconds = ${toString cfg.tracker.agentTaskNudgeIntervalSeconds}
+        backoff_multiplier = ${toString cfg.tracker.agentTaskNudgeBackoffMultiplier}
+        max_nudges = ${toString cfg.tracker.agentTaskNudgeMaxNudges}
 
         [providers.jetski]
         cmd = "/google/bin/releases/jetski-devs/tools/cli"

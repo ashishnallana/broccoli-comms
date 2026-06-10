@@ -1178,14 +1178,16 @@ DEFAULT_AGENT_CONTRACT_TEMPLATE = """# Agent Operating Contract
 - If memory does not provide that evidence, or if more input is needed, stop and create a short plan for the user to review before doing anything else.
 - Wait for explicit user approval before reading/searching files, running commands or queries, making web searches, changing code, or otherwise taking action on that non-specific request.
 - Direct, specific requests may be executed without this plan-first gate, while still following safety, task/state, and validation rules.
+- For file/project queries not related to agent memory, read/search files under the ephemeral cwd by default. Use the launch/source cwd only when the user explicitly asks for it or the task names it.
 - Treat the ephemeral cwd as the source directory unless the user explicitly provided or requested a different cwd; do not assume the launcher/original cwd is the source directory.
 
 You are: {agent}
 Agent profile: {agent}
 Instance: {instance}
 Ephemeral cwd: {cwd}
+Launch/source cwd: {source_cwd}
 
-Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
+Durable state lives in Broccoli Comms. Do not rely on either cwd for memory.
 
 ## Required startup
 1. If present in the working directory, read generated `memory.md`, `habits.md`, and `expertise.md`; bootstrap-generated `AGENTS.md` may provide absolute paths for these files and a concise list of available skills.
@@ -1202,6 +1204,7 @@ Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 
 ## Result and validation workflow
 - When completing work, update the task with a bounded result_summary suitable for user validation.
+- When a task chain or scoped phase is complete, use task-chain completion submission before review/validation: `broccoli-comms task submit-completion <task_id> --summary ... --task-chain-id <chain> --root-task-id <root> --json`; after it is approved/validated, run `broccoli-comms task summarize-chain <task_chain_id> --json` so future agents can resume from a bounded chain summary.
 - When the user says a result is correct, ensure the task is marked `good`/`validated` with `broccoli-comms task mark-result <task_id> --result good --json` so the append-only event log captures: goal -> checkpoints/discoveries -> result summary -> user validation.
 - For partial or incorrect results, include a remediation next_step with `task mark-result --result bad|need_improvements --next-step ...`.
 
@@ -1235,6 +1238,7 @@ Durable state lives in Broccoli Comms. Do not rely on this cwd for memory.
 
 ### Adding a Task
 **Goal-Driven Execution Workflow:**
+Only skip task creation for true one-off user queries that have easy answers and require no investigation, file/code inspection, command execution, durable state, or verifiable deliverable. Anything that requires investigation must be created and tracked as a task first.
 When a request is received that expects a concrete verifiable result:
 1. **Convert to Task**: Create a new task first using `broccoli-comms task create` so the goal can be formally tracked.
 2. **Update Status**: Continuously add status updates and state changes to that task as you work using `broccoli-comms state set` or `broccoli-comms task update`.
@@ -1276,7 +1280,15 @@ broccoli-comms memory propose \
 """
 
 
-def agent_contract(agent: str, instance: str | None, cwd: str | Path, template: str | None = None) -> str:
+def agent_contract(agent: str, instance: str | None, cwd: str | Path, template: str | None = None, source_cwd: str | Path | None = None) -> str:
     cwd = str(cwd)
+    source_cwd = str(source_cwd or cwd)
     instance = instance or f"{agent}@manual"
-    return (template or DEFAULT_AGENT_CONTRACT_TEMPLATE).format(agent=agent, instance=instance, cwd=cwd)
+    return (template or DEFAULT_AGENT_CONTRACT_TEMPLATE).format(
+        agent=agent,
+        instance=instance,
+        cwd=cwd,
+        ephemeral_cwd=cwd,
+        source_cwd=source_cwd,
+        launch_cwd=source_cwd,
+    )

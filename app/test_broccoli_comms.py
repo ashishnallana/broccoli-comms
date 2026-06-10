@@ -700,6 +700,7 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertIn(str(context / "skills" / "Deploy-Helper" / "SKILL.md"), agents)
             self.assertIn("Use `broccoli-comms memory ...` commands", agents)
             self.assertIn("Retained habits are mandatory operating instructions", agents)
+            self.assertIn("task submit-completion <task_id>", agents)
             self.assertIn("summarize-chain <task_chain_id>", agents)
             self.assertIn("resume from the latest chain summary", agents)
             memory = (context / "memory.md").read_text()
@@ -740,6 +741,17 @@ agent_communicator_tui = "/config/agent-communicator"
             payload = json.loads(out.getvalue())
             self.assertEqual(payload["task"]["task_id"], active["task_id"])
             self.assertIsNone(payload.get("chain_summary"))
+
+    def test_bootstrap_agents_md_shows_ephemeral_and_source_cwds(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as ctx, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}, clear=False), mock.patch.object(broccoli_comms_app, "duplicate_profile_instances", return_value=[]):
+            args = argparse.Namespace(agent="a", scope=None, cwd=src, instance="a@s1", write_context_dir=ctx, json=True)
+            out = io.StringIO()
+            with mock.patch("sys.stdout", out):
+                broccoli_comms_app.task_bootstrap(args)
+            agents = (Path(ctx) / "AGENTS.md").read_text()
+            self.assertIn(f"Ephemeral cwd: {ctx}", agents)
+            self.assertIn(f"Launch/source cwd: {src}", agents)
+            self.assertIn("For file/project queries not related to agent memory", agents)
 
     def test_ephemeral_agent_workspace_writes_agents_md_from_config_template(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):

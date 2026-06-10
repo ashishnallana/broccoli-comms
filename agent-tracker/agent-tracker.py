@@ -14,6 +14,7 @@ import http_sidecar
 import registry_client
 import permission_detection
 import pane_output_lifecycle
+import scheduled_jobs
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', stream=sys.stderr)
 
@@ -92,6 +93,7 @@ def main():
     threading.Thread(target=permission_detection.background_detection_monitor, daemon=True).start()
     threading.Thread(target=http_sidecar.serve_forever, daemon=True).start()
     threading.Thread(target=registry_client.background_sync, daemon=True).start()
+    threading.Thread(target=scheduled_jobs.background_scheduler, daemon=True).start()
 
     logging.info(f"Agent Tracker listening on {SOCKET_PATH}")
 

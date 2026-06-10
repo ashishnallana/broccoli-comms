@@ -63,13 +63,19 @@ class TestLearningKernelCli(unittest.TestCase):
             contract = broccoli.agent_contract("a", "a@s1", "/tmp/ws")
             self.assertIn("Critical persona: plan-first for non-specific work", contract)
             self.assertIn("Historical evidence must come from memory only", contract)
+            self.assertIn("For file/project queries not related to agent memory", contract)
             self.assertIn("Treat the ephemeral cwd as the source directory", contract)
+            self.assertIn("Ephemeral cwd: /tmp/ws", contract)
+            self.assertIn("Launch/source cwd: /tmp/ws", contract)
             self.assertIn("You are: a", contract)
             self.assertIn("broccoli-comms task bootstrap --agent a --json", contract)
             self.assertIn("check whether any pending/ready task is assigned", contract)
             self.assertIn("then start working on that task unless it is blocked or requires clarification", contract)
             self.assertIn("database names, table names, commands/tools used", contract)
             self.assertIn("goal -> checkpoints/discoveries -> result summary -> user validation", contract)
+            self.assertIn("task submit-completion <task_id>", contract)
+            self.assertIn("task summarize-chain <task_chain_id>", contract)
+            self.assertIn("Anything that requires investigation must be created and tracked as a task first", contract)
             self.assertIn("clarification_count, correction_count, need_improvements_count", contract)
             self.assertIn("first_pass_success", contract)
             self.assertIn("derivable from `working_state_set` events", contract)
@@ -110,7 +116,7 @@ class TestLearningKernelCli(unittest.TestCase):
             cfg_dir.mkdir()
             (cfg_dir / "config.toml").write_text('[learning]\nagent_contract_template = "custom {agent} {instance} {cwd}"\n')
             self.assertEqual(broccoli.agent_contract_template(), "custom {agent} {instance} {cwd}")
-            self.assertEqual(broccoli.agent_contract("a", "i", "/w", broccoli.agent_contract_template()), "custom a i /w")
+            self.assertEqual(broccoli.agent_contract("a", "i", "/w", broccoli.agent_contract_template(), source_cwd="/src"), "custom a i /w")
 
     def test_mark_result_requires_remediation_for_non_good(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
