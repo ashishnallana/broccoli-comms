@@ -17,9 +17,6 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 	if m.commandPalette.Open {
 		return m.updateCommandPalette(msg)
 	}
-	if m.showingMemoryApprovals {
-		return m.updateMemoryApprovals(msg)
-	}
 	if m.showingSaveForm {
 		return m.updateSaveForm(msg)
 	}
@@ -39,6 +36,30 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.commandPalette.Offset = 0
 		return m, nil
 	}
+	if m.mode == memoryView {
+		if m.memoryFormActive() {
+			return m.updateMemoryManagement(msg)
+		}
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyCtrlQ:
+			return m, tea.Quit
+		case tea.KeyCtrlT:
+			m.toggleMode()
+			if m.mode == memoryView {
+				m.memoryLoading = true
+			}
+			m.selectLatestMessage()
+			return m, m.loadActiveTabCmd()
+		case tea.KeyCtrlY:
+			m.selectTab(-1)
+			if m.mode == memoryView {
+				m.memoryLoading = true
+			}
+			m.selectLatestMessage()
+			return m, m.loadActiveTabCmd()
+		}
+		return m.updateMemoryManagement(msg)
+	}
 	switch msg.Type {
 	case tea.KeyCtrlC, tea.KeyCtrlQ:
 		return m, tea.Quit
@@ -56,12 +77,18 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		return m, nil
 	case tea.KeyCtrlT:
 		m.toggleMode()
+		if m.mode == memoryView {
+			m.memoryLoading = true
+		}
 		m.selectLatestMessage()
-		return m, m.reloadMessages()
+		return m, m.loadActiveTabCmd()
 	case tea.KeyCtrlY:
 		m.selectTab(-1)
+		if m.mode == memoryView {
+			m.memoryLoading = true
+		}
 		m.selectLatestMessage()
-		return m, m.reloadMessages()
+		return m, m.loadActiveTabCmd()
 	case tea.KeyCtrlG:
 		if len(m.rows) > 0 {
 			m.toggleAgentSection()

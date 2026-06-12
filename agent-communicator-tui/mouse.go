@@ -14,8 +14,11 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if mode, ok := m.mouseSelectBottomTab(event.X, event.Y); ok {
 		m.setMode(mode)
+		if m.mode == memoryView {
+			m.memoryLoading = true
+		}
 		m.selectLatestMessage()
-		return m, m.reloadMessages()
+		return m, m.loadActiveTabCmd()
 	}
 	if m.mode == simpleView && m.mouseSelectAgent(event.X, event.Y) {
 		m.scrollSelectedAgentIntoView()

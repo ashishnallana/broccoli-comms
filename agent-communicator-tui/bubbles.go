@@ -72,7 +72,7 @@ func renderMemoryProposalBody(msg tracker.Message, width int, bg lipgloss.Color)
 	if msg.Body != "" {
 		lines = append(lines, "", msg.Body)
 	}
-	lines = append(lines, "", fgOnBg(colors.Warning, bg).Render("Use Command palette → Memory Approvals to approve, edit, delete, or roll back memory."))
+	lines = append(lines, "", fgOnBg(colors.Warning, bg).Render("Use Command palette → Memory Management to review, approve, edit in EDITOR/nvim, reject/revoke, or roll back memory."))
 	return renderMarkdown(strings.Join(lines, "\n"), width, bg)
 }
 

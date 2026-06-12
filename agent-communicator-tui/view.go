@@ -27,9 +27,6 @@ func (m model) View() string {
 	if m.commandPalette.Open {
 		return m.commandPaletteView(m.width, m.height)
 	}
-	if m.showingMemoryApprovals {
-		return m.memoryApprovalsView(m.width, m.height)
-	}
 	return m.baseView()
 }
 
@@ -62,6 +59,9 @@ func (m model) baseView() string {
 }
 
 func (m model) mainContentView(bodyH int) string {
+	if m.mode == memoryView {
+		return truncateLines(m.memoryManagementView(m.width, bodyH), bodyH)
+	}
 	if m.width < 70 {
 		return truncateLines(m.conversationPanel(m.width, bodyH), bodyH)
 	}

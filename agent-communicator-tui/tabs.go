@@ -21,6 +21,7 @@ var registeredAppTabs = []appTab{
 	{ID: "simple", Mode: simpleView, Label: "Simple Chat", ShortLabel: "Simple", Help: "focused conversation", CanCompose: true, Load: loadSimpleTabMessages},
 	{ID: "swarm", Mode: swarmView, Label: "Swarm Mode", ShortLabel: "Swarm", Help: "coordinate agent groups", CanCompose: true, Load: loadSwarmTab},
 	{ID: "saved", Mode: savedView, Label: "Saved Messages", ShortLabel: "Saved", Help: "starred messages", CanCompose: false, Load: loadSavedTabMessages},
+	{ID: "memory", Mode: memoryView, Label: "Memory Management", ShortLabel: "Memory", Help: "review and maintain durable memory", CanCompose: false, Load: loadMemoryTab},
 }
 
 func loadSimpleTabMessages(m model) tea.Cmd {
@@ -32,6 +33,8 @@ func loadSwarmTab(m model) tea.Cmd {
 }
 
 func loadSavedTabMessages(model) tea.Cmd { return nil }
+
+func loadMemoryTab(model) tea.Cmd { return loadMemoryApprovalsCmd() }
 
 func appTabs() []appTab {
 	return append([]appTab(nil), registeredAppTabs...)

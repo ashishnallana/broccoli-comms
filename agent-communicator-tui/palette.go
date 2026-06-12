@@ -192,16 +192,18 @@ func commandPaletteActions() []commandAction {
 			},
 		},
 		{
-			ID:       "memory-approvals",
-			Title:    "Memory Approvals",
-			Subtitle: "Review pending and approved memory; approve, edit, delete, or rollback changes.",
+			ID:       "memory-management",
+			Title:    "Memory Management",
+			Subtitle: "Open the Memory tab to review pending and approved memory.",
 			Category: "Memory",
 			Shortcut: "open",
 			Keywords: []string{"memory", "approval", "pending", "approved", "rollback"},
 			Enabled:  func(model) bool { return true },
 			Run: func(m *model) tea.Cmd {
-				m.showingMemoryApprovals = true
+				m.setMode(memoryView)
 				m.memorySelected = 0
+				m.memoryOffset = 0
+				m.memoryLoading = true
 				m.memoryErr = nil
 				return loadMemoryApprovalsCmd()
 			},

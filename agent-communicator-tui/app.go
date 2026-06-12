@@ -20,6 +20,7 @@ const (
 	advancedView
 	swarmView
 	savedView
+	memoryView
 )
 
 type runtimeInfo struct {
@@ -90,11 +91,19 @@ type model struct {
 	// Command palette (Ctrl-P)
 	commandPalette commandPaletteState
 
-	// Memory approvals manager
-	showingMemoryApprovals bool
-	memoryItems            []memoryRecord
-	memorySelected         int
-	memoryErr              error
+	// Memory management tab
+	memoryItems         []memoryRecord
+	memorySelected      int
+	memoryOffset        int
+	memoryLoading       bool
+	memorySearchFocused bool
+	memoryQuery         []rune
+	memoryStatusFilter  string
+	memoryTypeFilter    string
+	memoryAgentFilter   string
+	memoryForm          memoryFormState
+	memoryConfirm       memoryActionConfirmation
+	memoryErr           error
 
 	// Save Agent Form (Ctrl-S)
 	showingSaveForm bool
@@ -254,21 +263,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case memoryActionResult:
 		m.err = msg.Err
 		m.memoryErr = msg.Err
+		m.memoryConfirm = memoryActionConfirmation{}
 		if msg.Err == nil {
 			return m, tea.Batch(m.reloadMessages(), loadMemoryApprovalsCmd())
 		}
+		m.memoryLoading = false
 	case memoryApprovalsLoaded:
+		previousID := ""
+		if mem, ok := m.selectedMemoryRecord(); ok {
+			previousID = mem.MemoryID
+		}
+		m.memoryLoading = false
 		m.memoryErr = msg.Err
 		if msg.Err == nil {
 			m.memoryItems = msg.Items
-			if m.memorySelected >= len(m.memoryItems) {
-				m.memorySelected = max(0, len(m.memoryItems)-1)
-			}
+			m.preserveMemorySelection(previousID)
 		}
 	case memoryEditClosed:
 		m.err = msg.Err
 		m.memoryErr = msg.Err
 		if msg.Err == nil {
+			return m, loadMemoryApprovalsCmd()
+		}
+	case memoryFormSubmitted:
+		m.err = msg.Err
+		m.memoryErr = msg.Err
+		m.memoryLoading = msg.Err == nil
+		if msg.Err == nil {
+			m.memoryForm = memoryFormState{}
 			return m, loadMemoryApprovalsCmd()
 		}
 	}

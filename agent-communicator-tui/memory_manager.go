@@ -11,7 +11,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 type memoryApprovalsLoaded struct {
@@ -54,7 +53,7 @@ func memoryManagerActionCmd(mem memoryRecord, action string) tea.Cmd {
 		}
 		args := []string{"memory", action, mem.MemoryID, "--expected-version", strconv.Itoa(mem.Version), "--json"}
 		if action == "reject" || action == "revoke" {
-			args = append(args, "--reason", "removed from Memory Approvals TUI")
+			args = append(args, "--reason", "removed from Memory Management tab")
 		}
 		if action == "rollback" {
 			if mem.Version <= 1 {
@@ -68,6 +67,13 @@ func memoryManagerActionCmd(mem memoryRecord, action string) tea.Cmd {
 		}
 		return memoryActionResult{MemoryID: mem.MemoryID, Action: action}
 	}
+}
+
+func memoryEditorCommandName() string {
+	if editor := os.Getenv("EDITOR"); editor != "" {
+		return editor
+	}
+	return "nvim"
 }
 
 func editMemoryInEditor(mem memoryRecord) tea.Cmd {
@@ -84,10 +90,7 @@ func editMemoryInEditor(mem memoryRecord) tea.Cmd {
 			return memoryEditClosed{MemoryID: mem.MemoryID, Err: err}
 		}
 		file.Close()
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			editor = "vi"
-		}
+		editor := memoryEditorCommandName()
 		return tea.ExecProcess(exec.Command(editor, path), func(err error) tea.Msg {
 			defer os.Remove(path)
 			if err != nil {
@@ -115,93 +118,9 @@ func editMemoryInEditor(mem memoryRecord) tea.Cmd {
 }
 
 func (m model) selectedMemoryRecord() (memoryRecord, bool) {
-	if len(m.memoryItems) == 0 || m.memorySelected < 0 || m.memorySelected >= len(m.memoryItems) {
-		return memoryRecord{}, false
-	}
-	return m.memoryItems[m.memorySelected], true
-}
-
-func (m model) updateMemoryApprovals(msg tea.KeyMsg) (model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyCtrlC, tea.KeyCtrlQ:
-		return m, tea.Quit
-	case tea.KeyEsc:
-		m.showingMemoryApprovals = false
-		return m, nil
-	case tea.KeyUp, tea.KeyCtrlP:
-		if len(m.memoryItems) > 0 {
-			m.memorySelected = (m.memorySelected - 1 + len(m.memoryItems)) % len(m.memoryItems)
-		}
-	case tea.KeyDown, tea.KeyCtrlN:
-		if len(m.memoryItems) > 0 {
-			m.memorySelected = (m.memorySelected + 1) % len(m.memoryItems)
-		}
-	case tea.KeyRunes:
-		mem, ok := m.selectedMemoryRecord()
-		if !ok {
-			return m, nil
-		}
-		switch string(msg.Runes) {
-		case "a":
-			if mem.Status == "pending" {
-				return m, memoryManagerActionCmd(mem, "approve")
-			}
-		case "d":
-			if mem.Status == "pending" {
-				return m, memoryManagerActionCmd(mem, "reject")
-			}
-			if mem.Status == "active" {
-				return m, memoryManagerActionCmd(mem, "revoke")
-			}
-		case "e":
-			return m, editMemoryInEditor(mem)
-		case "r":
-			return m, memoryManagerActionCmd(mem, "rollback")
-		}
-	}
-	return m, nil
+	return m.selectedFilteredMemoryRecord()
 }
 
 func memoryRecordAgentName(mem memoryRecord) string {
 	return firstNonEmpty(mem.SubjectAgent, mem.ProposedBy, "unknown")
-}
-
-func (m model) memoryApprovalsView(width, height int) string {
-	contentW := max(20, width-4)
-	panelBG := colors.PopupBg
-	style := lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Text)
-	muted := fgOnBg(colors.Muted, panelBG)
-	lines := []string{
-		padStyledLine(muted.Render("Memory Approvals")+bgSpaces(max(1, contentW-lipgloss.Width("Memory Approvals")-lipgloss.Width("esc close")), panelBG)+muted.Render("esc close"), contentW, panelBG),
-		padStyledLine(muted.Render("↑/↓ select  a approve  e edit  d delete/reject  r rollback previous version"), contentW, panelBG),
-	}
-	if m.memoryErr != nil {
-		lines = append(lines, padStyledLine(fgOnBg(colors.Error, panelBG).Render(m.memoryErr.Error()), contentW, panelBG))
-	}
-	if len(m.memoryItems) == 0 {
-		lines = append(lines, padStyledLine(muted.Render("No pending or approved memory."), contentW, panelBG))
-	}
-	for i, mem := range m.memoryItems {
-		if len(lines) >= max(4, height-2) {
-			break
-		}
-		marker := "  "
-		if i == m.memorySelected {
-			marker = "▸ "
-		}
-		title := firstNonEmpty(mem.Title, mem.MemoryID)
-		memoryType := firstNonEmpty(mem.Type, "unknown")
-		agentName := memoryRecordAgentName(mem)
-		row := fmt.Sprintf("%s[%s] %s type:%s agent:%s v%d %s", marker, mem.Status, mem.MemoryID, memoryType, agentName, mem.Version, title)
-		lines = append(lines, padStyledLine(style.Render(row), contentW, panelBG))
-		if mem.Body != "" && i == m.memorySelected && len(lines) < max(4, height-2) {
-			preview := strings.ReplaceAll(mem.Body, "\n", " ")
-			if len(preview) > contentW-4 {
-				preview = preview[:contentW-7] + "..."
-			}
-			lines = append(lines, padStyledLine(muted.Render("   "+preview), contentW, panelBG))
-		}
-	}
-	box := lipgloss.NewStyle().Width(contentW).MaxWidth(width).Border(lipgloss.NormalBorder()).BorderForeground(colors.PopupBorder).Padding(1, 1).Background(panelBG).Render(strings.Join(lines, "\n"))
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box, lipgloss.WithWhitespaceBackground(colors.BaseBg))
 }
