@@ -382,6 +382,31 @@ agent_communicator_tui = "/config/agent-communicator"
         self.assertIn("Run/bootstrap with Broccoli Comms, then start assigned task.", launched)
         self.assertNotIn("New message in inbox", launched)
 
+    def test_run_treats_double_dash_prompt_flag_as_positional_initial_message(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text('[providers.pi]\ncmd = "pi"\nprompt-flag-name = "--"\ninitial-message = "Run/bootstrap positionally."\n')
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope=None, swarm=None, role=None, host=None, command=["pi"], json=True))
+
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertIn("Run/bootstrap positionally.", launched)
+        self.assertNotIn(" -- Run/bootstrap positionally.", launched)
+
     def test_run_omits_provider_initial_message_when_prompt_flag_missing(self):
         calls = []
 
@@ -943,7 +968,7 @@ agent_communicator_tui = "/config/agent-communicator"
                 "auto": 'auto-accept-flag = "--yolo"',
                 "root": 'agent-root-dir = "${config.home.homeDirectory}/.agents-root"',
             },
-            "pi": {"cmd": 'cmd = "pi"', "auto": 'auto-accept-flag = "--auto-accept"'},
+            "pi": {"cmd": 'cmd = "pi"', "auto": 'auto-accept-flag = ""'},
             "codex": {"cmd": 'cmd = "codex"', "auto": 'auto-accept-flag = "--dangerously-bypass-approvals-and-sandbox"'},
             "claude": {
                 "cmd": 'cmd = "claude"',

@@ -1576,6 +1576,8 @@ def _provider_initial_message_args(provider_cfg: dict) -> list[str]:
     initial_message = _provider_str(provider_cfg.get("initial-message", ""))
     if not prompt_flag or not initial_message:
         return []
+    if prompt_flag == "--":
+        return [initial_message]
     return [prompt_flag, initial_message]
 
 

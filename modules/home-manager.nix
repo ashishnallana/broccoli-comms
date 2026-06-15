@@ -281,7 +281,7 @@ in {
 
         [providers.pi]
         cmd = "pi"
-        auto-accept-flag = "--auto-accept"
+        auto-accept-flag = ""
         prompt-flag-name = "--"
         initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
