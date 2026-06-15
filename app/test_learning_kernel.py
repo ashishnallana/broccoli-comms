@@ -143,10 +143,12 @@ class TestLearningKernelCli(unittest.TestCase):
         self.assertTrue(notice["sent"])
         self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "reviewer", "verifier"])
         for _method, payload in calls:
+            self.assertEqual(payload["sender_name"], "coder")
             self.assertNotIn("\n", payload["message"])
-            self.assertIn("Task task-1 needs your attention", payload["message"])
-            self.assertIn("title=Notify", payload["message"])
-            self.assertIn("status=review", payload["message"])
+            self.assertIn("Task task-1 moved to review by coder. Read inbox.", payload["message"])
+            self.assertEqual(payload["metadata"]["content_type"], "application/vnd.broccoli.task-update+json")
+            self.assertEqual(payload["metadata"]["task_id"], "task-1")
+            self.assertEqual(payload["metadata"]["task_status"], "review")
         def flaky_tracker(_method, payload, **_kw):
             if payload["agent_name"] == "reviewer":
                 raise RuntimeError("offline")
@@ -181,9 +183,12 @@ class TestLearningKernelCli(unittest.TestCase):
             k.task_participant_add(child["task_id"], "coord", "coordinator")
             args = argparse.Namespace(task_id=root["task_id"], status="validated", next_step=None, blocked_reason=None, result_summary=None, assign_agent=None, json=True)
             calls = []
-            with mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+            with mock.patch.dict(os.environ, {"AGENT_NAME": "reviewer"}, clear=False), mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
                 broccoli.task_update(args)
             self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "next", "coord"])
+            for _method, payload in calls:
+                self.assertEqual(payload["sender_name"], "reviewer")
+                self.assertIn("moved to validated by reviewer. Read inbox.", payload["message"])
 
     def test_ui_notification_failure_still_attempts_participant_notifications(self):
         task = {"task_id": "task-1", "title": "Notify", "status": "review", "participants": [{"agent": "reviewer", "role": "reviewer", "status": "active"}]}

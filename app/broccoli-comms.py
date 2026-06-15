@@ -2582,16 +2582,16 @@ def _single_line_message_part(value: object, limit: int = 240) -> str:
 
 def _task_update_attention_message(task: dict, actor: str, updates: dict) -> str:
     task_id = _single_line_message_part(task.get("task_id") or "unknown", 80)
-    title = _single_line_message_part(task.get("title") or "Untitled task", 160)
-    status = _single_line_message_part(task.get("status") or updates.get("status") or "unknown", 80)
-    reason = updates.get("result_status") or updates.get("status") or task.get("next_step") or "updated"
-    reason = _single_line_message_part(reason, 160)
+    status = _single_line_message_part(updates.get("status") or task.get("status") or "unknown", 80)
     actor = _single_line_message_part(actor or "unknown", 80)
     summary = _single_line_message_part(task.get("result_summary") or "", 240)
-    parts = [f"Task {task_id} needs your attention", f"title={title}", f"status={status}", f"reason={reason}", f"actor={actor}"]
+    message = f"Task {task_id} moved to {status} by {actor}. Read inbox."
+    result_status = updates.get("result_status")
+    if result_status:
+        message += f" Result: {_single_line_message_part(result_status, 80)}."
     if summary:
-        parts.append(f"summary={summary}")
-    return "; ".join(parts)
+        message += f" Summary: {summary}"
+    return _single_line_message_part(message, 1000)
 
 
 def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
@@ -2615,8 +2615,9 @@ def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
     ui_sent = False
     ui_result = None
     ui_error = None
+    sender_name = actor or "task-kernel"
     try:
-        ui_result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": "task-kernel"})
+        ui_result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": sender_name})
         if not ui_result:
             raise RuntimeError("tracker RPC send_message failed")
         ui_sent = True
@@ -2627,7 +2628,7 @@ def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
         for recipient in _task_update_notification_recipients(task, actor, updates):
             participant_metadata = {**metadata, "recipient_agent": recipient, "recipient_kind": "task_participant"}
             try:
-                participant_result = tracker_rpc("send_message", {"agent_name": recipient, "message": message, "metadata": participant_metadata, "sender_name": "task-kernel"})
+                participant_result = tracker_rpc("send_message", {"agent_name": recipient, "message": message, "metadata": participant_metadata, "sender_name": sender_name})
                 participant_results.append({"agent": recipient, "sent": bool(participant_result), "result": participant_result})
             except Exception as participant_error:
                 participant_results.append({"agent": recipient, "sent": False, "error": str(participant_error)})
