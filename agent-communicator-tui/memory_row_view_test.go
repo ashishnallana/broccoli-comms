@@ -30,6 +30,23 @@ func TestMemoryRowSelectedUsesSelectedBackgroundAndFillsWidth(t *testing.T) {
 	}
 }
 
+func TestMemoryMetadataUsesDistinctStatusTypeColorsAndBoldAgent(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previousProfile)
+
+	line := memoryMetadataLine(memoryRecord{MemoryID: "mem-1", Status: "pending", Type: "habit", SubjectAgent: "broccoli-agent"}, 100, colors.BaseBg, true)
+	for label, want := range map[string]string{
+		"pending status": fgOnBg(memoryStatusColor("pending"), colors.BaseBg).Bold(true).Render("◔ pending"),
+		"habit type":     fgOnBg(memoryTypeColor("habit"), colors.BaseBg).Bold(true).Render("habit"),
+		"agent name":     fgOnBg(colors.AccentStrong, colors.BaseBg).Bold(true).Render("broccoli-agent"),
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("metadata line missing styled %s %q in %q", label, want, line)
+		}
+	}
+}
+
 func TestSelectedMemoryPreviewUsesTextStrong(t *testing.T) {
 	previousProfile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)

@@ -134,8 +134,7 @@ func (m model) memoryDetailsPanel(width, height int) string {
 	if mem, ok := m.selectedMemoryRecord(); ok {
 		lines = append(lines,
 			padStyledLine(fgOnBg(colors.TextStrong, bg).Render(truncateCells(firstNonEmpty(mem.Title, mem.MemoryID), innerW)), innerW, bg),
-			padStyledLine(muted.Render(truncateCells(strings.Join(compactNonEmpty([]string{firstNonEmpty(mem.Status, "unknown"), firstNonEmpty(mem.Type, "unknown"), "agent " + memoryRecordAgentName(mem)}), " · "), innerW)), innerW, bg),
-			padStyledLine(muted.Render(truncateCells(memorySourceVersionHint(mem), innerW)), innerW, bg),
+			memoryMetadataLine(mem, innerW, bg, false),
 			padStyledLine(muted.Render(truncateCells("id "+mem.MemoryID, innerW)), innerW, bg),
 			padStyledLine(muted.Render(""), innerW, bg),
 			padStyledLine(accent.Render("Filters"), innerW, bg),
