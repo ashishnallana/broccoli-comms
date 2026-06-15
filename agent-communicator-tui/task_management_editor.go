@@ -22,14 +22,14 @@ func editTaskFieldInEditor(task taskRecord, field string) tea.Cmd {
 			return taskEditClosed{TaskID: task.TaskID, Field: field, Err: err}
 		}
 		path := file.Name()
-		editorInitial := taskEditorInitialContent(field, initial)
+		editorInitial := taskEditorInitialContentForTask(task, field, initial)
 		if _, err := file.WriteString(editorInitial); err != nil {
 			file.Close()
 			os.Remove(path)
 			return taskEditClosed{TaskID: task.TaskID, Field: field, Err: err}
 		}
 		file.Close()
-		return tea.ExecProcess(exec.Command(memoryEditorCommandName(), path), func(err error) tea.Msg {
+		return tea.ExecProcess(taskEditorCommand(path), func(err error) tea.Msg {
 			defer os.Remove(path)
 			if err != nil {
 				return finishTaskEditorContent(task.TaskID, field, initial, "", err)
@@ -44,10 +44,40 @@ func editTaskFieldInEditor(task taskRecord, field string) tea.Cmd {
 }
 
 func taskEditorInitialContent(field, initial string) string {
+	return taskEditorInitialContentForTask(taskRecord{}, field, initial)
+}
+
+func taskEditorInitialContentForTask(task taskRecord, field, initial string) string {
 	if strings.TrimSpace(initial) != "" {
-		return initial
+		return strings.TrimRight(initial, "\n") + "\n"
 	}
-	return "# Edit task " + strings.ReplaceAll(field, "_", " ") + " below. Lines starting with # are ignored.\n# Leave this scaffold unchanged to cancel.\n"
+	fieldLabel := strings.ReplaceAll(field, "_", " ")
+	lines := []string{"# Edit task " + fieldLabel + " below. Lines starting with # are ignored."}
+	if task.TaskID != "" {
+		lines = append(lines, "# Task: "+task.TaskID)
+	}
+	if strings.TrimSpace(task.Title) != "" {
+		lines = append(lines, "# Title: "+strings.TrimSpace(task.Title))
+	}
+	lines = append(lines, "# Leave this scaffold unchanged to cancel.", "")
+	return strings.Join(lines, "\n")
+}
+
+func taskEditorCommand(path string) *exec.Cmd {
+	editor := strings.TrimSpace(memoryEditorCommandName())
+	if editor == "" {
+		editor = "nvim"
+	}
+	parts := strings.Fields(editor)
+	if len(parts) == 0 {
+		return exec.Command("nvim", path)
+	}
+	args := append([]string{}, parts[1:]...)
+	if parts[0] == "nvim" || strings.HasSuffix(parts[0], "/nvim") {
+		args = append([]string{"-c", "setlocal modified"}, args...)
+	}
+	args = append(args, path)
+	return exec.Command(parts[0], args...)
 }
 
 func stripTaskEditorScaffold(content string) string {

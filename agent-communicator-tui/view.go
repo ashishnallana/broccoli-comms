@@ -309,10 +309,29 @@ func (m model) renderRunAgentForm(width, height int) string {
 		name = "agent-name"
 	}
 	provider := fallback(m.runAgentProvider, "no configured provider")
+	args := string(m.runAgentArgs)
+	if args == "" {
+		args = "—"
+	}
+	row := func(index int, label, value string) string {
+		style := lipgloss.NewStyle().Foreground(colors.TextStrong)
+		prefix := "  "
+		if m.runAgentField == index {
+			style = style.Background(colors.SelectedBg).Foreground(colors.SelectedFg)
+			prefix = "> "
+		}
+		return prefix + label + ": " + style.Render(value)
+	}
+	suggestion := completeAgentName(string(m.runAgentName), m.runAgentSuggestions)
+	if suggestion == "" || suggestion == string(m.runAgentName) {
+		suggestion = "—"
+	}
 	content := titleStyle.Render("Run new agent") + "\n" +
-		mutedStyle.Render("Host: "+fallback(m.runAgentHost, localHostname())+" · Provider: "+provider) + "\n\n" +
-		"Agent name: " + lipgloss.NewStyle().Foreground(colors.TextStrong).Render(name) + "\n\n" +
-		mutedStyle.Render("Type name · Enter run via broccoli-comms run · Esc cancel")
+		mutedStyle.Render("Host: "+fallback(m.runAgentHost, localHostname())+" · tab field/autocomplete · provider ↑/↓") + "\n\n" +
+		row(0, "Agent name", name) + mutedStyle.Render("  suggestion "+suggestion) + "\n" +
+		row(1, "Provider", provider) + "\n" +
+		row(2, "Optional args", args) + "\n\n" +
+		mutedStyle.Render("Enter run via broccoli-comms run · Esc cancel")
 	return box(content, width, height)
 }
 
@@ -357,8 +376,8 @@ func (m model) renderConfigMenu(width, height int) string {
 
 			action := "Enter: run"
 			if item.IsNewAgent {
-				action = "Enter: name agent"
-			} else if item.IsRemote || !item.Launchable {
+				action = "Enter: form"
+			} else if item.Running || item.IsRemote || !item.Launchable {
 				action = "Enter: immutable copy"
 			} else if item.Copyable {
 				action = "Enter: run · c: copy"
@@ -368,7 +387,7 @@ func (m model) renderConfigMenu(width, height int) string {
 		body = strings.Join(listLines, "\n")
 	}
 
-	title := titleStyle.Render("Agents (search/run/copy/new)")
-	boxContent := title + "\n" + mutedStyle.Render("Search: "+query+"  ·  Enter runs existing agents or opens new-agent name form") + "\n\n" + body
+	title := titleStyle.Render("Agents (copy/run new)")
+	boxContent := title + "\n" + mutedStyle.Render("Search: "+query+"  ·  Enter copies live agents or opens run-new form") + "\n\n" + body
 	return box(boxContent, width, height)
 }

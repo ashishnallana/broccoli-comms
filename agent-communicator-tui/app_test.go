@@ -37,6 +37,9 @@ type fakeLocal struct {
 	swarms                []tracker.Swarm
 	swarmMessages         []tracker.SwarmTimelineMessage
 	lastSwarmName         string
+	assignedSwarm         string
+	assignedMain          string
+	assignedSubagents     []string
 	listSwarmsCalls       int
 	getSwarmTimelineCalls int
 	ensureName            string
@@ -115,6 +118,14 @@ func (f *fakeLocal) GetSwarmTimeline(_ context.Context, swarmName string, _ int)
 	f.getSwarmTimelineCalls++
 	f.lastSwarmName = swarmName
 	return tracker.SwarmTimelineResult{Messages: f.swarmMessages}, nil
+}
+func (f *fakeLocal) AssignSwarm(_ context.Context, swarmName, main string, subagents []string) (tracker.AssignSwarmResult, error) {
+	f.assignedSwarm, f.assignedMain, f.assignedSubagents = swarmName, main, append([]string(nil), subagents...)
+	f.swarms = []tracker.Swarm{{Name: swarmName, Main: tracker.SwarmMember{Name: main, Role: "main", TargetAddress: main}, Members: []tracker.SwarmMember{{Name: main, Role: "main", TargetAddress: main}}}}
+	for _, subagent := range subagents {
+		f.swarms[0].Members = append(f.swarms[0].Members, tracker.SwarmMember{Name: subagent, Role: "subagent", TargetAddress: subagent})
+	}
+	return tracker.AssignSwarmResult{OK: true, Swarm: swarmName, Swarms: f.swarms}, nil
 }
 
 func TestRunPrintsVersion(t *testing.T) {
@@ -696,6 +707,79 @@ func TestRunNewAgentFlowUsesConfiguredProviderAndHost(t *testing.T) {
 	want := []string{"run", "--host", "remote-host", "--json", "coder", "--", "pi"}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestRunNewAgentFormAutocompleteProviderDropdownAndArgs(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	configDir := filepath.Join(tmp, "broccoli-comms")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[providers.codex]\ncmd = 'codex'\n[providers.pi]\ncmd = 'pi'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config.ResetForTest()
+	defer config.ResetForTest()
+
+	m := model{configItems: []ConfigSelectionItem{
+		{Name: "coder-main", Running: true, Hostname: "remote-host"},
+		{Name: "local-only", Running: true, Hostname: localHostname()},
+		{Name: "Run new agent on remot", IsNewAgent: true, IsRemote: true, Hostname: "remote-host", Launchable: true},
+	}, local: &fakeLocal{}}
+	m.openRunAgentForm(m.configItems[2])
+	if got := strings.Join(m.runAgentSuggestions, ","); got != "coder-main" {
+		t.Fatalf("suggestions = %q, want remote-host scoped coder-main", got)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("cod")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	if string(m.runAgentName) != "coder-main" || m.runAgentField != 0 {
+		t.Fatalf("tab should autocomplete name before moving fields: name=%q field=%d", string(m.runAgentName), m.runAgentField)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	if m.runAgentProvider != "pi" {
+		t.Fatalf("provider dropdown did not cycle to pi: %q", m.runAgentProvider)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("--json --verbose")})
+	m = updated.(model)
+	args, err := runNewAgentArgs(string(m.runAgentName), m.runAgentHost, m.runAgentProvider, string(m.runAgentArgs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"run", "--host", "remote-host", "--json", "coder-main", "--", "pi", "--json", "--verbose"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestProviderNamesForHostPrefersRemoteHostCommands(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	configDir := filepath.Join(tmp, "broccoli-comms")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("[providers.codex]\ncmd = 'codex'\n[providers.pi]\ncmd = 'pi'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config.ResetForTest()
+	defer config.ResetForTest()
+
+	providers := providerNamesForHost([]ConfigSelectionItem{
+		{Name: "remote-pi", Hostname: "remote-host", Command: "pi"},
+		{Name: "other", Hostname: "other-host", Command: "codex"},
+	}, "remote-host")
+	if got := strings.Join(providers, ","); got != "pi" {
+		t.Fatalf("providers = %q, want host-scoped pi", got)
 	}
 }
 

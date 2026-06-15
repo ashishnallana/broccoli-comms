@@ -33,6 +33,7 @@ type localClient interface {
 	PublishTrackerEvent(ctx context.Context, targetTrackerID, eventType string, payload any) error
 	ListSwarms(context.Context) (tracker.ListSwarmsResult, error)
 	GetSwarmTimeline(context.Context, string, int) (tracker.SwarmTimelineResult, error)
+	AssignSwarm(context.Context, string, string, []string) (tracker.AssignSwarmResult, error)
 }
 
 type messageIDSender interface {
@@ -94,6 +95,10 @@ type swarmTimelineLoaded struct {
 	Swarm    string
 	Messages []tracker.SwarmTimelineMessage
 	Err      error
+}
+type swarmAssigned struct {
+	Result tracker.AssignSwarmResult
+	Err    error
 }
 type unreadCountsLoaded struct {
 	Counts map[string]int
@@ -309,6 +314,9 @@ type composerAction struct {
 	MemoryID   string
 	Result     string
 	Title      string
+	SwarmName  string
+	MainAgent  string
+	Subagents  []string
 	Original   string
 }
 
@@ -400,6 +408,31 @@ func parseComposerAction(input string) composerAction {
 		}
 		return action
 	}
+	if trimmed == "/swarm" || trimmed == "/swarm create" {
+		return composerAction{Kind: "swarm_create", Original: input}
+	}
+	if strings.HasPrefix(trimmed, "/swarm create ") {
+		fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(trimmed, "/swarm create")))
+		action := composerAction{Kind: "swarm_create", Original: input}
+		if len(fields) > 0 {
+			action.SwarmName = fields[0]
+		}
+		for i := 1; i < len(fields); i++ {
+			switch fields[i] {
+			case "--main":
+				if i+1 < len(fields) {
+					action.MainAgent = fields[i+1]
+					i++
+				}
+			case "--subagent", "--sub":
+				if i+1 < len(fields) {
+					action.Subagents = append(action.Subagents, fields[i+1])
+					i++
+				}
+			}
+		}
+		return action
+	}
 	if trimmed == "/broadcast" {
 		return composerAction{Kind: "broadcast", Original: input}
 	}
@@ -433,6 +466,18 @@ func normalizeApprovalReviewResult(value string) string {
 
 func sendCurrentMessage(local localClient, senderName string, row agentRow, body string) tea.Cmd {
 	return sendOutboxRecord(local, senderName, row, makeOutboxRecord(senderName, row, body))
+}
+
+func assignSwarmCmd(local localClient, swarmName, main string, subagents []string) tea.Cmd {
+	return func() tea.Msg {
+		if local == nil {
+			return swarmAssigned{Err: errors.New("local tracker client unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		result, err := local.AssignSwarm(ctx, swarmName, main, subagents)
+		return swarmAssigned{Result: result, Err: err}
+	}
 }
 
 func sendOutboxRecord(local localClient, senderName string, row agentRow, record outboxRecord) tea.Cmd {
@@ -596,7 +641,7 @@ type agentConfigSpun struct {
 	Err  error
 }
 
-func runNewAgentArgs(name, host, provider string) ([]string, error) {
+func runNewAgentArgs(name, host, provider string, optionalArgs ...string) ([]string, error) {
 	if strings.TrimSpace(provider) == "" {
 		return nil, fmt.Errorf("no configured provider found in config.toml")
 	}
@@ -605,14 +650,17 @@ func runNewAgentArgs(name, host, provider string) ([]string, error) {
 		args = append(args, "--host", host)
 	}
 	args = append(args, "--json", name, "--", provider)
+	for _, raw := range optionalArgs {
+		args = append(args, strings.Fields(raw)...)
+	}
 	return args, nil
 }
 
-func runNewAgentCmd(name, host, provider string) tea.Cmd {
+func runNewAgentCmd(name, host, provider string, optionalArgs ...string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		args, err := runNewAgentArgs(name, host, provider)
+		args, err := runNewAgentArgs(name, host, provider, optionalArgs...)
 		if err != nil {
 			return agentConfigSpun{Name: name, Err: err}
 		}
@@ -682,6 +730,7 @@ type ConfigSelectionItem struct {
 	Running       bool
 	Launchable    bool
 	Copyable      bool
+	Command       string
 	Source        string
 }
 
@@ -756,6 +805,7 @@ func loadConfigItemsFromBroccoliComms(ctx context.Context) ([]ConfigSelectionIte
 			Running:       row.Running,
 			Launchable:    row.Launchable,
 			Copyable:      row.Copyable,
+			Command:       row.Command,
 			Source:        "broccoli-comms",
 		})
 	}
@@ -825,8 +875,87 @@ func (m *model) openRunAgentForm(item ConfigSelectionItem) {
 	m.showingConfigMenu = false
 	m.showingRunAgentForm = true
 	m.runAgentHost = fallback(item.Hostname, localHostname())
-	m.runAgentProvider = config.FirstProviderName()
+	m.runAgentProviders = providerNamesForHost(m.configItems, m.runAgentHost)
+	m.runAgentProvider = firstProviderForForm(m.runAgentProviders)
 	m.runAgentName = nil
+	m.runAgentArgs = nil
+	m.runAgentField = 0
+	m.runAgentSuggestions = agentNameSuggestionsForHost(m.configItems, m.runAgentHost)
+}
+
+func providerNamesForHost(items []ConfigSelectionItem, host string) []string {
+	configured := config.ProviderNames()
+	seen := map[string]bool{}
+	var hostProviders []string
+	for _, item := range items {
+		itemHost := fallback(item.Hostname, localHostname())
+		if itemHost != host {
+			continue
+		}
+		provider := strings.Fields(item.Command)
+		if len(provider) == 0 {
+			continue
+		}
+		name := provider[0]
+		if !seen[name] {
+			seen[name] = true
+			hostProviders = append(hostProviders, name)
+		}
+	}
+	if len(hostProviders) == 0 || host == localHostname() {
+		for _, name := range configured {
+			if !seen[name] {
+				seen[name] = true
+				hostProviders = append(hostProviders, name)
+			}
+		}
+	}
+	sort.Strings(hostProviders)
+	return hostProviders
+}
+
+func firstProviderForForm(providers []string) string {
+	if len(providers) == 0 {
+		return ""
+	}
+	return providers[0]
+}
+
+func agentNameSuggestionsForHost(items []ConfigSelectionItem, host string) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, item := range items {
+		if item.IsNewAgent || item.Name == "" {
+			continue
+		}
+		itemHost := fallback(item.Hostname, localHostname())
+		if itemHost != host {
+			continue
+		}
+		if seen[item.Name] {
+			continue
+		}
+		seen[item.Name] = true
+		names = append(names, item.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func completeAgentName(prefix string, suggestions []string) string {
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	if prefix == "" {
+		if len(suggestions) > 0 {
+			return suggestions[0]
+		}
+		return ""
+	}
+	for _, suggestion := range suggestions {
+		if strings.HasPrefix(strings.ToLower(suggestion), prefix) {
+			return suggestion
+		}
+	}
+	return ""
 }
 
 func spinRemoteAgentCmd(local localClient, targetTrackerID, configName string) tea.Cmd {

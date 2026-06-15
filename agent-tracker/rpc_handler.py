@@ -481,6 +481,39 @@ def handle_list_swarms(params: dict) -> dict:
     return {"swarms": _derive_swarms(include_remote)}
 
 
+def handle_assign_live_swarm(params: dict) -> dict:
+    """Assigns an existing swarm to already-running local agents without restarting them."""
+    swarm_name = _validate_swarm_name(params.get("swarm"))
+    main = params.get("main")
+    subagents = params.get("subagents") or []
+    if not isinstance(main, str) or not main:
+        raise ValueError("main is required")
+    if not isinstance(subagents, list) or not all(isinstance(agent, str) and agent for agent in subagents):
+        raise ValueError("subagents must be a list of agent names")
+    if not subagents:
+        raise ValueError("at least one subagent is required")
+    ordered_agents = [main] + subagents
+    if len(set(ordered_agents)) != len(ordered_agents):
+        raise ValueError("swarm agents must be unique")
+
+    updated = []
+    for agent_name in ordered_agents:
+        info = state.get_agent(agent_name)
+        if not info or not info.get("tmux_pane"):
+            raise ValueError(f"agent {agent_name!r} is not a running local agent")
+
+    for agent_name in ordered_agents:
+        info = state.get_agent(agent_name) or {}
+        role = "main" if agent_name == main else "subagent"
+        memberships = [m for m in agent_handlers.normalize_swarms(info.get("swarms", [])) if m.get("name") != swarm_name]
+        memberships.append({"name": swarm_name, "role": role})
+        if not state.update_agent(agent_name, swarms=memberships):
+            raise ValueError(f"agent {agent_name!r} not found")
+        updated.append({"agent": agent_name, "role": role})
+        state.publish_event("agent_swarm_assigned", {**agent_handlers.agent_event_payload(agent_name, state.get_agent(agent_name) or {}), "swarms": memberships, "swarm": swarm_name, "role": role})
+    return {"ok": True, "swarm": swarm_name, "members": updated, "swarms": _derive_swarms(False)}
+
+
 def handle_get_group_timeline(params: dict) -> dict:
     """Handles get_group_timeline RPC call by reading directly from the group's cached timeline file."""
     group_id = params.get("group_id")
@@ -1109,6 +1142,7 @@ dispatcher = {
     "get_inbox": handle_get_inbox,
     "get_unread_counts": handle_get_unread_counts,
     "list_swarms": handle_list_swarms,
+    "assign_live_swarm": handle_assign_live_swarm,
     "get_group_timeline": handle_get_group_timeline,
     "get_swarm_timeline": handle_get_swarm_timeline,
     "watch_swarm": handle_watch_swarm,

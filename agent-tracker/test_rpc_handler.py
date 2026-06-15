@@ -1924,6 +1924,31 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual([member["name"] for member in swarm["members"]], ["planner", "coder"])
         self.assertEqual(swarm["warnings"], [])
 
+    def test_assign_live_swarm_updates_running_agents_without_restart_metadata(self):
+        state.set_agent("planner", {"agent_id": "id-main", "tmux_pane": "%1", "session": "sess", "swarms": []})
+        state.set_agent("coder", {"agent_id": "id-sub", "tmux_pane": "%2", "session": "sess", "swarms": []})
+
+        result = rpc_handler.handle_assign_live_swarm({"swarm": "backend-fix", "main": "planner", "subagents": ["coder"]})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(state.get_agent("planner")["swarms"], [{"name": "backend-fix", "role": "main"}])
+        self.assertEqual(state.get_agent("coder")["swarms"], [{"name": "backend-fix", "role": "subagent"}])
+        self.assertEqual(state.get_agent("planner")["tmux_pane"], "%1")
+        self.assertEqual(result["swarms"][0]["main"]["name"], "planner")
+
+    def test_assign_live_swarm_rejects_non_running_agent(self):
+        state.set_agent("planner", {"agent_id": "id-main", "tmux_pane": "%1", "session": "sess", "swarms": []})
+        state.set_agent("offline", {"agent_id": "id-off", "swarms": []})
+
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_assign_live_swarm({"swarm": "backend-fix", "main": "planner", "subagents": ["offline"]})
+
+    def test_assign_live_swarm_requires_unique_main_and_subagents(self):
+        state.set_agent("planner", {"agent_id": "id-main", "tmux_pane": "%1", "session": "sess", "swarms": []})
+
+        with self.assertRaises(ValueError):
+            rpc_handler.handle_assign_live_swarm({"swarm": "backend-fix", "main": "planner", "subagents": ["planner"]})
+
     def test_list_swarms_filters_self_registry_copies(self):
         class FakeRegistryClient:
             name = "corp"

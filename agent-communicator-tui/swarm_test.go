@@ -41,10 +41,45 @@ func TestSwarmMissingMainWarningRenders(t *testing.T) {
 func TestSwarmEmptyStateRendersSetupGuidance(t *testing.T) {
 	m := model{mode: swarmView}
 	view := strings.Join(m.messageLinesForWidth(100), "\n")
-	for _, want := range []string{"No swarms found", "--swarm", "--role", "broccoli-comms run"} {
+	for _, want := range []string{"No swarms found", "/swarm create", "--swarm", "--role", "broccoli-comms run"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("swarm empty state missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestSwarmCreateCommandAssignsLiveAgentsAndSelectsNewSwarm(t *testing.T) {
+	local := &fakeLocal{}
+	m := model{
+		mode:     swarmView,
+		local:    local,
+		composer: []rune("/swarm create backend-fix --main planner --subagent coder-a"),
+		rows: []agentRow{
+			{Name: "planner", TargetAddress: "planner", Scope: "local"},
+			{Name: "coder-a", TargetAddress: "coder-a", Scope: "local"},
+		},
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd == nil || string(m.composer) != "" {
+		t.Fatalf("create cmd=%v composer=%q", cmd, string(m.composer))
+	}
+	updated, timelineCmd := m.Update(cmd().(swarmAssigned))
+	m = updated.(model)
+	if local.assignedSwarm != "backend-fix" || local.assignedMain != "planner" || len(local.assignedSubagents) != 1 || local.assignedSubagents[0] != "coder-a" {
+		t.Fatalf("assigned swarm=%q main=%q subs=%v", local.assignedSwarm, local.assignedMain, local.assignedSubagents)
+	}
+	if m.selectedSwarmName() != "backend-fix" || timelineCmd == nil {
+		t.Fatalf("selected swarm=%q timelineCmd=%v", m.selectedSwarmName(), timelineCmd)
+	}
+}
+
+func TestSwarmCreateRejectsNonLiveAgent(t *testing.T) {
+	m := model{mode: swarmView, local: &fakeLocal{}, composer: []rune("/swarm create backend-fix --main planner --subagent missing"), rows: []agentRow{{Name: "planner", TargetAddress: "planner", Scope: "local"}}}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd != nil || m.err == nil || !strings.Contains(m.err.Error(), "missing") {
+		t.Fatalf("expected non-live error, cmd=%v err=%v", cmd, m.err)
 	}
 }
 
@@ -131,12 +166,12 @@ func TestSwarmMissingMainDoesNotSubmitAndPreservesDraft(t *testing.T) {
 	m := model{mode: swarmView, local: local, composer: []rune("keep draft"), swarms: []swarmRow{{Name: "backend-fix", MainMissing: true, Warning: "No main agent configured/running"}}}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
-	if cmd != nil || string(m.composer) != "keep draft" || local.sentTo != "" {
-		t.Fatalf("missing-main submit cmd=%v composer=%q sentTo=%q", cmd, string(m.composer), local.sentTo)
+	if cmd != nil || string(m.composer) != "keep draft" || local.sentTo != "" || m.err == nil {
+		t.Fatalf("missing-main submit cmd=%v composer=%q sentTo=%q err=%v", cmd, string(m.composer), local.sentTo, m.err)
 	}
 	panel := m.conversationPanel(80, 20)
-	if !strings.Contains(panel, "no main agent") || strings.Contains(panel, "/msg") {
-		t.Fatalf("missing-main composer should be disabled with warning:\n%s", panel)
+	if !strings.Contains(panel, "No main agent") || !strings.Contains(panel, "/swarm") || strings.Contains(panel, "/msg") {
+		t.Fatalf("missing-main composer should preserve draft and advertise swarm create, not /msg:\n%s", panel)
 	}
 }
 
@@ -149,12 +184,12 @@ func TestSwarmOfflineMainDoesNotSubmitAndPreservesDraft(t *testing.T) {
 	}}}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
-	if cmd != nil || string(m.composer) != "keep draft" || local.sentTo != "" {
-		t.Fatalf("offline-main submit cmd=%v composer=%q sentTo=%q", cmd, string(m.composer), local.sentTo)
+	if cmd != nil || string(m.composer) != "keep draft" || local.sentTo != "" || m.err == nil {
+		t.Fatalf("offline-main submit cmd=%v composer=%q sentTo=%q err=%v", cmd, string(m.composer), local.sentTo, m.err)
 	}
 	panel := m.conversationPanel(100, 20)
-	if !strings.Contains(panel, "main agent offline/no target") || strings.Contains(panel, "/msg") {
-		t.Fatalf("offline-main composer should be disabled with warning:\n%s", panel)
+	if !strings.Contains(panel, "keep draft") || !strings.Contains(panel, "/swarm") || strings.Contains(panel, "/msg") {
+		t.Fatalf("offline-main composer should preserve draft and advertise swarm create, not /msg:\n%s", panel)
 	}
 	view := strings.Join(m.messageLinesForWidth(100), "\n")
 	if !strings.Contains(view, "configured offline") || !strings.Contains(view, "Swarm messaging is disabled") {

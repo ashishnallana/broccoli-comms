@@ -109,6 +109,16 @@ type SwarmTimelineResult struct {
 	Messages []SwarmTimelineMessage `json:"messages"`
 }
 
+type AssignSwarmResult struct {
+	OK      bool   `json:"ok"`
+	Swarm   string `json:"swarm"`
+	Members []struct {
+		Agent string `json:"agent"`
+		Role  string `json:"role"`
+	} `json:"members"`
+	Swarms []Swarm `json:"swarms"`
+}
+
 type Message struct {
 	Sender                  string       `json:"sender"`
 	SenderAgentID           string       `json:"sender_agent_id,omitempty"`

@@ -169,6 +169,41 @@ func (m *model) selectSwarm(delta int) {
 	m.selectLatestMessage()
 }
 
+func (m model) liveAgentNames() map[string]bool {
+	live := map[string]bool{}
+	for _, row := range m.rows {
+		if row.Scope == "remote" || rowTarget(row) == "" || boolPtrFalse(row.Running) {
+			continue
+		}
+		live[row.Name] = true
+		if row.AgentName != "" {
+			live[row.AgentName] = true
+		}
+	}
+	return live
+}
+
+func (m model) validateSwarmCreateAction(action composerAction) error {
+	if action.SwarmName == "" || action.MainAgent == "" || len(action.Subagents) == 0 {
+		return fmt.Errorf("/swarm create requires NAME --main AGENT --subagent AGENT")
+	}
+	live := m.liveAgentNames()
+	if !live[action.MainAgent] {
+		return fmt.Errorf("main agent %q is not a live local agent", action.MainAgent)
+	}
+	seen := map[string]bool{action.MainAgent: true}
+	for _, agent := range action.Subagents {
+		if !live[agent] {
+			return fmt.Errorf("subagent %q is not a live local agent", agent)
+		}
+		if seen[agent] {
+			return fmt.Errorf("swarm agents must be unique")
+		}
+		seen[agent] = true
+	}
+	return nil
+}
+
 func (m model) swarmLines(width int) []string {
 	width = max(1, width)
 	if len(m.swarms) == 0 {
@@ -263,7 +298,8 @@ func (m model) swarmEmptyLines(width int) []string {
 	}
 	text := []string{
 		"No swarms found.",
-		"Start agents with swarm metadata, for example:",
+		"Create from live agents: /swarm create backend-fix --main planner --subagent coder-a",
+		"Or start agents with swarm metadata, for example:",
 		"broccoli-comms run planner --swarm backend-fix --role main -- pi",
 		"broccoli-comms run coder-a --swarm backend-fix --role subagent -- pi",
 		"persist via: broccoli-comms run ... -- <command> then broccoli-comms agent edit ... --swarm backend-fix --role main --command <command>",

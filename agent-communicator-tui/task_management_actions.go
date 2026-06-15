@@ -61,7 +61,7 @@ func (m model) confirmOrRunTaskAction(task taskRecord, action string) (model, te
 func taskActionConfirmText(task taskRecord, action string) string {
 	switch action {
 	case "archive":
-		return "press d again to archive " + task.TaskID
+		return "press enter again to remove/archive " + task.TaskID
 	case "archive_chain":
 		return "press D again to archive active chain"
 	case "assign":
@@ -88,6 +88,8 @@ func taskActionCmd(task taskRecord, action, agent string) tea.Cmd {
 			args = append(args, "--assign-agent", agent)
 		case "start":
 			args = append(args, "--status", "working")
+		case "complete":
+			args = append(args, "--status", "done")
 		case "ready":
 			args = append(args, "--status", "ready")
 		default:
@@ -97,6 +99,10 @@ func taskActionCmd(task taskRecord, action, agent string) tea.Cmd {
 		if err != nil {
 			return taskActionResult{TaskID: task.TaskID, Action: action, Err: fmt.Errorf("task %s failed: %w: %s", action, err, string(out))}
 		}
-		return taskActionResult{TaskID: task.TaskID, Action: action, Status: "Task " + action + " saved"}
+		status := "Task " + action + " saved"
+		if action == "complete" {
+			status = "Task marked complete"
+		}
+		return taskActionResult{TaskID: task.TaskID, Action: action, Status: status}
 	}
 }

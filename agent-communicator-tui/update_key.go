@@ -98,6 +98,15 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 			m.tasksConfirm = taskActionConfirmation{}
 			return m, nil
 		case tea.KeyEnter:
+			if m.tasksConfirm.Active() {
+				if task, ok := m.selectedTaskRecord(); ok && m.taskConfirmationMatches(task, m.tasksConfirm.Action) {
+					return m.confirmOrRunTaskAction(task, m.tasksConfirm.Action)
+				}
+				m.tasksConfirm = taskActionConfirmation{}
+				m.directInputStatus = "Task confirmation expired; reopen the command palette"
+				m.directInputStatusErr = true
+				return m, nil
+			}
 			m.tasksPalette = taskCommandPaletteState{Open: true}
 			return m, nil
 		case tea.KeyUp:
@@ -451,7 +460,7 @@ func (m model) handleConfigMenuKey(msg tea.KeyMsg) (model, tea.Cmd) {
 				m.openRunAgentForm(item)
 				return m, nil
 			}
-			if item.IsRemote || !item.Launchable {
+			if item.Running || item.IsRemote || !item.Launchable {
 				return m, copyAgentImmutableCmd(item)
 			}
 			return m, runConfiguredAgentCmd(item.Name)
@@ -468,21 +477,60 @@ func (m model) handleRunAgentFormKey(msg tea.KeyMsg) (model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.showingRunAgentForm = false
 		m.runAgentName = nil
+		m.runAgentArgs = nil
+		return m, nil
+	case tea.KeyTab:
+		if m.runAgentField == 0 {
+			if completed := completeAgentName(string(m.runAgentName), m.runAgentSuggestions); completed != "" && completed != string(m.runAgentName) {
+				m.runAgentName = []rune(completed)
+				return m, nil
+			}
+		}
+		m.runAgentField = (m.runAgentField + 1) % 3
+		return m, nil
+	case tea.KeyUp, tea.KeyCtrlP:
+		if m.runAgentField == 1 {
+			m.cycleRunAgentProvider(-1)
+			return m, nil
+		}
+		m.runAgentField = (m.runAgentField + 2) % 3
+		return m, nil
+	case tea.KeyDown, tea.KeyCtrlN:
+		if m.runAgentField == 1 {
+			m.cycleRunAgentProvider(1)
+			return m, nil
+		}
+		m.runAgentField = (m.runAgentField + 1) % 3
 		return m, nil
 	case tea.KeyBackspace:
-		if len(m.runAgentName) > 0 {
+		if m.runAgentField == 2 {
+			if len(m.runAgentArgs) > 0 {
+				m.runAgentArgs = m.runAgentArgs[:len(m.runAgentArgs)-1]
+			}
+		} else if len(m.runAgentName) > 0 {
 			m.runAgentName = m.runAgentName[:len(m.runAgentName)-1]
 		}
 		return m, nil
 	case tea.KeySpace:
-		m.runAgentName = append(m.runAgentName, '-')
+		if m.runAgentField == 2 {
+			m.runAgentArgs = append(m.runAgentArgs, ' ')
+		} else {
+			m.runAgentName = append(m.runAgentName, '-')
+		}
 		return m, nil
 	case tea.KeyRunes:
+		if m.runAgentField == 1 {
+			return m, nil
+		}
 		for _, r := range msg.Runes {
-			if r == ' ' {
+			if m.runAgentField == 0 && r == ' ' {
 				r = '-'
 			}
-			m.runAgentName = append(m.runAgentName, r)
+			if m.runAgentField == 2 {
+				m.runAgentArgs = append(m.runAgentArgs, r)
+			} else {
+				m.runAgentName = append(m.runAgentName, r)
+			}
 		}
 		return m, nil
 	case tea.KeyEnter:
@@ -493,9 +541,27 @@ func (m model) handleRunAgentFormKey(msg tea.KeyMsg) (model, tea.Cmd) {
 		}
 		m.showingRunAgentForm = false
 		m.runAgentName = nil
-		return m, runNewAgentCmd(name, m.runAgentHost, m.runAgentProvider)
+		optionalArgs := strings.TrimSpace(string(m.runAgentArgs))
+		m.runAgentArgs = nil
+		return m, runNewAgentCmd(name, m.runAgentHost, m.runAgentProvider, optionalArgs)
 	}
 	return m, nil
+}
+
+func (m *model) cycleRunAgentProvider(delta int) {
+	if len(m.runAgentProviders) == 0 {
+		m.runAgentProvider = ""
+		return
+	}
+	idx := 0
+	for i, provider := range m.runAgentProviders {
+		if provider == m.runAgentProvider {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + delta + len(m.runAgentProviders)) % len(m.runAgentProviders)
+	m.runAgentProvider = m.runAgentProviders[idx]
 }
 
 func (m model) handleComposerSubmit() (model, tea.Cmd) {
@@ -539,8 +605,21 @@ func (m model) handleComposerSubmit() (model, tea.Cmd) {
 			m.composer = nil
 			return m, approvalReviewCmd(approvalMessageForReview(approvalID, selected), action.Result)
 		}
+		if action.Kind == "swarm_create" {
+			if err := m.validateSwarmCreateAction(action); err != nil {
+				m.err = err
+				return m, nil
+			}
+			m.composer = nil
+			m.directInputStatus = "Creating swarm " + action.SwarmName + " from live agents..."
+			m.directInputStatusErr = false
+			return m, assignSwarmCmd(m.local, action.SwarmName, action.MainAgent, action.Subagents)
+		}
 		row, ok := m.currentSendTarget()
 		if !ok || m.agentListStale {
+			if m.mode == swarmView {
+				m.err = fmt.Errorf("swarm message unavailable; use /swarm create or select a swarm with a running main agent")
+			}
 			return m, nil
 		}
 		if action.Kind == "broadcast" {

@@ -130,7 +130,7 @@ func (m model) composerPlaceholder() string {
 		if swarmName := m.selectedSwarmName(); swarmName != "" {
 			return "message main agent in " + swarmName
 		}
-		return "message main agent in swarm"
+		return "/swarm create name --main agent --subagent agent"
 	}
 	if m.inputMode == inputModeText {
 		return "type pane text…"
@@ -183,15 +183,28 @@ func (m model) activeComposerModeName() string {
 			active = "text"
 		case "direct_keys":
 			active = "key"
+		case "swarm_create":
+			active = "swarm"
 		default:
 			active = "msg"
+		}
+	}
+	if m.mode == swarmView {
+		if _, ok := m.currentSendTarget(); !ok && action.Kind != "swarm_create" {
+			active = "swarm"
 		}
 	}
 	return active
 }
 
 func (m model) composerModeControls(width int) string {
-	left := fgOnBg(colors.Muted, colors.BaseBg).Render("/msg sends an inbox message")
+	leftText := "/msg sends an inbox message"
+	if m.mode == swarmView {
+		if _, ok := m.currentSendTarget(); !ok {
+			leftText = "/swarm create NAME --main AGENT --subagent AGENT"
+		}
+	}
+	left := fgOnBg(colors.Muted, colors.BaseBg).Render(leftText)
 	right := fgOnBg(colors.Muted, colors.BaseBg).Render("Enter send")
 	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
 	return left + bgSpaces(gap, colors.BaseBg) + right

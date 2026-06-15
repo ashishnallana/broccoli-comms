@@ -294,6 +294,30 @@ class TestAgentTrackerCtl(unittest.TestCase):
         })
 
     @mock.patch.dict(os.environ, {}, clear=True)
+    def test_assign_swarm_parser_registration(self):
+        parser = ctl.build_parser()
+        parsed = parser.parse_args(["assign-swarm", "backend-fix", "--main", "planner", "--subagent", "coder-a", "--subagent", "reviewer", "--json"])
+        self.assertEqual(parsed.subcommand, "assign-swarm")
+        self.assertEqual(parsed.swarm, "backend-fix")
+        self.assertEqual(parsed.main, "planner")
+        self.assertEqual(parsed.subagent, ["coder-a", "reviewer"])
+        self.assertTrue(parsed.json)
+
+    @mock.patch("ctl_commands.assign_swarm.call_rpc")
+    @mock.patch.dict("os.environ", {}, clear=True)
+    def test_assign_swarm_handler_forwards_live_assignment(self, mock_call_rpc):
+        from ctl_commands import assign_swarm
+
+        mock_call_rpc.return_value = {"ok": True, "swarm": "backend-fix", "members": [{"agent": "planner", "role": "main"}, {"agent": "coder-a", "role": "subagent"}]}
+        args = mock.Mock(swarm="backend-fix", main="planner", subagent=["coder-a"], json=False)
+
+        with mock.patch("builtins.print") as mock_print:
+            assign_swarm.handle(args)
+
+        mock_call_rpc.assert_called_once_with("assign_live_swarm", {"swarm": "backend-fix", "main": "planner", "subagents": ["coder-a"]})
+        self.assertIn("Assigned swarm backend-fix", mock_print.call_args.args[0])
+
+    @mock.patch.dict(os.environ, {}, clear=True)
     def test_capture_pane_parser_registration(self):
         parser = ctl.build_parser()
         # Test parsing typical capture-pane subcommand arguments

@@ -90,10 +90,6 @@ func (m model) activeTabCanCompose() bool {
 	if !tab.CanCompose {
 		return false
 	}
-	if m.mode == swarmView {
-		_, ok := m.currentSendTarget()
-		return ok
-	}
 	return true
 }
 

@@ -35,6 +35,12 @@ func (m model) taskCommandEntries() []taskCommandEntry {
 			task, _ := m.selectedTaskRecord()
 			return m, editTaskFieldInEditor(task, "result_summary")
 		}},
+		{Label: "Edit title/description", Help: "not supported by task CLI update", Enabled: false, Run: nil},
+		{Label: "Mark complete", Help: "set selected task status to done", Enabled: hasTask, Run: func(m model) (model, tea.Cmd) {
+			task, _ := m.selectedTaskRecord()
+			m.tasksLoading = true
+			return m, taskActionCmd(task, "complete", m.currentRow().Name)
+		}},
 		{Label: "Start / mark working", Help: "mark selected task working", Enabled: hasTask, Run: func(m model) (model, tea.Cmd) {
 			task, _ := m.selectedTaskRecord()
 			m.tasksLoading = true
@@ -44,10 +50,11 @@ func (m model) taskCommandEntries() []taskCommandEntry {
 			task, _ := m.selectedTaskRecord()
 			return m.confirmOrRunTaskAction(task, "assign")
 		}},
-		{Label: "Archive task", Help: "requires confirmation", Enabled: hasTask, Run: func(m model) (model, tea.Cmd) {
+		{Label: "Remove task (archive)", Help: "safe remove via archive; requires confirmation", Enabled: hasTask, Run: func(m model) (model, tea.Cmd) {
 			task, _ := m.selectedTaskRecord()
 			return m.confirmOrRunTaskAction(task, "archive")
 		}},
+		{Label: "Delete task", Help: "not supported by task CLI; use remove/archive", Enabled: false, Run: nil},
 		{Label: "Add task after selected", Help: "open add-after form", Enabled: hasTask, Run: func(m model) (model, tea.Cmd) {
 			task, _ := m.selectedTaskRecord()
 			return m.startTaskChainForm("add_after", []string{task.TaskID}), nil
@@ -89,6 +96,9 @@ func (m model) updateTaskCommandPalette(msg tea.KeyMsg) (model, tea.Cmd) {
 		m.tasksPalette = taskCommandPaletteState{}
 		if !ok || !entry.Enabled || entry.Run == nil {
 			m.directInputStatus = "Task command unavailable"
+			if entry.Label != "" {
+				m.directInputStatus = entry.Label + " unavailable · " + entry.Help
+			}
 			m.directInputStatusErr = true
 			return m, nil
 		}

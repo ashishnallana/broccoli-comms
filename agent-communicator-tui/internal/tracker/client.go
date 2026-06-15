@@ -379,3 +379,10 @@ func (c *Client) GetSwarmTimeline(ctx context.Context, swarmName string, lastN i
 	err := c.call(ctx, "get_swarm_timeline", params, 5*time.Second, &result)
 	return result, err
 }
+
+func (c *Client) AssignSwarm(ctx context.Context, swarmName, main string, subagents []string) (AssignSwarmResult, error) {
+	params := map[string]any{"swarm": swarmName, "main": main, "subagents": subagents}
+	var result AssignSwarmResult
+	err := c.call(ctx, "assign_live_swarm", params, 10*time.Second, &result)
+	return result, err
+}

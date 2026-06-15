@@ -82,7 +82,11 @@ type model struct {
 	showingRunAgentForm bool
 	runAgentHost        string
 	runAgentProvider    string
+	runAgentProviders   []string
 	runAgentName        []rune
+	runAgentArgs        []rune
+	runAgentField       int
+	runAgentSuggestions []string
 
 	// Prompt templates (Ctrl-O)
 	prompts           []promptTemplate
@@ -233,6 +237,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSwarmsLoaded(msg)
 	case swarmTimelineLoaded:
 		return m.handleSwarmTimelineLoaded(msg)
+	case swarmAssigned:
+		return m.handleSwarmAssigned(msg)
 	case messageSent:
 		return m.handleMessageSent(msg)
 	case eventsLoaded:

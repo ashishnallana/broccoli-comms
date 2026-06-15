@@ -146,6 +146,33 @@ func TestSelectedAgentTaskDataIncludesQueuedAndCompleted(t *testing.T) {
 	}
 }
 
+func TestSelectedRemoteAgentMatchesAssignedAgentName(t *testing.T) {
+	m := model{
+		rows:     []agentRow{{Name: "host/coder", AgentName: "coder", TargetAddress: "host.example/coder", CurrentTaskID: "task-current"}},
+		selected: 0,
+		tasksItems: []taskRecord{
+			{TaskID: "task-current", Title: "Current", Status: "working", AssignedAgent: "coder"},
+			{TaskID: "task-queued", Title: "Queued", Status: "ready", AssignedAgent: "coder"},
+			{TaskID: "task-done", Title: "Done", Status: "validated", ResultStatus: "good", AssignedAgent: "coder"},
+			{TaskID: "task-other", Title: "Other", Status: "ready", AssignedAgent: "reviewer"},
+		},
+		tasksStates: []taskWorkingState{{TaskID: "task-current", Agent: "coder", Status: "working", TaskChainID: "chain-1", RootTaskID: "root"}},
+	}
+	data := m.taskData()
+	if data.ActiveChainID != "chain-1" || len(data.Tasks) != 3 {
+		t.Fatalf("remote selected agent data = chain %q tasks %+v", data.ActiveChainID, data.Tasks)
+	}
+	view := m.taskManagementView(120, 20)
+	for _, want := range []string{"Current", "Queued", "Done", "Completed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("remote selected-agent view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Other") {
+		t.Fatalf("remote selected-agent view leaked other task:\n%s", view)
+	}
+}
+
 func TestTaskOrderingPrefersDependenciesForInsertions(t *testing.T) {
 	items := []taskRecord{
 		{TaskID: "task-z", Title: "Inserted", Status: "ready", DependsOn: []string{"task-m"}},
@@ -262,8 +289,8 @@ func TestTaskActionHintsAndConfirmation(t *testing.T) {
 	if cmd != nil || !m.tasksPalette.Open {
 		t.Fatalf("ctrl-k should open task command palette, palette=%+v cmd=%v", m.tasksPalette, cmd)
 	}
-	palette := m.taskManagementView(100, 16)
-	for _, want := range []string{"Task commands", "Open details", "Edit next step", "Add task after selected", "Archive active chain"} {
+	palette := m.taskManagementView(100, 20)
+	for _, want := range []string{"Task commands", "Open details", "Edit next step", "Edit title/description", "Mark complete", "Remove task (archive)", "Delete task", "not supported by task CLI", "Add task after selected", "Archive active chain"} {
 		if !strings.Contains(palette, want) {
 			t.Fatalf("palette missing %q:\n%s", want, palette)
 		}
@@ -274,19 +301,51 @@ func TestTaskActionHintsAndConfirmation(t *testing.T) {
 	if cmd != nil || m.tasksConfirm.Active() {
 		t.Fatalf("direct d shortcut should be inert outside palette, confirm=%+v cmd=%v", m.tasksConfirm, cmd)
 	}
-	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 5}
+	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 7}
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	if cmd != nil || !m.tasksConfirm.Active() || m.tasksConfirm.Action != "archive" {
-		t.Fatalf("palette archive should request confirmation, confirm=%+v cmd=%v", m.tasksConfirm, cmd)
+		t.Fatalf("palette remove/archive should request confirmation, confirm=%+v cmd=%v", m.tasksConfirm, cmd)
 	}
-	if view := m.taskManagementView(100, 12); !strings.Contains(view, "Confirm:") || !strings.Contains(view, "esc cancel") {
+	if view := m.taskManagementView(140, 12); !strings.Contains(view, "Confirm:") || !strings.Contains(view, "esc cancel") {
 		t.Fatalf("confirmation should render clearly:\n%s", view)
 	}
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(model)
 	if cmd != nil || m.tasksConfirm.Active() {
 		t.Fatalf("esc should cancel confirmation, confirm=%+v cmd=%v", m.tasksConfirm, cmd)
+	}
+	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 8}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd != nil || !m.directInputStatusErr || !strings.Contains(m.directInputStatus, "not supported by task CLI") {
+		t.Fatalf("disabled delete should explain unsupported capability, status=%q err=%v cmd=%v", m.directInputStatus, m.directInputStatusErr, cmd)
+	}
+}
+
+func TestTaskArchiveConfirmationEnterExecutesDocumentedAction(t *testing.T) {
+	old := runApprovalCLI
+	defer func() { runApprovalCLI = old }()
+	var calls [][]string
+	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string{}, args...))
+		return []byte(`{}`), nil
+	}
+	m := model{mode: tasksView, tasksItems: []taskRecord{{TaskID: "task-1", Title: "One", Status: "ready"}}}
+	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 7}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd != nil || !m.tasksConfirm.Active() || !strings.Contains(m.directInputStatus, "press enter again") {
+		t.Fatalf("first remove should arm confirmation, confirm=%+v status=%q cmd=%v", m.tasksConfirm, m.directInputStatus, cmd)
+	}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd == nil || m.tasksConfirm.Active() || !m.tasksLoading {
+		t.Fatalf("second enter should execute archive, loading=%v confirm=%+v cmd=%v", m.tasksLoading, m.tasksConfirm, cmd)
+	}
+	msg := cmd().(taskActionResult)
+	if msg.Err != nil || len(calls) != 1 || strings.Join(calls[0], " ") != "task update task-1 --json --status archived" {
+		t.Fatalf("archive confirmation msg=%+v calls=%v", msg, calls)
 	}
 }
 
@@ -301,6 +360,11 @@ func TestTaskActionCommandsAndEditorOutcomes(t *testing.T) {
 	msg := taskActionCmd(taskRecord{TaskID: "task-1"}, "assign", "coder")().(taskActionResult)
 	if msg.Err != nil || len(calls) != 1 || strings.Join(calls[0], " ") != "task update task-1 --json --assign-agent coder" {
 		t.Fatalf("assign msg=%+v calls=%v", msg, calls)
+	}
+	calls = nil
+	msg = taskActionCmd(taskRecord{TaskID: "task-1"}, "complete", "coder")().(taskActionResult)
+	if msg.Err != nil || msg.Status != "Task marked complete" || len(calls) != 1 || strings.Join(calls[0], " ") != "task update task-1 --json --status done" {
+		t.Fatalf("complete msg=%+v calls=%v", msg, calls)
 	}
 	calls = nil
 	edit := updateTaskField("task-1", "next_step", "Run tests")
@@ -419,9 +483,19 @@ func TestTaskEditorHandlesUnchangedAndFailure(t *testing.T) {
 	if msg.Err == nil || !strings.Contains(msg.Err.Error(), "editor failed") {
 		t.Fatalf("editor failure should report clearly, msg=%+v", msg)
 	}
-	initial := taskEditorInitialContent("next_step", "")
-	if strings.TrimSpace(initial) == "" || !strings.Contains(initial, "Lines starting with # are ignored") {
-		t.Fatalf("empty editor initial content should include scaffold, got %q", initial)
+	initial := taskEditorInitialContentForTask(taskRecord{TaskID: "task-1", Title: "Write docs"}, "next_step", "")
+	if strings.TrimSpace(initial) == "" || !strings.Contains(initial, "Lines starting with # are ignored") || !strings.Contains(initial, "task-1") || !strings.Contains(initial, "Write docs") {
+		t.Fatalf("empty editor initial content should include task scaffold, got %q", initial)
+	}
+	t.Setenv("EDITOR", "")
+	cmd := taskEditorCommand("/tmp/task.md")
+	if cmd.Args[0] != "nvim" || strings.Join(cmd.Args, " ") != "nvim -c setlocal modified /tmp/task.md" {
+		t.Fatalf("default task editor command = path %q args %v", cmd.Path, cmd.Args)
+	}
+	t.Setenv("EDITOR", "nano -w")
+	cmd = taskEditorCommand("/tmp/task.md")
+	if cmd.Args[0] != "nano" || strings.Join(cmd.Args, " ") != "nano -w /tmp/task.md" {
+		t.Fatalf("EDITOR args task editor command = path %q args %v", cmd.Path, cmd.Args)
 	}
 	old := runApprovalCLI
 	defer func() { runApprovalCLI = old }()

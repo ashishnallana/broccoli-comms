@@ -115,6 +115,28 @@ func (m model) handleSwarmTimelineLoaded(msg swarmTimelineLoaded) (model, tea.Cm
 	return m, nil
 }
 
+func (m model) handleSwarmAssigned(msg swarmAssigned) (model, tea.Cmd) {
+	m.err = msg.Err
+	m.swarmErr = msg.Err
+	if msg.Err != nil {
+		m.directInputStatus = "Swarm creation failed"
+		m.directInputStatusErr = true
+		return m, nil
+	}
+	m.swarms = swarmRowsFromTracker(msg.Result.Swarms)
+	m.selectedSwarm = 0
+	for i, swarm := range m.swarms {
+		if swarm.Name == msg.Result.Swarm {
+			m.selectedSwarm = i
+			break
+		}
+	}
+	m.swarmMessages = nil
+	m.directInputStatus = "Created swarm " + msg.Result.Swarm + " from live agents"
+	m.directInputStatusErr = false
+	return m, tea.Batch(loadAgents(m.local), loadSelectedSwarmTimeline(m.local, m.selectedSwarmName()))
+}
+
 func (m model) handleMessageSent(msg messageSent) (model, tea.Cmd) {
 	m.err = msg.Err
 	if msg.Err != nil {

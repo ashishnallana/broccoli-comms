@@ -40,7 +40,7 @@ func (m model) activeTaskChainFor(selected agentRow, stateByTask map[string]task
 		return "", "", selected.CurrentTaskID
 	}
 	for _, state := range m.tasksStates {
-		if selected.Name != "" && state.Agent != selected.Name {
+		if selected.Name != "" && !selectedAgentMatchesName(selected, state.Agent) {
 			continue
 		}
 		if state.Status == "working" && state.TaskID != "" {
@@ -48,7 +48,7 @@ func (m model) activeTaskChainFor(selected agentRow, stateByTask map[string]task
 		}
 	}
 	for _, task := range m.tasksItems {
-		if selected.Name != "" && task.AssignedAgent != selected.Name {
+		if selected.Name != "" && !selectedAgentMatchesName(selected, task.AssignedAgent) {
 			continue
 		}
 		if task.Status == "ready" || task.Status == "working" {
@@ -105,12 +105,26 @@ func mergeSelectedAgentTasks(items, all []taskRecord, selected agentRow) []taskR
 	}
 	out := append([]taskRecord{}, items...)
 	for _, task := range all {
-		if !seen[task.TaskID] && task.AssignedAgent == selected.Name {
+		if !seen[task.TaskID] && selectedAgentMatchesName(selected, task.AssignedAgent) {
 			seen[task.TaskID] = true
 			out = append(out, task)
 		}
 	}
 	return out
+}
+
+func selectedAgentMatchesName(selected agentRow, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for _, candidate := range []string{selected.Name, selected.AgentName, selected.TargetAddress} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && candidate == name {
+			return true
+		}
+	}
+	return false
 }
 
 func bucketTasks(tasks []taskRecord, currentTaskID string, states map[string]taskWorkingState, approvals map[string][]taskApprovalRecord) []taskBucket {
