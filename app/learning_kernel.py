@@ -1045,6 +1045,8 @@ class LearningKernel:
             metadata = mem.get("metadata") or {}
             if metadata.get("proposal_kind") == "edit":
                 return self._approve_memory_edit_proposal(conn, mem, actor, expected_version)
+            if metadata.get("proposal_kind") == "archive":
+                return self._approve_memory_archive_proposal(conn, mem, actor, expected_version)
             validation_event = None
             if mem.get("trusted_manual"):
                 source = "trusted_manual"
@@ -1116,6 +1118,63 @@ class LearningKernel:
             merged["metadata"] = metadata
             merged["trusted_manual"] = False
             return self.memory_propose(**merged, proposed_by=proposer, proposed_by_instance=instance, non_learning=False)
+
+    def memory_propose_archive(self, memory_id: str, *, expected_version: int | None = None, reason: str | None = None, **kw: Any) -> dict[str, Any]:
+        if kw.get("non_learning"):
+            raise ValueError("immutable/non-learning instance cannot propose memory")
+        proposer = clean_text(kw.get("proposed_by") or kw.get("agent") or "user", "agent", required=True) or "user"
+        instance = clean_text(kw.get("proposed_by_instance") or kw.get("instance"), "agent")
+        reason = clean_text(reason, "event_text")
+        with closing(self.connect()) as conn:
+            target = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
+            if not target:
+                raise KeyError(memory_id)
+            if target.get("status") not in {"pending", "active"}:
+                raise ValueError("archive proposal requires pending or active target")
+            if expected_version is not None and int(target["version"]) != int(expected_version):
+                raise ValueError("stale target memory version")
+            metadata = dict(target.get("metadata") or {})
+            metadata.update({"proposal_kind": "archive", "target_memory_id": memory_id, "target_expected_version": int(target["version"])})
+            if reason:
+                metadata["archive_reason"] = reason
+            return self.memory_propose(
+                type=target.get("type"), scope=target.get("scope"), subject_agent=target.get("subject_agent"),
+                title=f"Archive: {target.get('title') or memory_id}", body=reason or f"Archive memory {memory_id}.",
+                source_task_id=kw.get("source_task_id") or target.get("source_task_id"), trusted_manual=False,
+                tags=target.get("tags"), metadata=metadata, proposed_by=proposer, proposed_by_instance=instance,
+                non_learning=False,
+            )
+
+    def _approve_memory_archive_proposal(self, conn: sqlite3.Connection, proposal: dict[str, Any], actor: str, expected_version: int | None) -> dict[str, Any]:
+        metadata = proposal.get("metadata") or {}
+        target_id = clean_text(metadata.get("target_memory_id"), "list_item", required=True) or ""
+        target_expected = clean_nonnegative_int(metadata.get("target_expected_version"), "expected_version")
+        reason = clean_text(metadata.get("archive_reason") or f"archive proposal {proposal.get('memory_id')}", "event_text")
+        target = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (target_id,)).fetchone())
+        if not target:
+            raise KeyError(target_id)
+        if target.get("status") not in {"pending", "active"}:
+            raise ValueError("memory transition conflict")
+        if target_expected is not None and int(target.get("version") or 0) != int(target_expected):
+            raise ValueError("stale target memory version")
+        conn.execute("BEGIN IMMEDIATE")
+        latest_proposal = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (proposal["memory_id"],)).fetchone())
+        latest_target = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (target_id,)).fetchone())
+        if latest_proposal["status"] != "pending" or (expected_version is not None and int(latest_proposal["version"]) != int(expected_version)):
+            conn.execute("ROLLBACK"); raise ValueError("stale memory version")
+        if latest_target.get("status") not in {"pending", "active"}:
+            conn.execute("ROLLBACK"); raise ValueError("memory transition conflict")
+        if target_expected is not None and int(latest_target.get("version") or 0) != int(target_expected):
+            conn.execute("ROLLBACK"); raise ValueError("stale target memory version")
+        target_status = "revoked" if latest_target["status"] == "active" else "rejected"
+        target_event = "memory_revoked" if latest_target["status"] == "active" else "memory_rejected"
+        target_ev = self.event(conn, target_event, "user", actor, "memory", target_id, self._memory_event_payload(latest_target, reason=reason, proposal_memory_id=proposal["memory_id"]), latest_target.get("source_task_id"), latest_target.get("scope"), replayable_payload=True)
+        conn.execute("UPDATE memory_records SET status=?, status_event_seq=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (target_status, target_ev["event_seq"], target_ev["event_seq"], target_id))
+        approve_ev = self.event(conn, "memory_archive_proposal_approved", "user", actor, "memory", proposal["memory_id"], self._memory_event_payload(proposal, target_memory_id=target_id, target_event_seq=target_ev["event_seq"]), proposal.get("source_task_id"), proposal.get("scope"), replayable_payload=True)
+        ts = now_iso()
+        conn.execute("UPDATE memory_records SET status='superseded', validated_by=?, validated_at=?, status_event_seq=?, updated_event_seq=?, version=version+1 WHERE memory_id=?", (actor, ts, approve_ev["event_seq"], approve_ev["event_seq"], proposal["memory_id"]))
+        conn.execute("COMMIT")
+        return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (target_id,)).fetchone()), "proposal": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (proposal["memory_id"],)).fetchone()), "event": approve_ev, "idempotent": False}
 
     def memory_edit(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user", **kw: Any) -> dict[str, Any]:
         actor = self._require_trusted_memory_actor(actor)
@@ -1494,7 +1553,7 @@ To save durable outputs like discoveries or new skills, propose memory using `br
 By default, you must provide a `--source-task` unless proposing manually with `--trusted-manual`.
 
 ### Memory audit guidance
-When doing a memory audit, inspect bounded task logs/events, working state, task results, task-chain summaries, and existing approved memories. Then propose concise memory additions, edits, or removals only; do not self-approve memory, directly edit generated memory files, or directly mutate durable memory approval state. Keep proposals bounded to reusable facts/habits/episodes/expertise/skills, and never include raw transcripts, secrets/tokens/passwords, full command logs, or large file contents. Active memory changes require trusted user/coordinator approval.
+When doing a memory audit, inspect bounded task logs/events, working state, task results, task-chain summaries, and existing approved memories. Then propose concise memory additions, edits, or removals only; use `broccoli-comms memory propose` for new memories, `broccoli-comms memory propose <memory-id>` for edit proposals, and `broccoli-comms memory propose <memory-id> --archive --reason ...` for archive/removal proposals. Trusted users/coordinators decide proposals with `broccoli-comms memory decide <memory-id> approve|reject`; agents must not self-approve memory, directly edit generated memory files, or directly mutate durable memory approval state. Keep proposals bounded to reusable facts/habits/episodes/expertise/skills, and never include raw transcripts, secrets/tokens/passwords, full command logs, or large file contents. Active memory changes require trusted user/coordinator approval.
 
 Example usage:
 ```bash

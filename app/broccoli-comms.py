@@ -2571,18 +2571,33 @@ def _task_update_notification_recipients(task: dict, actor: str, updates: dict) 
     return []
 
 
+def _single_line_message_part(value: object, limit: int = 240) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        return text[: max(0, limit - 1)].rstrip() + "…"
+    return text
+
+
+def _task_update_attention_message(task: dict, actor: str, updates: dict) -> str:
+    task_id = _single_line_message_part(task.get("task_id") or "unknown", 80)
+    title = _single_line_message_part(task.get("title") or "Untitled task", 160)
+    status = _single_line_message_part(task.get("status") or updates.get("status") or "unknown", 80)
+    reason = updates.get("result_status") or updates.get("status") or task.get("next_step") or "updated"
+    reason = _single_line_message_part(reason, 160)
+    actor = _single_line_message_part(actor or "unknown", 80)
+    summary = _single_line_message_part(task.get("result_summary") or "", 240)
+    parts = [f"Task {task_id} needs your attention", f"title={title}", f"status={status}", f"reason={reason}", f"actor={actor}"]
+    if summary:
+        parts.append(f"summary={summary}")
+    return "; ".join(parts)
+
+
 def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
     if not task or not updates:
         return {"sent": False, "skipped": True}
     status = task.get("status") or "unknown"
     title = task.get("title") or "Untitled task"
     task_id = task.get("task_id") or "unknown"
-    lines = [
-        f"Task `{task_id}` updated by {actor}.",
-        f"Status: `{status}`",
-    ]
-    if task.get("result_summary"):
-        lines.extend(["", str(task.get("result_summary"))])
     metadata = {
         "content_type": "application/vnd.broccoli.task-update+json",
         "kind": "task_update",
@@ -2594,7 +2609,7 @@ def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
         "source": "system/task-kernel",
         "sender_source": "system",
     }
-    message = "\n".join(lines)
+    message = _task_update_attention_message(task, actor, updates)
     ui_sent = False
     ui_result = None
     ui_error = None
@@ -2957,22 +2972,51 @@ def unverified_memory_proposer(args: argparse.Namespace) -> tuple[str, str | Non
 def memory_propose(args: argparse.Namespace) -> None:
     try:
         agent, instance = unverified_memory_proposer(args)
-        trusted_actor = trusted_memory_actor_from_runtime() if args.trusted_manual else None
-        if args.trusted_manual:
-            ident = verified_memory_runtime_identity()
-            agent = trusted_actor
-            instance = ident["instance"] if ident["registered"] else None
+        memory_id = getattr(args, "memory_id", None)
         metadata = json.loads(args.metadata_json) if args.metadata_json else {}
-        payload = learning_kernel().memory_propose(
-            type=args.type, scope=args.scope, subject_agent=args.subject_agent, title=args.title,
-            description=getattr(args, "description", None), body=args.body,
-            source_task_id=args.source_task, trusted_manual=args.trusted_manual, tags=args.tag, metadata=metadata,
-            idempotency_key=args.idempotency_key, proposed_by=agent, proposed_by_instance=instance,
-            trusted_actor=trusted_actor, non_learning=immutable_learning_instance(agent, instance),
-        )
+        if memory_id and getattr(args, "archive", False):
+            payload = learning_kernel().memory_propose_archive(
+                memory_id,
+                expected_version=args.expected_version,
+                reason=getattr(args, "reason", None),
+                source_task_id=args.source_task,
+                proposed_by=agent,
+                proposed_by_instance=instance,
+                non_learning=immutable_learning_instance(agent, instance),
+            )
+        elif memory_id:
+            payload = learning_kernel().memory_propose_edit(
+                memory_id,
+                expected_version=args.expected_version,
+                proposed_by=agent,
+                proposed_by_instance=instance,
+                type=args.type,
+                scope=args.scope,
+                subject_agent=args.subject_agent,
+                title=args.title,
+                description=getattr(args, "description", None),
+                body=args.body,
+                source_task_id=args.source_task,
+                tags=args.tag,
+                metadata=metadata,
+                non_learning=immutable_learning_instance(agent, instance),
+            )
+        else:
+            trusted_actor = trusted_memory_actor_from_runtime() if args.trusted_manual else None
+            if args.trusted_manual:
+                ident = verified_memory_runtime_identity()
+                agent = trusted_actor
+                instance = ident["instance"] if ident["registered"] else None
+            payload = learning_kernel().memory_propose(
+                type=args.type, scope=args.scope, subject_agent=args.subject_agent, title=args.title,
+                description=getattr(args, "description", None), body=args.body,
+                source_task_id=args.source_task, trusted_manual=args.trusted_manual, tags=args.tag, metadata=metadata,
+                idempotency_key=args.idempotency_key, proposed_by=agent, proposed_by_instance=instance,
+                trusted_actor=trusted_actor, non_learning=immutable_learning_instance(agent, instance),
+            )
         if not payload.get("idempotent"):
             payload["notification"] = notify_memory_proposal(payload["memory"])
-    except (ValueError, json.JSONDecodeError) as e:
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
 
@@ -3007,6 +3051,20 @@ def memory_propose_edit(args: argparse.Namespace) -> None:
 def memory_approve(args: argparse.Namespace) -> None:
     try:
         payload = learning_kernel().memory_approve(args.memory_id, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+    except (KeyError, ValueError) as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def memory_decide(args: argparse.Namespace) -> None:
+    try:
+        actor = trusted_memory_actor_from_runtime()
+        if args.decision == "approve":
+            payload = learning_kernel().memory_approve(args.memory_id, expected_version=args.expected_version, actor=actor)
+        elif args.decision == "reject":
+            payload = learning_kernel().memory_reject(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=actor)
+        else:
+            raise ValueError("decision must be approve or reject")
     except (KeyError, ValueError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
@@ -3128,26 +3186,15 @@ def immutable_learning_instance(agent: str | None, instance: str | None) -> bool
 
 
 def approval_fallback_markdown(approval: dict) -> str:
-    lines = [
-        "## Approval required",
-        f"Approval: `{approval['approval_id']}`",
-        f"Task: `{approval['task_id']}`",
-        f"Agent: `{approval['submitter_profile']}` instance `{approval.get('submitter_instance_id') or 'unknown'}`",
-        f"Task chain: `{approval.get('task_chain_id') or approval.get('root_task_id') or approval['task_id']}`",
-        "",
-        "### Result summary",
-        str(approval.get("result_summary") or ""),
-    ]
-    if approval.get("acceptance_summary"):
-        lines.extend(["", "### Acceptance summary", str(approval["acceptance_summary"])])
-    discoveries = approval.get("reusable_discoveries") or []
-    if discoveries:
-        lines.extend(["", "### Reusable discoveries"])
-        for item in discoveries:
-            lines.append(f"- {item.get('label')}: {item.get('value')} ({item.get('reason') or 'no reason'})")
-    lines.extend(["", f"Counters: clarifications={approval.get('clarification_count') or 0}, corrections={approval.get('correction_count') or 0}, need_improvements={approval.get('need_improvements_count') or 0}, first_pass_success={approval.get('first_pass_success')}"])
-    lines.extend(["", "Use `broccoli-comms task approval review <approval_id> --result good|bad|need_improvements`."])
-    return "\n".join(lines)[:4000]
+    approval_id = _single_line_message_part(approval.get("approval_id"), 80)
+    task_id = _single_line_message_part(approval.get("task_id"), 80)
+    agent = _single_line_message_part(approval.get("submitter_profile"), 80)
+    instance = _single_line_message_part(approval.get("submitter_instance_id") or "unknown", 80)
+    chain = _single_line_message_part(approval.get("task_chain_id") or approval.get("root_task_id") or approval.get("task_id"), 80)
+    summary = _single_line_message_part(approval.get("result_summary") or "", 500)
+    command = f"broccoli-comms task approval review {approval_id} --result good|bad|need_improvements"
+    message = f"Approval required: Task {task_id} needs your attention; approval={approval_id}; agent={agent}; instance={instance}; task_chain={chain}; summary={summary}; action={command}"
+    return _single_line_message_part(message, 4000)
 
 
 def notify_approval_request(kernel: LearningKernel, approval: dict) -> dict:
@@ -3480,13 +3527,16 @@ def main() -> None:
 
     memory = sub.add_parser("memory", help="Manage durable approved memory")
     memory_sub = memory.add_subparsers(dest="memory_command", required=True)
-    memory_propose_parser = memory_sub.add_parser("propose")
-    memory_propose_parser.add_argument("--type", required=True, choices=["fact", "habit", "episode", "expertise", "skill"])
+    memory_propose_parser = memory_sub.add_parser("propose", help="Propose a new memory, or propose editing/archiving an existing memory when memory_id is supplied")
+    memory_propose_parser.add_argument("memory_id", nargs="?", help="Existing memory to edit/archive; omit to create a new proposal")
+    memory_propose_parser.add_argument("--archive", action="store_true", help="Propose archiving/removing the existing memory_id")
+    memory_propose_parser.add_argument("--reason", help="Reason for an archive proposal")
+    memory_propose_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise", "skill"])
     memory_propose_parser.add_argument("--scope", default="global")
     memory_propose_parser.add_argument("--subject-agent")
-    memory_propose_parser.add_argument("--title", required=True)
+    memory_propose_parser.add_argument("--title")
     memory_propose_parser.add_argument("--description", help="Description of the memory (used for skills front-matter)")
-    memory_propose_parser.add_argument("--body", required=True)
+    memory_propose_parser.add_argument("--body")
     memory_propose_parser.add_argument("--source-task")
     memory_propose_parser.add_argument("--trusted-manual", action="store_true")
     memory_propose_parser.add_argument("--agent")
@@ -3494,6 +3544,7 @@ def main() -> None:
     memory_propose_parser.add_argument("--idempotency-key")
     memory_propose_parser.add_argument("--tag", action="append")
     memory_propose_parser.add_argument("--metadata-json", help="JSON object metadata; expertise supports task_family/tools/evidence_task_ids/validation_count/last_validated_at/known_limits")
+    memory_propose_parser.add_argument("--expected-version", type=int)
     memory_propose_parser.add_argument("--json", action="store_true")
     memory_propose_parser.set_defaults(func=memory_propose)
     memory_propose_edit_parser = memory_sub.add_parser("propose-edit", help="Create a pending proposal to edit an existing memory")
@@ -3517,6 +3568,13 @@ def main() -> None:
     memory_approve_parser.add_argument("--expected-version", type=int)
     memory_approve_parser.add_argument("--json", action="store_true")
     memory_approve_parser.set_defaults(func=memory_approve)
+    memory_decide_parser = memory_sub.add_parser("decide", help="Approve or reject a pending memory proposal")
+    memory_decide_parser.add_argument("memory_id")
+    memory_decide_parser.add_argument("decision", choices=["approve", "reject"])
+    memory_decide_parser.add_argument("--reason")
+    memory_decide_parser.add_argument("--expected-version", type=int)
+    memory_decide_parser.add_argument("--json", action="store_true")
+    memory_decide_parser.set_defaults(func=memory_decide)
     memory_edit_parser = memory_sub.add_parser("edit")
     memory_edit_parser.add_argument("memory_id")
     memory_edit_parser.add_argument("--type", choices=["fact", "habit", "episode", "expertise", "skill"])

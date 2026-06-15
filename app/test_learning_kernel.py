@@ -142,6 +142,11 @@ class TestLearningKernelCli(unittest.TestCase):
             notice = broccoli.notify_task_update(task, "coder", {"status": "review"})
         self.assertTrue(notice["sent"])
         self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "reviewer", "verifier"])
+        for _method, payload in calls:
+            self.assertNotIn("\n", payload["message"])
+            self.assertIn("Task task-1 needs your attention", payload["message"])
+            self.assertIn("title=Notify", payload["message"])
+            self.assertIn("status=review", payload["message"])
         def flaky_tracker(_method, payload, **_kw):
             if payload["agent_name"] == "reviewer":
                 raise RuntimeError("offline")
@@ -301,7 +306,10 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertIn("working state, task results, task-chain summaries", contract)
             self.assertIn("existing approved memories", contract)
             self.assertIn("propose concise memory additions, edits, or removals only", contract)
-            self.assertIn("do not self-approve memory", contract)
+            self.assertIn("memory propose <memory-id>", contract)
+            self.assertIn("memory propose <memory-id> --archive --reason", contract)
+            self.assertIn("memory decide <memory-id> approve|reject", contract)
+            self.assertIn("must not self-approve memory", contract)
             self.assertIn("Active memory changes require trusted user/coordinator approval", contract)
 
     def test_task_chain_summary_creation_retrieval_and_lineage(self):
@@ -552,6 +560,8 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertEqual(len(failed), 1)
             md = broccoli.approval_fallback_markdown(approval)
             self.assertIn("Approval required", md)
+            self.assertIn(f"Task {task['task_id']} needs your attention", md)
+            self.assertNotIn("\n", md)
             self.assertLessEqual(len(md), 4000)
 
     def test_approval_notification_falsy_rpc_is_failure(self):
@@ -606,6 +616,36 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertEqual(approved["proposal"]["status"], "superseded")
             event_types = [e["event_type"] for e in k.events(subject_id=active["memory"]["memory_id"])]
             self.assertIn("memory_edited", event_types)
+
+    def test_memory_archive_proposal_revokes_active_target_on_approval(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="validated", assigned_agent="a")
+            k.mark_result(task["task_id"], "good")
+            proposed = k.memory_propose(type="fact", scope="global", subject_agent="a", title="Old", body="old", source_task_id=task["task_id"], proposed_by="a")
+            active = k.memory_approve(proposed["memory"]["memory_id"], expected_version=proposed["memory"]["version"])
+
+            archive = k.memory_propose_archive(active["memory"]["memory_id"], expected_version=active["memory"]["version"], reason="obsolete", proposed_by="a")
+            self.assertEqual(archive["memory"]["status"], "pending")
+            self.assertEqual(archive["memory"]["metadata"]["proposal_kind"], "archive")
+            self.assertEqual(archive["memory"]["metadata"]["target_memory_id"], active["memory"]["memory_id"])
+
+            approved = k.memory_approve(archive["memory"]["memory_id"], expected_version=archive["memory"]["version"])
+            self.assertEqual(approved["memory"]["memory_id"], active["memory"]["memory_id"])
+            self.assertEqual(approved["memory"]["status"], "revoked")
+            self.assertEqual(approved["proposal"]["status"], "superseded")
+            event_types = [e["event_type"] for e in k.events(subject_id=active["memory"]["memory_id"])]
+            self.assertIn("memory_revoked", event_types)
+
+    def test_memory_archive_proposal_rejects_pending_target_on_approval(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            target = k.memory_propose(type="habit", scope="global", subject_agent="a", title="Pending", body="pending", proposed_by="a")
+            archive = k.memory_propose_archive(target["memory"]["memory_id"], expected_version=target["memory"]["version"], reason="duplicate", proposed_by="a")
+            approved = k.memory_approve(archive["memory"]["memory_id"], expected_version=archive["memory"]["version"])
+            self.assertEqual(approved["memory"]["memory_id"], target["memory"]["memory_id"])
+            self.assertEqual(approved["memory"]["status"], "rejected")
+            self.assertEqual(approved["proposal"]["status"], "superseded")
 
     def test_memory_validated_task_lifecycle_idempotency_and_bootstrap(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
