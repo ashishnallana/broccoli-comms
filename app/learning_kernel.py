@@ -700,9 +700,9 @@ class LearningKernel:
         if status not in {"done", "validated"}:
             return
         reviewers = self._active_review_participants(conn, task_id)
-        if reviewers:
+        if reviewers and not self._actor_has_active_review_role(conn, task_id, actor):
             agents = ", ".join(sorted({p.get("agent") or "" for p in reviewers if p.get("agent")}))
-            raise ValueError(f"task has active reviewer/verifier participants ({agents}); submit completion for review instead of marking {status} directly")
+            raise ValueError(f"task has active reviewer/verifier participants ({agents}); move the task to review with a result summary instead of marking {status} directly")
 
     def mark_result(self, task_id: str, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None, approval_id: str | None = None) -> dict[str, Any]:
         notes, next_step, actor, status = self._validated_result_fields(result, notes, actor, next_step, status)
@@ -1562,8 +1562,9 @@ Durable state lives in Broccoli Comms. Do not rely on either cwd for memory.
 - Example: when finding the right database, record the database/table name and why it was correct as a bounded checkpoint so future agents can avoid rediscovery.
 
 ## Result and validation workflow
-- When completing work, update the task with a bounded result_summary suitable for user validation.
-- When a task chain or scoped phase is complete, use task-chain completion submission before review/validation: `broccoli-comms task submit-completion <task_id> --summary ... --task-chain-id <chain> --root-task-id <root> --json`; after it is approved/validated, run `broccoli-comms task summarize-chain <task_chain_id> --json` so future agents can resume from a bounded chain summary.
+- For ordinary single-task completion, do **not** use `task submit-completion`; update the task/status/result flow instead: set a bounded result summary and move it to `review` when reviewer/verifier participants are active (or `done` when no review role is configured), then let reviewers/users validate with `broccoli-comms task mark-result <task_id> --result good|bad|need_improvements ... --json`.
+- Reserve `broccoli-comms task submit-completion` for task-chain or scoped-phase completion only. Before submitting chain/scoped completion, first refresh the bounded chain summary with `broccoli-comms task summarize-chain <task_chain_id> --json`, then submit the root task with explicit `--task-chain-id <chain> --root-task-id <root>` for review/approval.
+- After chain/scoped completion is approved/validated, run `broccoli-comms task summarize-chain <task_chain_id> --json` again so future agents resume from a bounded post-validation summary.
 - When the user says a result is correct, ensure the task is marked `good`/`validated` with `broccoli-comms task mark-result <task_id> --result good --json` so the append-only event log captures: goal -> checkpoints/discoveries -> result summary -> user validation.
 - For partial or incorrect results, include a remediation next_step with `task mark-result --result bad|need_improvements --next-step ...`.
 

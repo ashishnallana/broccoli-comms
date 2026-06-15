@@ -2542,35 +2542,89 @@ def task_next(args: argparse.Namespace) -> None:
     _print_payload(payload, args.json)
 
 
-def _append_task_recipient(recipients: list[str], agent: str | None, actor: str) -> None:
-    if agent and agent not in {actor, UI_AGENT_NAME} and agent not in recipients:
-        recipients.append(agent)
+def _agent_identity_key(agent: str | None) -> str:
+    value = str(agent or "").strip().lower()
+    if not value:
+        return ""
+    return value.rsplit("/", 1)[-1]
 
 
-def _task_participant_agents(task: dict, roles: set[str], actor: str) -> list[str]:
-    recipients: list[str] = []
+def _agent_alias_keys(agent: str | None) -> set[str]:
+    if not agent:
+        return set()
+    value = str(agent).strip()
+    keys = {_agent_identity_key(value)}
+    if "/" in value:
+        keys.add(value.lower())
+    return {k for k in keys if k}
+
+
+def _recipient_matches(agent: str | None, other: str | None) -> bool:
+    if not agent or not other:
+        return False
+    return bool(_agent_alias_keys(agent) & _agent_alias_keys(other))
+
+
+def _append_task_recipient(recipients: list[dict], agent: str | None, actor: str, role: str, reason: str) -> None:
+    if not agent or agent == UI_AGENT_NAME or _recipient_matches(agent, UI_AGENT_NAME) or _recipient_matches(agent, actor):
+        return
+    keys = _agent_alias_keys(agent)
+    for recipient in recipients:
+        if keys & set(recipient.get("identity_keys") or []):
+            if role not in recipient["roles"]:
+                recipient["roles"].append(role)
+            if reason not in recipient["reasons"]:
+                recipient["reasons"].append(reason)
+            return
+    recipients.append({"agent": agent, "roles": [role], "reasons": [reason], "identity_keys": sorted(keys)})
+
+
+def _task_has_active_role(task: dict, role: str) -> bool:
+    if role == "assignee" and task.get("assigned_agent"):
+        return True
+    return any(p.get("status") == "active" and p.get("role") == role and p.get("agent") for p in task.get("participants") or [])
+
+
+def _append_task_role_recipients(recipients: list[dict], task: dict, roles: set[str], actor: str, reason: str) -> None:
+    if "requester" in roles and task.get("created_by") not in {None, "", "user"}:
+        _append_task_recipient(recipients, task.get("created_by"), actor, "requester", reason)
     if "assignee" in roles:
-        _append_task_recipient(recipients, task.get("assigned_agent"), actor)
+        _append_task_recipient(recipients, task.get("assigned_agent"), actor, "assignee", reason)
     for participant in task.get("participants") or []:
         if participant.get("status") == "active" and participant.get("role") in roles:
-            _append_task_recipient(recipients, participant.get("agent"), actor)
-    return recipients
+            _append_task_recipient(recipients, participant.get("agent"), actor, participant.get("role") or "participant", reason)
 
 
-def _task_update_notification_recipients(task: dict, actor: str, updates: dict) -> list[str]:
-    if updates.get("result_status") in {"bad", "need_improvements"}:
-        return _task_participant_agents(task, {"assignee"}, actor)
-    if updates.get("result_status") == "good" or updates.get("status") == "validated":
-        recipients: list[str] = []
+def _task_update_notification_recipients(task: dict, actor: str, updates: dict) -> list[dict]:
+    status = updates.get("status")
+    result_status = updates.get("result_status")
+    recipients: list[dict] = []
+    if result_status in {"bad", "need_improvements"}:
+        _append_task_role_recipients(recipients, task, {"assignee", "coordinator", "requester"}, actor, f"result:{result_status}")
+    elif result_status == "good":
+        if _task_has_active_role(task, "verifier"):
+            _append_task_role_recipients(recipients, task, {"verifier"}, actor, "result:good")
+        else:
+            _append_task_role_recipients(recipients, task, {"coordinator", "requester"}, actor, "result:good")
+        if status == "validated":
+            _append_task_role_recipients(recipients, task, {"assignee", "coordinator", "requester"}, actor, "status:validated")
+    elif status == "validated":
+        _append_task_role_recipients(recipients, task, {"assignee", "coordinator", "requester"}, actor, "status:validated")
+    elif status in {"done", "review"}:
+        roles = {"reviewer", "verifier"} if (_task_has_active_role(task, "reviewer") or _task_has_active_role(task, "verifier")) else {"coordinator", "requester"}
+        _append_task_role_recipients(recipients, task, roles, actor, f"status:{status}")
+    elif status == "ready":
+        _append_task_role_recipients(recipients, task, {"assignee", "coordinator", "requester"}, actor, "status:ready")
+    elif status == "working":
+        _append_task_role_recipients(recipients, task, {"coordinator", "requester"}, actor, "status:working")
+    elif status == "blocked":
+        _append_task_role_recipients(recipients, task, {"assignee", "coordinator", "requester"}, actor, "status:blocked")
+    elif status == "archived":
+        _append_task_role_recipients(recipients, task, {"assignee", "coordinator", "requester"}, actor, "status:archived")
+    if result_status == "good" or status == "validated":
         for dependent in task.get("ready_dependents") or []:
-            for agent in _task_participant_agents(dependent, {"assignee", "coordinator"}, actor):
-                _append_task_recipient(recipients, agent, actor)
-        return recipients
-    if updates.get("status") in {"done", "review"}:
-        return _task_participant_agents(task, {"reviewer", "verifier"}, actor)
-    if updates.get("status") == "ready":
-        return _task_participant_agents(task, {"assignee", "coordinator"}, actor)
-    return []
+            _append_task_role_recipients(recipients, dependent, {"assignee", "coordinator", "requester"}, actor, "dependent:ready")
+    return recipients
 
 
 def _single_line_message_part(value: object, limit: int = 240) -> str:
@@ -2626,12 +2680,13 @@ def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
     participant_results = []
     if "status" in updates or "result_status" in updates:
         for recipient in _task_update_notification_recipients(task, actor, updates):
-            participant_metadata = {**metadata, "recipient_agent": recipient, "recipient_kind": "task_participant"}
+            agent = recipient["agent"]
+            participant_metadata = {**metadata, "recipient_agent": agent, "recipient_kind": "task_participant", "recipient_roles": recipient.get("roles") or [], "recipient_reasons": recipient.get("reasons") or []}
             try:
-                participant_result = tracker_rpc("send_message", {"agent_name": recipient, "message": message, "metadata": participant_metadata, "sender_name": sender_name})
-                participant_results.append({"agent": recipient, "sent": bool(participant_result), "result": participant_result})
+                participant_result = tracker_rpc("send_message", {"agent_name": agent, "message": message, "metadata": participant_metadata, "sender_name": sender_name})
+                participant_results.append({"agent": agent, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or [], "sent": bool(participant_result), "result": participant_result})
             except Exception as participant_error:
-                participant_results.append({"agent": recipient, "sent": False, "error": str(participant_error)})
+                participant_results.append({"agent": agent, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or [], "sent": False, "error": str(participant_error)})
     payload = {"sent": ui_sent, "result": ui_result, "participant_notifications": participant_results}
     if ui_error:
         payload["error"] = ui_error
@@ -2685,13 +2740,63 @@ def task_mark_result(args: argparse.Namespace) -> None:
     _print_payload(payload, args.json)
 
 
-def task_summarize_chain(args: argparse.Namespace) -> None:
+def notify_chain_summary(kernel: LearningKernel, summary: dict, actor: str) -> dict:
+    chain_id = summary.get("task_chain_id") or "unknown"
+    root_task_id = summary.get("root_task_id") or chain_id
+    message = _single_line_message_part(f"Task chain {chain_id} summarized by {actor}. Read inbox. Summary: {summary.get('summary') or ''}", 1000)
+    metadata = {
+        "content_type": "application/vnd.broccoli.task-chain-summary+json",
+        "kind": "task_chain_summary",
+        "summary_id": summary.get("summary_id"),
+        "task_chain_id": chain_id,
+        "root_task_id": root_task_id,
+        "event_seq_start": summary.get("event_seq_start"),
+        "event_seq_end": summary.get("event_seq_end"),
+        "source": "system/task-kernel",
+        "sender_source": "system",
+    }
+    ui_sent = False
+    ui_result = None
+    ui_error = None
     try:
-        payload = learning_kernel().summarize_chain(args.task_chain_id, root_task_id=args.root_task_id, next_task_chain_id=args.next_task_chain_id, actor=os.environ.get("AGENT_NAME") or "user")
+        ui_result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": actor or "task-kernel"})
+        if not ui_result:
+            raise RuntimeError("tracker RPC send_message failed")
+        ui_sent = True
+    except Exception as e:
+        ui_error = str(e)
+    participant_results = []
+    recipients: list[dict] = []
+    try:
+        root_task = kernel.task_show(root_task_id, include_participants=True)
+        _append_task_role_recipients(recipients, root_task, {"assignee", "reviewer", "verifier", "coordinator", "requester"}, actor, "chain_summary")
+    except Exception as e:
+        participant_results.append({"agent": None, "sent": False, "error": str(e)})
+    for recipient in recipients:
+        agent = recipient["agent"]
+        try:
+            participant_result = tracker_rpc("send_message", {"agent_name": agent, "message": message, "metadata": {**metadata, "recipient_agent": agent, "recipient_kind": "task_participant", "recipient_roles": recipient.get("roles") or [], "recipient_reasons": recipient.get("reasons") or []}, "sender_name": actor or "task-kernel"})
+            if not participant_result:
+                raise RuntimeError("tracker RPC send_message failed")
+            participant_results.append({"agent": agent, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or [], "sent": True, "result": participant_result})
+        except Exception as participant_error:
+            participant_results.append({"agent": agent, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or [], "sent": False, "error": str(participant_error)})
+    payload = {"sent": ui_sent, "result": ui_result, "participant_notifications": participant_results}
+    if ui_error:
+        payload["error"] = ui_error
+    return payload
+
+
+def task_summarize_chain(args: argparse.Namespace) -> None:
+    actor = os.environ.get("AGENT_NAME") or "user"
+    kernel = learning_kernel()
+    try:
+        payload = kernel.summarize_chain(args.task_chain_id, root_task_id=args.root_task_id, next_task_chain_id=args.next_task_chain_id, actor=actor)
     except KeyError:
         raise SystemExit(f"task chain not found: {args.task_chain_id}")
     except ValueError as e:
         raise SystemExit(str(e))
+    payload["notification"] = notify_chain_summary(kernel, payload, actor)
     _print_payload(payload, args.json)
 
 
@@ -2739,7 +2844,7 @@ def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list
         "- Use `broccoli-comms memory ...` commands to update durable skills/memory; do not edit generated SKILL.md, memory.md, or expertise.md files as the source of truth.",
         "- **Retained habits are mandatory operating instructions.** The active habits are embedded below; follow them across the whole session, especially at task completion, review handoff, validation, and queue-continuation transitions.",
         "- Before reporting a task complete or validated, re-check the embedded retained habits and perform any follow-on action they require, such as notifying a reviewer or starting the next ready task.",
-        "- For long-running/restartable work, use task-chain completion and bounded summaries: when a task chain or scoped phase is complete, run `broccoli-comms task submit-completion <task_id> --summary ... --task-chain-id <chain> --root-task-id <root> --json` before review/validation; after approval/validation, run `broccoli-comms task summarize-chain <task_chain_id> --json`. On startup, resume from the latest chain summary plus the active task/state instead of replaying the full append-only event log. Fall back to bounded recent events only if a summary is missing or stale.",
+        "- Ordinary single-task completion uses task/status/result flow, not `task submit-completion`: set a bounded result summary and move it to `review` when reviewer/verifier participants are active (or `done` when no review role is configured), then reviewers/users validate with `task mark-result`. Reserve `task submit-completion` for task-chain or scoped-phase completion only. Before submitting chain/scoped completion, refresh the bounded summary with `broccoli-comms task summarize-chain <task_chain_id> --json`, then submit the root with explicit `--task-chain-id` and `--root-task-id`; after approval/validation, run `summarize-chain` again so future agents resume from a bounded post-validation summary.",
     ]
     if habits:
         lines.extend(["", "## Embedded retained habits from durable memory", "These retained habits are mandatory operating instructions. Follow them across turns and before completion, validation, review handoff, or queue-continuation transitions."])
@@ -3269,11 +3374,20 @@ def notify_approval_request(kernel: LearningKernel, approval: dict) -> dict:
     return payload
 
 
+def _require_chain_summary_before_submit(kernel: LearningKernel, task_chain_id: str | None, root_task_id: str | None) -> None:
+    if not task_chain_id or not root_task_id:
+        raise ValueError("submit-completion is only for task-chain/scoped-phase completion; pass --task-chain-id and --root-task-id after running task summarize-chain")
+    summary = kernel.latest_chain_summary(root_task_id)
+    if not summary or summary.get("task_chain_id") != task_chain_id:
+        raise ValueError("run `broccoli-comms task summarize-chain <task_chain_id> --root-task-id <root_task_id>` before submit-completion")
+
+
 def task_submit_completion(args: argparse.Namespace) -> None:
     kernel = learning_kernel()
     agent = args.agent or os.environ.get("AGENT_NAME") or "agent"
     instance = args.instance or os.environ.get("AGENT_ID") or os.environ.get("AGENT_UUID")
     try:
+        _require_chain_summary_before_submit(kernel, args.task_chain_id, args.root_task_id)
         payload = kernel.submit_completion(
             args.task_id,
             agent=agent,

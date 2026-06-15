@@ -168,11 +168,61 @@ class TestLearningKernelCli(unittest.TestCase):
         self.assertTrue(notice["participant_notifications"][1]["sent"])
 
     def test_task_result_notifications_route_bad_ready_and_good_recipients(self):
-        task = {"task_id": "task-1", "title": "Notify", "status": "working", "assigned_agent": "coder", "participants": [{"agent": "coder", "role": "assignee", "status": "active"}]}
-        self.assertEqual(broccoli._task_update_notification_recipients(task, "reviewer", {"result_status": "need_improvements"}), ["coder"])
-        self.assertEqual(broccoli._task_update_notification_recipients(task, "planner", {"status": "ready"}), ["coder"])
-        task["ready_dependents"] = [{"task_id": "task-2", "assigned_agent": "next", "participants": [{"agent": "coord", "role": "coordinator", "status": "active"}]}]
-        self.assertEqual(broccoli._task_update_notification_recipients(task, "reviewer", {"result_status": "good", "status": "validated"}), ["next", "coord"])
+        def agents(rows):
+            return [row["agent"] for row in rows]
+        task = {"task_id": "task-1", "title": "Notify", "status": "working", "assigned_agent": "coder", "created_by": "requester", "participants": [{"agent": "coder", "role": "assignee", "status": "active"}, {"agent": "lead", "role": "coordinator", "status": "active"}, {"agent": "reviewer", "role": "reviewer", "status": "active"}]}
+        self.assertEqual(agents(broccoli._task_update_notification_recipients(task, "reviewer", {"result_status": "need_improvements"})), ["requester", "coder", "lead"])
+        self.assertEqual(agents(broccoli._task_update_notification_recipients(task, "planner", {"status": "ready"})), ["requester", "coder", "lead"])
+        self.assertEqual(agents(broccoli._task_update_notification_recipients(task, "coder", {"status": "working"})), ["requester", "lead"])
+        self.assertEqual(agents(broccoli._task_update_notification_recipients(task, "reviewer", {"status": "blocked"})), ["requester", "coder", "lead"])
+        self.assertEqual(agents(broccoli._task_update_notification_recipients(task, "reviewer", {"status": "archived"})), ["requester", "coder", "lead"])
+        task["ready_dependents"] = [{"task_id": "task-2", "assigned_agent": "next", "created_by": "dep-requester", "participants": [{"agent": "coord", "role": "coordinator", "status": "active"}]}]
+        self.assertEqual(agents(broccoli._task_update_notification_recipients(task, "reviewer", {"result_status": "good", "status": "validated"})), ["requester", "lead", "coder", "dep-requester", "next", "coord"])
+
+    def test_canonical_recipient_dedupe_self_suppression_and_combined_metadata(self):
+        task = {"task_id": "task-1", "title": "Notify", "status": "ready", "assigned_agent": "host/coder", "created_by": "requester", "participants": [{"agent": "coder", "role": "coordinator", "status": "active"}, {"agent": "reviewer", "role": "reviewer", "status": "active"}]}
+        calls = []
+        with mock.patch.object(broccoli, "tracker_agents", return_value={"host/coder": {"aliases": ["coder"]}, "coder": {"target_address": "host/coder"}}), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+            notice = broccoli.notify_task_update(task, "reviewer", {"status": "ready"})
+        self.assertTrue(notice["sent"])
+        participant_payloads = [payload for _method, payload in calls if payload["agent_name"] != broccoli.UI_AGENT_NAME]
+        self.assertEqual([payload["agent_name"] for payload in participant_payloads], ["requester", "host/coder"])
+        self.assertEqual(participant_payloads[1]["metadata"]["recipient_roles"], ["assignee", "coordinator"])
+        self.assertEqual(participant_payloads[1]["metadata"]["recipient_reasons"], ["status:ready"])
+        self.assertEqual(notice["participant_notifications"][1]["roles"], ["assignee", "coordinator"])
+
+    def test_good_result_routes_to_verifier_or_coordinator_requester(self):
+        with_verifier = {"task_id": "task-1", "assigned_agent": "coder", "created_by": "requester", "participants": [{"agent": "verifier", "role": "verifier", "status": "active"}, {"agent": "lead", "role": "coordinator", "status": "active"}]}
+        no_verifier = {"task_id": "task-1", "assigned_agent": "coder", "created_by": "requester", "participants": [{"agent": "lead", "role": "coordinator", "status": "active"}]}
+        self.assertEqual([r["agent"] for r in broccoli._task_update_notification_recipients(with_verifier, "reviewer", {"result_status": "good"})], ["verifier"])
+        self.assertEqual([r["agent"] for r in broccoli._task_update_notification_recipients(no_verifier, "reviewer", {"result_status": "good"})], ["requester", "lead"])
+        self.assertEqual([r["agent"] for r in broccoli._task_update_notification_recipients(with_verifier, "reviewer", {"result_status": "good", "status": "validated"})], ["verifier", "requester", "coder", "lead"])
+
+    def test_submit_completion_cli_requires_chain_summary_guardrail(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            root = self.approvable_chain_root(k, assigned_agent="coder", title="guard")
+            with self.assertRaisesRegex(ValueError, "summarize-chain"):
+                broccoli._require_chain_summary_before_submit(k, "chain-1", root["task_id"])
+            k.state_set(root["task_id"], "coder", task_chain_id="chain-1", root_task_id=root["task_id"], status="working")
+            k.summarize_chain("chain-1", root_task_id=root["task_id"])
+            broccoli._require_chain_summary_before_submit(k, "chain-1", root["task_id"])
+
+    def test_chain_summary_notification_routes_to_chain_roles_without_duplicates(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            root = k.task_create(title="root", assigned_agent="coder")
+            k.task_participant_add(root["task_id"], "reviewer", "reviewer")
+            k.task_participant_add(root["task_id"], "reviewer", "verifier")
+            k.task_participant_add(root["task_id"], "lead", "coordinator")
+            k.state_set(root["task_id"], "coder", task_chain_id="chain-1", root_task_id=root["task_id"], status="working")
+            summary = k.summarize_chain("chain-1", root_task_id=root["task_id"])
+            calls = []
+            with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+                notice = broccoli.notify_chain_summary(k, summary, "coder")
+            self.assertTrue(notice["sent"])
+            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "lead", "reviewer"])
+            self.assertEqual(calls[0][1]["metadata"]["kind"], "task_chain_summary")
 
     def test_ready_dependents_excludes_already_active_or_done_dependents(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
@@ -194,7 +244,7 @@ class TestLearningKernelCli(unittest.TestCase):
             calls = []
             with mock.patch.dict(os.environ, {"AGENT_NAME": "reviewer"}, clear=False), mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
                 broccoli.task_update(args)
-            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "next", "coord"])
+            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder", "next", "coord"])
             for _method, payload in calls:
                 self.assertEqual(payload["sender_name"], "reviewer")
                 self.assertIn("moved to validated by reviewer. Read inbox.", payload["message"])
@@ -298,7 +348,9 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertIn("then start working on that task unless it is blocked or requires clarification", contract)
             self.assertIn("database names, table names, commands/tools used", contract)
             self.assertIn("goal -> checkpoints/discoveries -> result summary -> user validation", contract)
-            self.assertIn("task submit-completion <task_id>", contract)
+            self.assertIn("do **not** use `task submit-completion`", contract)
+            self.assertIn("move it to `review` when reviewer/verifier participants are active", contract)
+            self.assertIn("Reserve `broccoli-comms task submit-completion` for task-chain", contract)
             self.assertIn("task summarize-chain <task_chain_id>", contract)
             self.assertIn("Anything that requires investigation must be created and tracked as a task first", contract)
             self.assertIn("ask the user/coordinator which collaborator agents should participate", contract)
@@ -781,10 +833,15 @@ class TestLearningKernelCli(unittest.TestCase):
             k = broccoli.learning_kernel()
             task = self.approvable_chain_root(k, assigned_agent="coder", title="needs review")
             k.task_participant_add(task["task_id"], "reviewer", "reviewer")
-            with self.assertRaisesRegex(ValueError, "submit completion for review"):
+            with self.assertRaisesRegex(ValueError, "move the task to review"):
                 k.task_update(task["task_id"], status="done", actor="coder")
-            with self.assertRaisesRegex(ValueError, "submit completion for review"):
+            with self.assertRaisesRegex(ValueError, "move the task to review"):
                 k.mark_result(task["task_id"], "good", actor="coder")
+            task = k.task_update(task["task_id"], status="review", result_summary="done", actor="coder")
+            reviewed = k.mark_result(task["task_id"], "good", actor="reviewer")
+            self.assertEqual(reviewed["status"], "validated")
+            task = self.approvable_chain_root(k, assigned_agent="coder", title="needs chain review")
+            k.task_participant_add(task["task_id"], "reviewer", "reviewer")
             approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
             decided = k.review_completion(approval["approval_id"], "good", actor="reviewer", task_version_at_submission=approval["task_version_at_submission"])
             self.assertEqual(decided["task"]["status"], "validated")
