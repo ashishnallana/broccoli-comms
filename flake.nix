@@ -29,6 +29,18 @@
             '';
           };
 
+          defaultSkills = pkgs.stdenvNoCC.mkDerivation {
+            pname = "broccoli-comms-default-skills";
+            version = "0.1.0";
+            src = ./skills;
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp -R . $out/
+              runHook postInstall
+            '';
+          };
+
           agentTracker = pkgs.writeShellApplication {
             name = "agent-tracker";
             runtimeInputs = with pkgs; [ python3 tmux coreutils gnugrep procps bash ];
@@ -116,7 +128,7 @@
             '';
           };
         in {
-          inherit agentTrackerFiles agentTracker agentTrackerCtl agentWrapper agentCommunicator agentCommunicatorElectron agentRegistry managedAgent broccoliComms;
+          inherit agentTrackerFiles defaultSkills agentTracker agentTrackerCtl agentWrapper agentCommunicator agentCommunicatorElectron agentRegistry managedAgent broccoliComms;
           agent-tracker = agentTracker;
           agent-tracker-ctl = agentTrackerCtl;
           agent-wrapper = agentWrapper;

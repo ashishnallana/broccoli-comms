@@ -243,6 +243,38 @@ agent_communicator_tui = "/config/agent-communicator"
         self.assertIn("restart", text)
         self.assertNotIn("usage: broccoli-comms agent add", text)
 
+    def test_memory_help_describes_simplified_proposal_and_decision_workflows(self):
+        output = io.StringIO()
+        with mock.patch.object(broccoli_comms_app.sys, "argv", ["broccoli-comms", "memory", "--help"]), \
+             mock.patch.object(broccoli_comms_app.sys, "stdout", output):
+            with self.assertRaises(SystemExit):
+                broccoli_comms_app.main()
+        text = output.getvalue()
+        self.assertIn("Manage durable memory proposals, approvals, and active records", text)
+        self.assertIn("Create a new proposal, edit proposal, or archive", text)
+        self.assertIn("Approve or reject a pending proposal as a trusted", text)
+        self.assertIn("Directly revoke an active memory", text)
+
+        output = io.StringIO()
+        with mock.patch.object(broccoli_comms_app.sys, "argv", ["broccoli-comms", "memory", "propose", "--help"]), \
+             mock.patch.object(broccoli_comms_app.sys, "stdout", output):
+            with self.assertRaises(SystemExit):
+                broccoli_comms_app.main()
+        propose_help = output.getvalue()
+        self.assertIn("Existing memory to edit", propose_help)
+        self.assertIn("propose archiving/removing", propose_help)
+        self.assertIn("Expected current target version", propose_help)
+
+        output = io.StringIO()
+        with mock.patch.object(broccoli_comms_app.sys, "argv", ["broccoli-comms", "memory", "decide", "--help"]), \
+             mock.patch.object(broccoli_comms_app.sys, "stdout", output):
+            with self.assertRaises(SystemExit):
+                broccoli_comms_app.main()
+        decide_help = output.getvalue()
+        self.assertIn("Pending proposal id to decide", decide_help)
+        self.assertIn("Decision to apply to the pending proposal", decide_help)
+        self.assertIn("Reason for rejecting the proposal", decide_help)
+
     def test_unknown_legacy_track_command_fails_fast(self):
         with mock.patch.object(broccoli_comms_app.sys, "argv", ["broccoli-comms", "track", "--name", "planner", "--", "pi"]):
             with self.assertRaises(SystemExit):
@@ -886,6 +918,22 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertIn(f"Ephemeral cwd: {ctx}", agents)
             self.assertIn(f"Launch/source cwd: {src}", agents)
             self.assertIn("For file/project queries not related to agent memory", agents)
+
+    def test_default_skills_include_memory_audit_and_home_manager_install_paths(self):
+        root = Path(__file__).resolve().parents[1]
+        skill = (root / "skills" / "agent-memory-audit" / "SKILL.md").read_text()
+        self.assertIn("memory propose MEMORY_ID", skill)
+        self.assertIn("--archive", skill)
+        self.assertIn("memory decide PROPOSAL_ID approve", skill)
+        self.assertNotIn("There is no first-class", skill)
+        readme = (root / "skills" / "README.md").read_text()
+        self.assertIn("agent-memory-audit", readme)
+        module = (root / "modules" / "home-manager.nix").read_text()
+        self.assertIn("defaultSkills = mkOption", module)
+        self.assertIn('".pi/agent/skills/agent-memory-audit/SKILL.md"', module)
+        self.assertIn('".claude/skills/agent-memory-audit/SKILL.md"', module)
+        self.assertIn('".gemini/skills/agent-memory-audit/SKILL.md"', module)
+        self.assertIn('".agents/skills/agent-memory-audit/SKILL.md"', module)
 
     def test_home_manager_provider_defaults_set_launch_flags_and_agent_roots(self):
         text = (Path(__file__).resolve().parents[1] / "modules" / "home-manager.nix").read_text()

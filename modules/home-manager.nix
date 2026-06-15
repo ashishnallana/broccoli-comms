@@ -157,6 +157,7 @@ in {
       managedAgent = mkOption { type = types.bool; default = false; description = "Install agent-registry-managed-agent."; };
       tui = mkOption { type = types.bool; default = false; description = "Install the low-level agent-communicator TUI. Prefer `broccoli-comms ui` for the app-owned runtime."; };
       electron = mkOption { type = types.bool; default = false; description = "Install Electron launcher."; };
+      defaultSkills = mkOption { type = types.bool; default = true; description = "Install Broccoli Comms default agent skills into Pi, Claude, Gemini, and shared .agents skill directories."; };
     };
   };
 
@@ -231,6 +232,16 @@ in {
 
     (lib.mkIf pcfg.enable {
       home.packages = installedPackages;
+      home.file = lib.mkIf pcfg.install.defaultSkills {
+        ".pi/agent/skills/broccoli-comms-cli/SKILL.md".source = "${packages.defaultSkills}/broccoli-comms-cli/SKILL.md";
+        ".pi/agent/skills/agent-memory-audit/SKILL.md".source = "${packages.defaultSkills}/agent-memory-audit/SKILL.md";
+        ".claude/skills/broccoli-comms-cli/SKILL.md".source = "${packages.defaultSkills}/broccoli-comms-cli/SKILL.md";
+        ".claude/skills/agent-memory-audit/SKILL.md".source = "${packages.defaultSkills}/agent-memory-audit/SKILL.md";
+        ".gemini/skills/broccoli-comms-cli/SKILL.md".source = "${packages.defaultSkills}/broccoli-comms-cli/SKILL.md";
+        ".gemini/skills/agent-memory-audit/SKILL.md".source = "${packages.defaultSkills}/agent-memory-audit/SKILL.md";
+        ".agents/skills/broccoli-comms-cli/SKILL.md".source = "${packages.defaultSkills}/broccoli-comms-cli/SKILL.md";
+        ".agents/skills/agent-memory-audit/SKILL.md".source = "${packages.defaultSkills}/agent-memory-audit/SKILL.md";
+      };
       xdg.configFile."broccoli-comms/config.toml".text = ''
         [paths]
         ${lib.optionalString (broccoliRuntimeDir != null) ''runtime_dir = "${broccoliRuntimeDir}"''}
