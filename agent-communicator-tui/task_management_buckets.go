@@ -34,6 +34,9 @@ func (m model) activeTaskChainFor(selected agentRow, stateByTask map[string]task
 		return "", "", ""
 	}
 	if selected.CurrentTaskID != "" {
+		if taskArchivedByID(m.tasksItems, selected.CurrentTaskID) {
+			return "", "", ""
+		}
 		if state, ok := stateByTask[selected.CurrentTaskID]; ok && selectedAgentMatchesName(selected, state.Agent) {
 			return state.TaskChainID, firstNonEmpty(state.RootTaskID, state.TaskChainID), selected.CurrentTaskID
 		}
@@ -48,7 +51,7 @@ func (m model) activeTaskChainFor(selected agentRow, stateByTask map[string]task
 		}
 	}
 	for _, task := range m.tasksItems {
-		if selected.Name != "" && !selectedAgentMatchesName(selected, task.AssignedAgent) {
+		if taskArchived(task) || selected.Name != "" && !selectedAgentMatchesName(selected, task.AssignedAgent) {
 			continue
 		}
 		if task.Status == "ready" || task.Status == "working" {
@@ -57,6 +60,51 @@ func (m model) activeTaskChainFor(selected agentRow, stateByTask map[string]task
 		}
 	}
 	return "", "", ""
+}
+
+func activeTaskRecords(tasks []taskRecord) []taskRecord {
+	archived := map[string]bool{}
+	for _, task := range tasks {
+		if taskArchived(task) && task.TaskID != "" {
+			archived[task.TaskID] = true
+		}
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, task := range tasks {
+			if task.TaskID == "" || archived[task.TaskID] {
+				continue
+			}
+			for _, dep := range task.DependsOn {
+				if archived[dep] {
+					archived[task.TaskID] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	out := make([]taskRecord, 0, len(tasks))
+	for _, task := range tasks {
+		if task.TaskID == "" || !archived[task.TaskID] {
+			out = append(out, task)
+		}
+	}
+	return out
+}
+
+func taskArchived(task taskRecord) bool {
+	return strings.EqualFold(strings.TrimSpace(task.Status), "archived")
+}
+
+func taskArchivedByID(tasks []taskRecord, taskID string) bool {
+	for _, task := range tasks {
+		if task.TaskID == taskID {
+			return taskArchived(task)
+		}
+	}
+	return false
 }
 
 func tasksForChain(tasks []taskRecord, chainID, rootID, currentTaskID string) []taskRecord {

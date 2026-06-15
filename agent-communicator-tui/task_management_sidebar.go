@@ -54,6 +54,9 @@ func (m model) taskAgentSidebarLines(data taskManagementData, width, height int)
 func taskCountsByAgent(tasks []taskRecord, rows []agentRow) map[string]int {
 	counts := map[string]int{}
 	for _, task := range tasks {
+		if taskArchived(task) {
+			continue
+		}
 		if task.AssignedAgent != "" {
 			counts[task.AssignedAgent]++
 		}

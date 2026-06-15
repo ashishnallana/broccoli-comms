@@ -66,6 +66,7 @@ func loadAgentsFromBroccoliComms(ctx context.Context, local localClient) ([]agen
 			for key, row := range payload.Agents {
 				rows = append(rows, rowFromBroccoliAgent(key, row))
 			}
+			rows = dedupeLocalRegistryRows(rows)
 			sortRows(rows)
 			return rows, nil
 		}
@@ -89,6 +90,7 @@ func loadAgentsFromRPC(ctx context.Context, local localClient) ([]agentRow, erro
 	for key, agent := range agents {
 		rows = append(rows, rowFromTrackerAgent(key, agent))
 	}
+	rows = dedupeLocalRegistryRows(rows)
 	sortRows(rows)
 	return rows, nil
 }
@@ -114,6 +116,55 @@ func rowFromBroccoliAgent(key string, agent broccoliAgentListRow) agentRow {
 }
 
 func agentBoolPtr(v bool) *bool { return &v }
+
+func dedupeLocalRegistryRows(rows []agentRow) []agentRow {
+	localNames := map[string]bool{}
+	localIDs := map[string]bool{}
+	for _, row := range rows {
+		if row.Scope == "remote" {
+			continue
+		}
+		for _, name := range []string{row.Name, row.AgentName} {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				localNames[name] = true
+			}
+		}
+		if id := strings.TrimSpace(row.AgentID); id != "" {
+			localIDs[id] = true
+		}
+	}
+	out := make([]agentRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Scope == "remote" && remoteRowIsLocalDuplicate(row, localNames, localIDs) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func remoteRowIsLocalDuplicate(row agentRow, localNames, localIDs map[string]bool) bool {
+	if !sameHost(remoteRowHost(row), localHostname()) {
+		return false
+	}
+	if row.AgentID != "" && localIDs[row.AgentID] {
+		return true
+	}
+	return localNames[strings.TrimSpace(row.AgentName)]
+}
+
+func remoteRowHost(row agentRow) string {
+	if strings.TrimSpace(row.Hostname) != "" {
+		return row.Hostname
+	}
+	host, _ := splitRemoteTarget(fallback(row.TargetAddress, row.Name))
+	return host
+}
+
+func sameHost(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
 
 func sortRows(rows []agentRow) {
 	sort.Slice(rows, func(i, j int) bool {

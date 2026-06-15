@@ -146,6 +146,56 @@ func TestSelectedAgentTaskDataIncludesQueuedAndCompleted(t *testing.T) {
 	}
 }
 
+func TestArchivedTasksAreHiddenFromActiveQueueAndCounts(t *testing.T) {
+	m := model{
+		rows:     []agentRow{{Name: "coder", CurrentTaskID: "task-current"}},
+		selected: 0,
+		tasksItems: []taskRecord{
+			{TaskID: "task-current", Title: "Current", Status: "working", AssignedAgent: "coder"},
+			{TaskID: "task-ready", Title: "Ready", Status: "ready", AssignedAgent: "coder", DependsOn: []string{"task-current"}},
+			{TaskID: "task-archived", Title: "Archived", Status: "archived", AssignedAgent: "coder", DependsOn: []string{"task-current"}},
+		},
+		tasksStates: []taskWorkingState{{TaskID: "task-current", Agent: "coder", Status: "working", TaskChainID: "chain-1", RootTaskID: "task-current"}},
+	}
+	data := m.taskData()
+	for _, task := range data.Tasks {
+		if task.TaskID == "task-archived" {
+			t.Fatalf("archived task leaked into task data: %+v", data.Tasks)
+		}
+	}
+	if data.Counts.Total != 2 {
+		t.Fatalf("active counts include archived task: %+v", data.Counts)
+	}
+	view := m.taskManagementView(120, 20)
+	if strings.Contains(view, "Archived") {
+		t.Fatalf("archived task leaked into Tasks view:\n%s", view)
+	}
+	sidebar := strings.Join(m.taskAgentSidebarLines(data, 60, 4), "\n")
+	if !strings.Contains(sidebar, "2 tasks") || strings.Contains(sidebar, "3 tasks") {
+		t.Fatalf("sidebar counts should exclude archived tasks:\n%s", sidebar)
+	}
+}
+
+func TestSelectedAgentWithArchivedCurrentTaskShowsNoDurableQueue(t *testing.T) {
+	m := model{
+		rows:     []agentRow{{Name: "coder", CurrentTaskID: "task-archived"}},
+		selected: 0,
+		tasksItems: []taskRecord{
+			{TaskID: "task-archived", Title: "Archived current", Status: "archived", AssignedAgent: "coder"},
+			{TaskID: "task-child", Title: "Archived child", Status: "ready", AssignedAgent: "coder", DependsOn: []string{"task-archived"}},
+		},
+		tasksStates: []taskWorkingState{{TaskID: "task-archived", Agent: "coder", Status: "working", TaskChainID: "chain-1", RootTaskID: "task-archived"}},
+	}
+	data := m.taskData()
+	if len(data.Tasks) != 0 || data.Counts.Total != 0 {
+		t.Fatalf("archived current task should hide durable queue, tasks=%+v counts=%+v", data.Tasks, data.Counts)
+	}
+	view := m.taskManagementView(120, 20)
+	if strings.Contains(view, "Archived current") || strings.Contains(view, "Archived child") {
+		t.Fatalf("archived current chain leaked into Tasks view:\n%s", view)
+	}
+}
+
 func TestSelectedRemoteAgentMatchesAssignedAgentName(t *testing.T) {
 	m := model{
 		rows:     []agentRow{{Name: "host/coder", AgentName: "coder", TargetAddress: "host.example/coder", CurrentTaskID: "task-current"}},

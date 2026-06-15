@@ -48,6 +48,33 @@ func TestLoadAgentsFromRPCIncludesRemoteAndCallerIdentity(t *testing.T) {
 	}
 }
 
+func TestDedupeLocalRegistryRowsSuppressesLocalRemoteDuplicate(t *testing.T) {
+	host := localHostname()
+	rows := dedupeLocalRegistryRows([]agentRow{
+		{Name: "coder", AgentName: "coder", Scope: "local", AgentID: "agent-local", Hostname: host},
+		{Name: host + "/coder", AgentName: "coder", Scope: "remote", AgentID: "agent-local", Hostname: host, TargetAddress: host + "/coder"},
+		{Name: "other-host/coder", AgentName: "coder", Scope: "remote", AgentID: "agent-remote", Hostname: "other-host", TargetAddress: "other-host/coder"},
+	})
+	if len(rows) != 2 {
+		t.Fatalf("rows after dedupe = %+v", rows)
+	}
+	for _, row := range rows {
+		if row.Scope == "remote" && row.Hostname == host {
+			t.Fatalf("local registry duplicate was not suppressed: %+v", rows)
+		}
+	}
+}
+
+func TestDedupeLocalRegistryRowsPreservesDistinctSameNameRemote(t *testing.T) {
+	rows := dedupeLocalRegistryRows([]agentRow{
+		{Name: "coder", AgentName: "coder", Scope: "local", Hostname: localHostname()},
+		{Name: "remote-host/coder", AgentName: "coder", Scope: "remote", Hostname: "remote-host", TargetAddress: "remote-host/coder"},
+	})
+	if len(rows) != 2 {
+		t.Fatalf("distinct remote same-name agent should be preserved: %+v", rows)
+	}
+}
+
 func TestRowFromTrackerAgentUsesFullRemoteHostnameAndKeepsTarget(t *testing.T) {
 	row := rowFromTrackerAgent("local:tanmayvijay.c.googlers.com/remote-agent", tracker.Agent{Scope: "remote", Hostname: "tanmayvijay.c.googlers.com", TargetAddress: "local:tanmayvijay.c.googlers.com/remote-agent"})
 	if row.Name != "local:tanmayvijay.c.googlers.com/remote-agent" || row.TargetAddress != "local:tanmayvijay.c.googlers.com/remote-agent" {

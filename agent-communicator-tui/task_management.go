@@ -80,12 +80,13 @@ type taskManagementData struct {
 func (m model) taskData() taskManagementData {
 	selected := m.currentRow()
 	stateByTask := latestStateByTask(m.tasksStates)
+	activeTasks := activeTaskRecords(m.tasksItems)
 	chainID, rootID, currentTaskID := m.activeTaskChainFor(selected, stateByTask)
-	items := tasksForChain(m.tasksItems, chainID, rootID, currentTaskID)
+	items := tasksForChain(activeTasks, chainID, rootID, currentTaskID)
 	if chainID == "" && rootID == "" && currentTaskID == "" && selected.Name != "" {
 		items = nil
 	}
-	items = mergeSelectedAgentTasks(items, m.tasksItems, selected)
+	items = mergeSelectedAgentTasks(items, activeTasks, selected)
 	approvals := approvalsForChain(m.tasksApprovals, chainID, rootID)
 	if chainID == "" && rootID == "" && selected.Name != "" {
 		approvals = approvalsForTasks(m.tasksApprovals, items)
