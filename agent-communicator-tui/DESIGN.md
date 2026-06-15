@@ -94,6 +94,7 @@ Rule: if a component has a non-base background, every visible cell in that compo
 Use accent color to improve readability for high-signal metadata fields, not as decoration.
 
 - Highlight metadata values that identify or classify records, such as memory type, memory status, subject/assigned agent name, sender/agent name, and current agent.
+- Use high-contrast `colors.TextStrong`/white text for the selected memory preview so the body excerpt remains readable against selection or detail-panel backgrounds.
 - Prefer `colors.Accent` for normal metadata emphasis and `colors.AccentStrong` for selected, primary, or especially important metadata values.
 - Keep low-signal metadata muted so accent-colored fields remain easy to scan.
 - Do not rely on color alone: pair emphasized statuses with readable text, dots, badges, or labels.
@@ -117,6 +118,7 @@ Simple Chat uses spacing as structure. Follow these defaults:
 - Prefer solid background cards over borders for frequent UI elements.
 - Use borders only for controls that need button affordance or modal separation.
 - Keep cards compact: usually 2 lines for list rows, 1-3 lines for status summaries.
+- In memory lists, leave one blank `BaseBg` line between memory records so previews and metadata do not visually run together.
 
 ## Composer and input box pattern
 

@@ -96,6 +96,9 @@ func (m model) memoryListView(width, height int, includePreview bool) string {
 				lines = append(lines, line)
 			}
 		}
+		if i < end-1 && len(lines) < height {
+			lines = append(lines, bgSpaces(width, bg))
+		}
 	}
 	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Background(bg).Render(strings.Join(lines, "\n"))
 }
@@ -144,12 +147,13 @@ func (m model) memoryDetailsPanel(width, height int) string {
 			lines = append(lines, padStyledLine(fgOnBg(colors.Warning, bg).Render(truncateCells(memoryActionConfirmText(mem, m.memoryConfirm.Action), innerW)), innerW, bg))
 		}
 		if mem.Body != "" {
+			previewStyle := fgOnBg(colors.TextStrong, bg)
 			lines = append(lines, padStyledLine(muted.Render(""), innerW, bg), padStyledLine(accent.Render("Preview"), innerW, bg))
 			for _, line := range wrapLine(strings.ReplaceAll(mem.Body, "\n", " "), innerW) {
 				if len(lines) >= max(1, height-2) {
 					break
 				}
-				lines = append(lines, padStyledLine(muted.Render(truncateCells(line, innerW)), innerW, bg))
+				lines = append(lines, padStyledLine(previewStyle.Render(truncateCells(line, innerW)), innerW, bg))
 			}
 		}
 	} else {

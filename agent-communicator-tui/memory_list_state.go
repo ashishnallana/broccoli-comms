@@ -93,7 +93,7 @@ func (m *model) preserveMemorySelection(previousID string) {
 	m.clampMemorySelection()
 }
 
-func memoryVisibleRowsForHeight(height int) int { return max(1, height/3) }
+func memoryVisibleRowsForHeight(height int) int { return max(1, (height+1)/4) }
 
 func (m model) memoryListHeight() int {
 	bodyH := max(1, m.height-lineCount(m.footer(max(1, m.width)))-lineCount(m.bottomTabBar(max(1, m.width))))

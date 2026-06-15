@@ -82,8 +82,10 @@ func memoryRowLines(mem memoryRecord, selected bool, width int) []string {
 	theme := memoryRowThemeFor(mem, selected)
 	style := fgOnBg(theme.Fg, theme.Bg)
 	muted := fgOnBg(colors.Muted, theme.Bg)
+	previewStyle := muted
 	if selected {
 		muted = fgOnBg(colors.SelectedFg, theme.Bg).Faint(true)
+		previewStyle = fgOnBg(colors.TextStrong, theme.Bg)
 	}
 	prefix := "  "
 	if selected {
@@ -103,7 +105,7 @@ func memoryRowLines(mem memoryRecord, selected bool, width int) []string {
 	return []string{
 		padStyledLine(style.Bold(selected).Render(truncateCells(line1, width)), width, theme.Bg),
 		padStyledLine(muted.Render(truncateCells(line2, width)), width, theme.Bg),
-		padStyledLine(muted.Render(truncateCells(line3, width)), width, theme.Bg),
+		padStyledLine(previewStyle.Render(truncateCells(line3, width)), width, theme.Bg),
 	}
 }
 
@@ -120,6 +122,7 @@ func compactNonEmpty(values []string) []string {
 func memoryInlineDetailLines(mem memoryRecord, width int) []string {
 	bg := colors.BaseBg
 	muted := fgOnBg(colors.Muted, bg)
+	previewStyle := fgOnBg(colors.TextStrong, bg)
 	accent := fgOnBg(colors.Accent, bg).Bold(true)
 	lines := []string{
 		padStyledLine(accent.Render(truncateCells("Selected · "+firstNonEmpty(mem.Title, mem.MemoryID), width)), width, bg),
@@ -127,7 +130,7 @@ func memoryInlineDetailLines(mem memoryRecord, width int) []string {
 		padStyledLine(muted.Render(truncateCells(memoryActionHelp(mem), width)), width, bg),
 	}
 	if mem.Body != "" {
-		lines = append(lines, padStyledLine(muted.Render(truncateCells(memoryPreviewText(mem), width)), width, bg))
+		lines = append(lines, padStyledLine(previewStyle.Render(truncateCells(memoryPreviewText(mem), width)), width, bg))
 	}
 	return lines
 }
