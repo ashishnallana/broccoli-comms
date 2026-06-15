@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func TestMemoryRowLinesShowCoreFieldsAndPreview(t *testing.T) {
@@ -26,6 +27,19 @@ func TestMemoryRowSelectedUsesSelectedBackgroundAndFillsWidth(t *testing.T) {
 		if got := lipgloss.Width(line); got != 50 {
 			t.Fatalf("selected row should fill width 50, got %d: %q", got, line)
 		}
+	}
+}
+
+func TestSelectedMemoryPreviewUsesTextStrong(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(previousProfile)
+
+	mem := memoryRecord{MemoryID: "mem-1", Status: "active", Type: "fact", Title: "Endpoint", Body: "Readable selected preview"}
+	lines := memoryRowLines(mem, true, 80)
+	want := fgOnBg(colors.TextStrong, colors.SelectedBg).Render("  Readable selected preview")
+	if !strings.Contains(lines[2], want) {
+		t.Fatalf("selected preview should use TextStrong on selected background; want styled preview %q in %q", want, lines[2])
 	}
 }
 

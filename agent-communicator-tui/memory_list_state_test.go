@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func sampleMemoryRecords() []memoryRecord {
@@ -89,6 +90,24 @@ func TestMemoryListViewRendersVisibleWindowOnly(t *testing.T) {
 	}
 	if strings.Contains(view, "mem-0") || strings.Contains(view, "mem-49") {
 		t.Fatalf("view should not render all rows for large list:\n%s", view)
+	}
+}
+
+func TestMemoryListViewAddsGapBetweenMemoryRows(t *testing.T) {
+	m := model{mode: memoryView, width: 100, height: 20, memoryItems: sampleMemoryRecords(), memorySelected: 0}
+	view := m.memoryListView(80, 7, false)
+	lines := strings.Split(view, "\n")
+	if len(lines) < 5 {
+		t.Fatalf("memory list should include at least first row, gap, and second row; got %d lines:\n%s", len(lines), view)
+	}
+	if !strings.Contains(lines[0], "Run tests") || !strings.Contains(lines[4], "Endpoint") {
+		t.Fatalf("expected first and second memory rows around gap:\n%s", view)
+	}
+	if strings.Contains(lines[3], "Run tests") || strings.Contains(lines[3], "Endpoint") || strings.Contains(lines[3], "mem-") {
+		t.Fatalf("line between memory rows should be a blank spacer, got %q in:\n%s", lines[3], view)
+	}
+	if got := lipgloss.Width(lines[3]); got != 80 {
+		t.Fatalf("memory row spacer width=%d want 80: %q", got, lines[3])
 	}
 }
 
