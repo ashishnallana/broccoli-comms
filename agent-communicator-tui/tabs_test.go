@@ -12,7 +12,7 @@ import (
 func TestTabBarRendersActiveMode(t *testing.T) {
 	m := model{width: 120, mode: swarmView}
 	bar := m.bottomTabBar(m.width)
-	for _, want := range []string{"Simple Chat", "Swarm Mode", "Saved Messages", "Memory Management"} {
+	for _, want := range []string{"Simple Chat", "Swarm Mode", "Saved Messages", "Memory Management", "Tasks"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("tab bar missing %q: %q", want, bar)
 		}
@@ -46,13 +46,18 @@ func TestAppTabSwitchingWithCtrlTAndCtrlY(t *testing.T) {
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	m = updated.(model)
+	if m.mode != tasksView {
+		t.Fatalf("fourth ctrl-t mode = %v, want tasks", m.mode)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = updated.(model)
 	if m.mode != simpleView {
-		t.Fatalf("fourth ctrl-t mode = %v, want simple", m.mode)
+		t.Fatalf("fifth ctrl-t mode = %v, want simple", m.mode)
 	}
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlY})
 	m = updated.(model)
-	if m.mode != memoryView {
-		t.Fatalf("ctrl-y from simple mode = %v, want memory", m.mode)
+	if m.mode != tasksView {
+		t.Fatalf("ctrl-y from simple mode = %v, want tasks", m.mode)
 	}
 }
 
@@ -102,7 +107,7 @@ func TestTabsAreDataDriven(t *testing.T) {
 	defer func() { registeredAppTabs = oldTabs }()
 	fakeMode := viewMode(99)
 	registeredAppTabs = append(append([]appTab(nil), registeredAppTabs...), appTab{ID: "fake", Mode: fakeMode, Label: "Fake Tab", ShortLabel: "Fake"})
-	m := model{mode: memoryView, width: 120}
+	m := model{mode: tasksView, width: 120}
 	m.selectTab(1)
 	if m.mode != fakeMode {
 		t.Fatalf("data-driven tab cycle mode=%v want fake", m.mode)

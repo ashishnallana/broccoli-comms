@@ -21,6 +21,7 @@ const (
 	swarmView
 	savedView
 	memoryView
+	tasksView
 )
 
 type runtimeInfo struct {
@@ -104,6 +105,17 @@ type model struct {
 	memoryForm          memoryFormState
 	memoryConfirm       memoryActionConfirmation
 	memoryErr           error
+
+	// Task management tab
+	tasksItems     []taskRecord
+	tasksStates    []taskWorkingState
+	tasksApprovals []taskApprovalRecord
+	tasksSelected  int
+	tasksOffset    int
+	tasksLoading   bool
+	tasksErr       error
+	tasksConfirm   taskActionConfirmation
+	tasksForm      taskChainFormState
 
 	// Save Agent Form (Ctrl-S)
 	showingSaveForm bool
@@ -292,6 +304,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil {
 			m.memoryForm = memoryFormState{}
 			return m, loadMemoryApprovalsCmd()
+		}
+	case tasksLoaded:
+		m.err = msg.Err
+		m.tasksErr = msg.Err
+		m.tasksLoading = false
+		if msg.Err == nil {
+			m.tasksItems = msg.Tasks
+			m.tasksStates = msg.States
+			m.tasksApprovals = msg.Approvals
+			m.clampTaskSelection()
+		}
+	case taskActionResult:
+		m.err = msg.Err
+		m.tasksErr = msg.Err
+		m.tasksLoading = msg.Err == nil
+		m.tasksConfirm = taskActionConfirmation{}
+		if msg.Status != "" {
+			m.directInputStatus = msg.Status
+			m.directInputStatusErr = msg.Err != nil
+		}
+		if msg.Err == nil {
+			return m, loadTasksCmd()
+		}
+	case taskEditClosed:
+		m.err = msg.Err
+		m.tasksErr = msg.Err
+		m.tasksLoading = msg.Err == nil && !strings.Contains(msg.Status, "unchanged")
+		if msg.Status != "" {
+			m.directInputStatus = msg.Status
+			m.directInputStatusErr = msg.Err != nil
+		}
+		if msg.Err == nil && !strings.Contains(msg.Status, "unchanged") {
+			return m, loadTasksCmd()
 		}
 	}
 	return m, nil

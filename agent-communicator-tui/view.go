@@ -62,6 +62,9 @@ func (m model) mainContentView(bodyH int) string {
 	if m.mode == memoryView {
 		return truncateLines(m.memoryManagementView(m.width, bodyH), bodyH)
 	}
+	if m.mode == tasksView {
+		return truncateLines(m.taskManagementView(m.width, bodyH), bodyH)
+	}
 	if m.width < 70 {
 		return truncateLines(m.conversationPanel(m.width, bodyH), bodyH)
 	}

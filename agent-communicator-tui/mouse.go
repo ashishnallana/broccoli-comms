@@ -17,6 +17,9 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if m.mode == memoryView {
 			m.memoryLoading = true
 		}
+		if m.mode == tasksView {
+			m.tasksLoading = true
+		}
 		m.selectLatestMessage()
 		return m, m.loadActiveTabCmd()
 	}

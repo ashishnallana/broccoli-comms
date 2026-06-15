@@ -22,6 +22,7 @@ var registeredAppTabs = []appTab{
 	{ID: "swarm", Mode: swarmView, Label: "Swarm Mode", ShortLabel: "Swarm", Help: "coordinate agent groups", CanCompose: true, Load: loadSwarmTab},
 	{ID: "saved", Mode: savedView, Label: "Saved Messages", ShortLabel: "Saved", Help: "starred messages", CanCompose: false, Load: loadSavedTabMessages},
 	{ID: "memory", Mode: memoryView, Label: "Memory Management", ShortLabel: "Memory", Help: "review and maintain durable memory", CanCompose: false, Load: loadMemoryTab},
+	{ID: "tasks", Mode: tasksView, Label: "Tasks", ShortLabel: "Tasks", Help: "manage task chains", CanCompose: false, Load: loadTasksTab},
 }
 
 func loadSimpleTabMessages(m model) tea.Cmd {
