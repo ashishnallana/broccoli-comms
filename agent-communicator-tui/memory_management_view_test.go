@@ -29,6 +29,26 @@ func TestMemoryManagementWideLayoutShowsRightColumn(t *testing.T) {
 	}
 }
 
+func TestMemoryFilterInputBoxMatchesComposerFamilyWithoutModePrefix(t *testing.T) {
+	m := model{mode: memoryView, width: 100, memoryQuery: []rune("agent:broccoli")}
+	box := m.memoryFilterInputBox(80)
+	lines := strings.Split(box, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("filter input should use composer-like blank/content/blank lines, got %d:\n%s", len(lines), box)
+	}
+	for i, line := range lines {
+		if got := lipgloss.Width(line); got != 80 {
+			t.Fatalf("filter input line %d width=%d want 80: %q", i, got, line)
+		}
+	}
+	if strings.Contains(box, "/msg") || strings.Contains(box, "/text") || strings.Contains(box, "/keys") {
+		t.Fatalf("memory filter input should not include composer mode prefix: %q", box)
+	}
+	if !strings.Contains(box, "agent:broccoli") || !strings.Contains(box, "status") || !strings.Contains(box, "type") {
+		t.Fatalf("memory filter input missing query/filter text: %q", box)
+	}
+}
+
 func TestMemoryManagementNarrowLayoutHidesRightColumn(t *testing.T) {
 	m := model{mode: memoryView, width: 60, height: 24, memoryItems: []memoryRecord{{MemoryID: "mem-1", Status: "active", Version: 1, Type: "fact", Title: "Endpoint", Body: "Body preview"}}}
 	view := m.memoryManagementView(60, 20)

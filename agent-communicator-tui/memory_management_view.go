@@ -36,7 +36,7 @@ func (m model) memoryPrimaryPanel(width, height int, wide bool) string {
 	innerW := max(1, width-(padX*2))
 	bg := colors.BaseBg
 	title := titleStyle.Render("Memory Management")
-	query := lipgloss.NewStyle().Width(innerW).MaxWidth(innerW).Background(colors.InputBg).Foreground(colors.Muted).Padding(0, 1).Render(truncateCells(m.memoryFilterText(), max(1, innerW-2)))
+	query := m.memoryFilterInputBox(innerW)
 	helpText := "↑/↓ select · / search · s/t/g filters · n new · e edit EDITOR/nvim · a approve · d reject/revoke · R rollback · r refresh"
 	help := padStyledLine(mutedStyle.Render(truncateCells(helpText, innerW)), innerW, bg)
 	statusLine := m.memoryConfirmationLine(innerW, bg)
@@ -49,6 +49,21 @@ func (m model) memoryPrimaryPanel(width, height int, wide bool) string {
 	}
 	body += "\n" + bgSpaces(innerW, bg) + "\n" + list
 	return lipgloss.NewStyle().Width(width).Height(height).MaxWidth(width).MaxHeight(height).Padding(1, padX, 0, padX).Background(bg).Render(truncateLines(body, max(1, height-1)))
+}
+
+func (m model) memoryFilterInputBox(width int) string {
+	padX := 2
+	if m.width < 70 {
+		padX = 1
+	}
+	inner := max(1, width-(padX*2))
+	blank := bgSpaces(width, colors.InputBg)
+	contentStyle := fgOnBg(colors.Muted, colors.InputBg)
+	if m.memorySearchFocused {
+		contentStyle = fgOnBg(colors.Text, colors.InputBg)
+	}
+	line := bgSpaces(padX, colors.InputBg) + padStyledLine(contentStyle.Render(truncateCells(m.memoryFilterText(), inner)), inner, colors.InputBg) + bgSpaces(padX, colors.InputBg)
+	return strings.Join([]string{blank, line, blank}, "\n")
 }
 
 func (m model) memoryConfirmationLine(width int, bg lipgloss.Color) string {
