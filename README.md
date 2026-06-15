@@ -95,21 +95,22 @@ max_nudges = 5
 
 [providers.pi]
 cmd = "pi"
-auto-accept-flag = ""
-prompt-flag-name = ""
-initial-message = ""
+auto-accept-flag = "--auto-accept"
+prompt-flag-name = "--"
+initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
 [providers.codex]
 cmd = "codex"
-auto-accept-flag = ""
-prompt-flag-name = ""
-initial-message = ""
+auto-accept-flag = "--dangerously-bypass-approvals-and-sandbox"
+prompt-flag-name = "--"
+initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
 [providers.claude]
 cmd = "claude"
-auto-accept-flag = ""
-prompt-flag-name = ""
-initial-message = ""
+agent-root-dir = "~/.agents-root"
+auto-accept-flag = "--dangerously-skip-permissions"
+prompt-flag-name = "--"
+initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 ```
 
 Provider fields:
@@ -117,7 +118,8 @@ Provider fields:
 - `cmd`: executable or absolute path to launch for the provider alias used in `broccoli-comms run NAME -- PROVIDER ...`.
 - `defaultArgs`: optional string or TOML array appended after `cmd` for every launch of that provider.
 - `auto-accept-flag`: optional provider-specific flag that enables auto-accept/auto-approve mode. Leave empty to disable.
-- `prompt-flag-name` plus `initial-message`: when both are non-empty, `broccoli-comms run` passes them as the provider's initial prompt/message flag and value. The message is passed as the configured provider argument; it is not converted into an inbox notification.
+- `prompt-flag-name` plus `initial-message`: when both are non-empty, `broccoli-comms run` passes them as the provider's initial prompt/message flag and value. Use `--` for providers whose initial prompt is a positional argument. The message is passed as the configured provider argument; it is not converted into an inbox notification.
+- provider-level `agent-root-dir`: optional stable root for only that provider. It overrides `[paths].agent-root-dir` for runs launched through the provider alias.
 
 Path fields:
 

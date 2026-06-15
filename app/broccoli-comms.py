@@ -740,9 +740,9 @@ def managed_track_env_assignments() -> list[str]:
     return [shell_env_assignment(key, env[key]) for key in keys if key in env and (env.get(key) or key in {"BROCCOLI_COMMS_TRACK_ACTIVE", "AGENT_WRAPPER_DEPTH", "AGENT_NAME", "AGENT_ID", "AGENT_UUID"})]
 
 
-def ephemeral_agent_workspace(name: str, agents_dir: str | None = None, source_cwd: str | Path | None = None) -> str:
+def ephemeral_agent_workspace(name: str, agents_dir: str | None = None, source_cwd: str | Path | None = None, agent_root_dir: str | Path | None = None) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "-", name).strip("-._") or "agent"
-    agent_root = configured_agent_root_dir()
+    agent_root = Path(str(agent_root_dir)).expanduser() if agent_root_dir else configured_agent_root_dir()
     if agent_root is not None:
         tmp_root = agent_root / safe_name
         exist_ok = True
@@ -1635,6 +1635,7 @@ def run(args: argparse.Namespace) -> None:
         raise SystemExit(f"run source-cwd does not exist or is not a directory: {source_cwd}")
 
     agents_dir = None
+    provider_agent_root_dir = None
     if command:
         provider_alias = command[0]
         provider_cfg = get_toml_config("providers", provider_alias, {})
@@ -1646,13 +1647,14 @@ def run(args: argparse.Namespace) -> None:
             command = [cmd_override] + default_args + auto_accept_args + initial_message_args + command[1:]
             if "agentsDir" in provider_cfg:
                 agents_dir = provider_cfg["agentsDir"]
+            provider_agent_root_dir = provider_cfg.get("agent-root-dir", provider_cfg.get("agentRootDir", provider_cfg.get("agent_root_dir")))
 
     ensure_tracker()
     ensure_tmux()
     if window_exists(args.name):
         raise SystemExit(f"agent {args.name!r} is already running; stop or edit it first")
 
-    launch_cwd = ephemeral_agent_workspace(args.name, agents_dir=agents_dir, source_cwd=source_cwd)
+    launch_cwd = ephemeral_agent_workspace(args.name, agents_dir=agents_dir, source_cwd=source_cwd, agent_root_dir=provider_agent_root_dir)
     context_path = str(Path(launch_cwd))
 
     if using_saved_config and not (getattr(args, "swarm", None) or getattr(args, "role", None)):

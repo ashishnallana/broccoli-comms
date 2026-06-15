@@ -852,18 +852,62 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertIn(f"Launch/source cwd: {src}", agents)
             self.assertIn("For file/project queries not related to agent memory", agents)
 
-    def test_home_manager_provider_defaults_keep_safe_empty_launch_flags(self):
+    def test_home_manager_provider_defaults_set_launch_flags_and_agent_roots(self):
         text = (Path(__file__).resolve().parents[1] / "modules" / "home-manager.nix").read_text()
-        for provider in ("pi", "codex", "claude"):
+        expected = {
+            "jetski": {
+                "cmd": 'cmd = "/google/bin/releases/jetski-devs/tools/cli"',
+                "auto": 'auto-accept-flag = "--yolo"',
+                "root": 'agent-root-dir = "${config.home.homeDirectory}/.agents-root"',
+            },
+            "pi": {"cmd": 'cmd = "pi"', "auto": 'auto-accept-flag = "--auto-accept"'},
+            "codex": {"cmd": 'cmd = "codex"', "auto": 'auto-accept-flag = "--dangerously-bypass-approvals-and-sandbox"'},
+            "claude": {
+                "cmd": 'cmd = "claude"',
+                "auto": 'auto-accept-flag = "--dangerously-skip-permissions"',
+                "root": 'agent-root-dir = "${config.home.homeDirectory}/.agents-root"',
+            },
+        }
+        for provider, values in expected.items():
             marker = f"[providers.{provider}]"
             self.assertIn(marker, text)
             start = text.index(marker)
             next_provider = text.find("[providers.", start + 1)
             block = text[start: next_provider if next_provider != -1 else len(text)]
-            self.assertIn(f'cmd = "{provider}"', block)
-            self.assertIn('auto-accept-flag = ""', block)
-            self.assertIn('prompt-flag-name = ""', block)
-            self.assertIn('initial-message = ""', block)
+            self.assertIn(values["cmd"], block)
+            self.assertIn(values["auto"], block)
+            self.assertIn('prompt-flag-name = "--"', block)
+            self.assertIn('initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."', block)
+            if "root" in values:
+                self.assertIn(values["root"], block)
+
+    def test_run_passes_provider_agent_root_dir_to_workspace_builder(self):
+        calls = []
+        workspace_calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        def fake_workspace(*args, **kwargs):
+            workspace_calls.append((args, kwargs))
+            return f"{tmp}/agent-workspace"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text('[providers.claude]\ncmd = "claude"\nagent-root-dir = "~/.agents-root"\n')
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", side_effect=fake_workspace):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope=None, swarm=None, role=None, host=None, command=["claude"], json=True))
+
+        self.assertEqual(workspace_calls[0][1]["agent_root_dir"], "~/.agents-root")
 
     def test_ephemeral_agent_workspace_writes_agents_md_from_config_template(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):

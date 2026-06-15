@@ -263,27 +263,29 @@ in {
         [providers.jetski]
         cmd = "/google/bin/releases/jetski-devs/tools/cli"
         agentsDir = "_agents"
-        auto-accept-flag = ""
-        prompt-flag-name = ""
-        initial-message = ""
+        agent-root-dir = "${config.home.homeDirectory}/.agents-root"
+        auto-accept-flag = "--yolo"
+        prompt-flag-name = "--"
+        initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
         [providers.pi]
         cmd = "pi"
-        auto-accept-flag = ""
-        prompt-flag-name = ""
-        initial-message = ""
+        auto-accept-flag = "--auto-accept"
+        prompt-flag-name = "--"
+        initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
         [providers.codex]
         cmd = "codex"
-        auto-accept-flag = ""
-        prompt-flag-name = ""
-        initial-message = ""
+        auto-accept-flag = "--dangerously-bypass-approvals-and-sandbox"
+        prompt-flag-name = "--"
+        initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
         [providers.claude]
         cmd = "claude"
-        auto-accept-flag = ""
-        prompt-flag-name = ""
-        initial-message = ""
+        agent-root-dir = "${config.home.homeDirectory}/.agents-root"
+        auto-accept-flag = "--dangerously-skip-permissions"
+        prompt-flag-name = "--"
+        initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
       '';
     })
