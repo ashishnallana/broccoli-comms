@@ -3224,15 +3224,48 @@ def notify_approval_request(kernel: LearningKernel, approval: dict) -> dict:
         "source": "system/task-kernel",
         "sender_source": "system",
     }
+    ui_sent = False
+    ui_result = None
+    ui_error = None
+    sender_name = approval.get("submitter_profile") or "task-kernel"
     try:
-        result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": "task-kernel"})
-        if not result:
+        ui_result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": sender_name})
+        if not ui_result:
             raise RuntimeError("tracker RPC send_message failed")
-        event = kernel.record_approval_notification(approval["approval_id"], True, "agent-communicator")
-        return {"sent": True, "result": result, "event": event}
+        kernel.record_approval_notification(approval["approval_id"], True, "agent-communicator")
+        ui_sent = True
     except Exception as e:
-        event = kernel.record_approval_notification(approval["approval_id"], False, str(e))
-        return {"sent": False, "error": str(e), "event": event}
+        ui_error = str(e)
+        kernel.record_approval_notification(approval["approval_id"], False, str(e))
+    participant_results = []
+    try:
+        task = kernel.task_show(approval["task_id"], include_participants=True)
+        recipients = []
+        def append_approval_recipient(agent: str | None) -> None:
+            if agent and agent != UI_AGENT_NAME and agent not in recipients:
+                recipients.append(agent)
+        append_approval_recipient(approval.get("submitter_profile"))
+        append_approval_recipient(task.get("assigned_agent"))
+        for participant in task.get("participants") or []:
+            if participant.get("status") == "active" and participant.get("role") in {"assignee", "reviewer", "verifier", "coordinator"}:
+                append_approval_recipient(participant.get("agent"))
+        for recipient in recipients:
+            participant_metadata = {**metadata, "recipient_agent": recipient, "recipient_kind": "task_participant"}
+            try:
+                participant_result = tracker_rpc("send_message", {"agent_name": recipient, "message": message, "metadata": participant_metadata, "sender_name": sender_name})
+                if not participant_result:
+                    raise RuntimeError("tracker RPC send_message failed")
+                event = kernel.record_approval_notification(approval["approval_id"], True, f"participant:{recipient}")
+                participant_results.append({"agent": recipient, "sent": True, "result": participant_result, "event": event})
+            except Exception as participant_error:
+                event = kernel.record_approval_notification(approval["approval_id"], False, f"participant:{recipient}: {participant_error}")
+                participant_results.append({"agent": recipient, "sent": False, "error": str(participant_error), "event": event})
+    except Exception as e:
+        participant_results.append({"agent": None, "sent": False, "error": str(e)})
+    payload = {"sent": ui_sent, "result": ui_result, "participant_notifications": participant_results}
+    if ui_error:
+        payload["error"] = ui_error
+    return payload
 
 
 def task_submit_completion(args: argparse.Namespace) -> None:
@@ -3275,10 +3308,17 @@ def task_approval_show(args: argparse.Namespace) -> None:
 
 
 def task_approval_review(args: argparse.Namespace) -> None:
+    actor = getattr(args, "actor", None) or os.environ.get("AGENT_NAME") or "user"
+    kernel = learning_kernel()
     try:
-        payload = learning_kernel().review_completion(args.approval_id, args.result, next_step=args.next_step, notes=args.notes, status=args.status, task_version_at_submission=args.task_version_at_submission, actor=os.environ.get("AGENT_NAME") or "user")
+        payload = kernel.review_completion(args.approval_id, args.result, next_step=args.next_step, notes=args.notes, status=args.status, task_version_at_submission=args.task_version_at_submission, actor=actor)
     except (KeyError, ValueError) as e:
         raise SystemExit(str(e))
+    task_id = payload.get("task", {}).get("task_id")
+    if task_id and not payload.get("idempotent"):
+        notify_payload = kernel.task_show(task_id, include_participants=True)
+        notify_payload["ready_dependents"] = kernel.task_ready_dependents(task_id, include_participants=True)
+        payload["notification"] = notify_task_update(notify_payload, actor, {"status": payload.get("task", {}).get("status"), "result_status": args.result})
     _print_payload(payload, args.json)
 
 
@@ -3480,6 +3520,7 @@ def main() -> None:
     approval_review_parser.add_argument("--notes")
     approval_review_parser.add_argument("--status", choices=["ready", "working", "blocked", "validated"])
     approval_review_parser.add_argument("--task-version-at-submission", type=int)
+    approval_review_parser.add_argument("--actor", help="Reviewer/verifier agent name to record when AGENT_NAME is unavailable (used by trusted TUI approval cards)")
     approval_review_parser.add_argument("--json", action="store_true")
     approval_review_parser.set_defaults(func=task_approval_review)
 

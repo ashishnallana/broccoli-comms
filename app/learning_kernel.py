@@ -640,6 +640,7 @@ class LearningKernel:
             old = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
             if not old:
                 raise KeyError(task_id)
+            self._assert_direct_completion_allowed(conn, task_id, actor, updates.get("status"))
             conn.execute("BEGIN IMMEDIATE")
             sets = [f"{k}=?" for k in updates] + ["updated_by=?", "updated_at=?", "version=version+1"]
             conn.execute(f"UPDATE tasks SET {','.join(sets)} WHERE task_id=?", [*updates.values(), actor, now_iso(), task_id])
@@ -681,11 +682,34 @@ class LearningKernel:
         task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
         return task, ev
 
+    def _active_participants_for_roles(self, conn: sqlite3.Connection, task_id: str, roles: set[str]) -> list[dict[str, Any]]:
+        task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
+        if not task:
+            raise KeyError(task_id)
+        return [p for p in self._task_participants_for_task(conn, task) if p.get("status") == "active" and p.get("role") in roles]
+
+    def _active_review_participants(self, conn: sqlite3.Connection, task_id: str) -> list[dict[str, Any]]:
+        return self._active_participants_for_roles(conn, task_id, {"reviewer", "verifier"})
+
+    def _actor_has_active_review_role(self, conn: sqlite3.Connection, task_id: str, actor: str) -> bool:
+        return any(p.get("agent") == actor for p in self._active_review_participants(conn, task_id))
+
+    def _assert_direct_completion_allowed(self, conn: sqlite3.Connection, task_id: str, actor: str, status: str | None, approval_id: str | None = None) -> None:
+        if approval_id:
+            return
+        if status not in {"done", "validated"}:
+            return
+        reviewers = self._active_review_participants(conn, task_id)
+        if reviewers:
+            agents = ", ".join(sorted({p.get("agent") or "" for p in reviewers if p.get("agent")}))
+            raise ValueError(f"task has active reviewer/verifier participants ({agents}); submit completion for review instead of marking {status} directly")
+
     def mark_result(self, task_id: str, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None, approval_id: str | None = None) -> dict[str, Any]:
         notes, next_step, actor, status = self._validated_result_fields(result, notes, actor, next_step, status)
         with closing(self.connect()) as conn:
             if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone():
                 raise KeyError(task_id)
+            self._assert_direct_completion_allowed(conn, task_id, actor, status, approval_id)
             conn.execute("BEGIN IMMEDIATE")
             task, _ev = self._mark_result_in_tx(conn, task_id, result, notes, actor, next_step, status, approval_id)
             conn.execute("COMMIT")
@@ -777,6 +801,41 @@ class LearningKernel:
             conn.execute("COMMIT")
             return {"cleared": len(states), "task_id": task_id, "agent": agent}
 
+    def _tasks_for_completion_chain(self, conn: sqlite3.Connection, task_chain_id: str, root_task_id: str) -> list[dict[str, Any]]:
+        by_id = {r["task_id"]: self.row_task(r) for r in conn.execute("SELECT * FROM tasks WHERE status!='archived'").fetchall()}
+        ids = {root_task_id} if root_task_id else set()
+        for row in conn.execute("SELECT DISTINCT task_id FROM task_participants WHERE status='active' AND (task_chain_id=? OR root_task_id=?)", (task_chain_id, root_task_id)).fetchall():
+            ids.add(row["task_id"])
+        changed = True
+        while changed:
+            changed = False
+            for task_id, task in by_id.items():
+                if task_id in ids:
+                    continue
+                if any(dep in ids for dep in (task.get("depends_on") or [])):
+                    ids.add(task_id)
+                    changed = True
+        return [by_id[task_id] for task_id in sorted(ids) if task_id in by_id]
+
+    def _assert_chain_completion_allowed(self, conn: sqlite3.Connection, task_id: str, task_chain_id: str, root_task_id: str) -> None:
+        if not root_task_id or task_id != root_task_id:
+            return
+        blockers = []
+        for task in self._tasks_for_completion_chain(conn, task_chain_id, root_task_id):
+            if task["task_id"] == task_id:
+                continue
+            if task.get("status") not in DONE_STATUSES:
+                blockers.append(f"{task['task_id']}:{task.get('status')}")
+                continue
+            if task.get("result_status") in {"bad", "need_improvements"}:
+                blockers.append(f"{task['task_id']}:{task.get('result_status')}")
+                continue
+            pending = conn.execute("SELECT approval_id FROM task_approvals WHERE task_id=? AND status='pending'", (task["task_id"],)).fetchone()
+            if pending:
+                blockers.append(f"{task['task_id']}:pending approval {pending['approval_id']}")
+        if blockers:
+            raise ValueError("cannot complete task chain while tasks remain open or pending approval: " + ", ".join(blockers[:10]))
+
     def submit_completion(self, task_id: str, **kw: Any) -> dict[str, Any]:
         if kw.get("non_learning"):
             raise ValueError("immutable/non-learning instances cannot submit learning approvals")
@@ -797,6 +856,7 @@ class LearningKernel:
             task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
             if not task:
                 raise KeyError(task_id)
+            self._assert_chain_completion_allowed(conn, task_id, task_chain_id, root_task_id)
             payload_fingerprint = {
                 "task_id": task_id, "task_chain_id": task_chain_id, "root_task_id": root_task_id,
                 "agent_instance_id": instance_id, "result_summary": result_summary,
@@ -868,6 +928,10 @@ class LearningKernel:
             expected_current_version = int(approval["task_version_at_submission"]) + 1
             if task.get("status") != "review" or int(task.get("version") or 0) != expected_current_version:
                 raise ValueError("refresh required: task changed since approval submission")
+            reviewers = self._active_review_participants(conn, approval["task_id"])
+            if reviewers and not self._actor_has_active_review_role(conn, approval["task_id"], actor):
+                agents = ", ".join(sorted({p.get("agent") or "" for p in reviewers if p.get("agent")}))
+                raise ValueError(f"approval must be reviewed by an active reviewer/verifier participant: {agents}")
             notes, next_step, actor, status = self._validated_result_fields(result, notes, actor, next_step, kw.get("status"))
             conn.execute("BEGIN IMMEDIATE")
             latest = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())

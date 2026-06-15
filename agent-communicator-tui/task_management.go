@@ -1,5 +1,7 @@
 package main
 
+import "strings"
+
 type taskParticipant struct {
 	ParticipantID string `json:"participant_id"`
 	TaskID        string `json:"task_id"`
@@ -76,6 +78,23 @@ type taskCounts struct {
 	Completed int
 }
 
+type taskChainSummary struct {
+	ChainID        string
+	RootTaskID     string
+	RootTitle      string
+	Tasks          []taskRecord
+	Buckets        []taskBucket
+	Counts         taskCounts
+	Participants   []taskParticipant
+	Agents         []string
+	CurrentTask    taskRecord
+	NextTask       taskRecord
+	LatestActivity string
+	LatestUpdate   string
+	Blockers       []string
+	Approvals      []taskApprovalRecord
+}
+
 type taskManagementData struct {
 	SelectedAgent agentRow
 	ActiveChainID string
@@ -89,6 +108,11 @@ type taskManagementData struct {
 	Approvals     []taskApprovalRecord
 	Tasks         []taskRecord
 	States        []taskWorkingState
+	Chains        []taskChainSummary
+	SelectedChain taskChainSummary
+	ChainFocused  bool
+	AgentFilter   string
+	FilterAgents  []string
 }
 
 func (m model) taskData() taskManagementData {
@@ -96,23 +120,60 @@ func (m model) taskData() taskManagementData {
 	stateByTask := latestStateByTask(m.tasksStates)
 	approvalByTaskAll := approvalsByTask(m.tasksApprovals)
 	items := openTaskRecords(activeTaskRecords(m.tasksItems), stateByTask, approvalByTaskAll)
-	chainID, rootID, currentTaskID := taskFocusFromSelection(items, m.tasksSelected)
+	filter := strings.TrimSpace(string(m.tasksAgentFilter))
+	items = filterTasksByAgent(items, m.tasksStates, selected, filter)
+	chains := chainSummaries(items, m.tasksStates, m.tasksApprovals)
+	chains = filterChainsByAgent(chains, selected, filter)
+	selectedChain := taskChainSummary{}
+	chainIndex := m.tasksSelected
+	if m.tasksChainFocused {
+		chainIndex = m.tasksChainSelected
+	}
+	if len(chains) > 0 {
+		selectedChain = chains[min(max(0, chainIndex), len(chains)-1)]
+	}
+	buckets := bucketTasks(items, "", stateByTask, approvalByTaskAll)
+	if m.tasksChainFocused {
+		buckets = selectedChain.Buckets
+	}
 	approvals := approvalsForTasks(m.tasksApprovals, items)
-	approvalByTask := approvalsByTask(approvals)
-	buckets := bucketTasks(items, currentTaskID, stateByTask, approvalByTask)
-	rowCount := len(orderedTaskRows(buckets))
+	blockers := collectTaskBlockers(items, stateByTask)
+	if m.tasksChainFocused {
+		blockers = selectedChain.Blockers
+	}
+	rowCount := len(chains)
+	if m.tasksChainFocused {
+		rowCount = len(orderedTaskRows(buckets))
+	}
+	currentTaskID := ""
+	if selectedChain.CurrentTask.TaskID != "" {
+		currentTaskID = selectedChain.CurrentTask.TaskID
+	}
+	activeChainID := ""
+	activeRootID := ""
+	activeCurrentTaskID := ""
+	if m.tasksChainFocused {
+		activeChainID = selectedChain.ChainID
+		activeRootID = selectedChain.RootTaskID
+		activeCurrentTaskID = currentTaskID
+	}
 	return taskManagementData{
 		SelectedAgent: selected,
-		ActiveChainID: chainID,
-		RootTaskID:    rootID,
-		CurrentTaskID: currentTaskID,
+		ActiveChainID: activeChainID,
+		RootTaskID:    activeRootID,
+		CurrentTaskID: activeCurrentTaskID,
 		SelectedIndex: min(max(0, m.tasksSelected), max(0, rowCount-1)),
 		Offset:        min(max(0, m.tasksOffset), max(0, rowCount-1)),
 		Buckets:       buckets,
 		Counts:        countTaskBuckets(buckets),
-		Blockers:      collectTaskBlockers(items, stateByTask),
+		Blockers:      blockers,
 		Approvals:     approvals,
 		Tasks:         items,
 		States:        m.tasksStates,
+		Chains:        chains,
+		SelectedChain: selectedChain,
+		ChainFocused:  m.tasksChainFocused,
+		AgentFilter:   filter,
+		FilterAgents:  taskFilterAgents(items, m.tasksStates),
 	}
 }

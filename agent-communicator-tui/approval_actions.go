@@ -97,6 +97,9 @@ func approvalReviewCmd(msg tracker.Message, result string) tea.Cmd {
 			reviewVersion = shown.TaskVersionAtSubmission
 		}
 		args := []string{"task", "approval", "review", msg.ApprovalID, "--result", result, "--task-version-at-submission", strconv.Itoa(reviewVersion), "--json"}
+		if msg.RecipientAgent != "" {
+			args = append(args, "--actor", msg.RecipientAgent)
+		}
 		if result != "good" {
 			args = append(args, "--next-step", "Please address reviewer feedback from the approval card.")
 		}

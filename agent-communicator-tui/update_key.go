@@ -74,7 +74,11 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		case tea.KeyCtrlC, tea.KeyCtrlQ:
 			return m, tea.Quit
 		case tea.KeyCtrlK:
+			m.tasksAgentFilterFocused = false
 			m.tasksPalette = taskCommandPaletteState{Open: true}
+			return m, nil
+		case tea.KeyTab:
+			m.cycleTaskAgentFilter()
 			return m, nil
 		case tea.KeyCtrlP:
 			if len(m.rows) > 0 {
@@ -82,6 +86,8 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 				m.scrollSelectedAgentIntoView()
 				m.tasksSelected = 0
 				m.tasksOffset = 0
+				m.tasksChainFocused = false
+				m.tasksChainSelected = 0
 				m.tasksLoading = true
 				return m, loadTasksCmd()
 			}
@@ -91,13 +97,28 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 				m.scrollSelectedAgentIntoView()
 				m.tasksSelected = 0
 				m.tasksOffset = 0
+				m.tasksChainFocused = false
+				m.tasksChainSelected = 0
 				m.tasksLoading = true
 				return m, loadTasksCmd()
 			}
 		case tea.KeyEsc:
+			if m.tasksAgentFilterFocused {
+				m.tasksAgentFilterFocused = false
+				return m, nil
+			}
 			m.tasksConfirm = taskActionConfirmation{}
+			if m.tasksChainFocused {
+				m.tasksChainFocused = false
+				m.tasksSelected = m.tasksChainSelected
+				m.tasksOffset = m.tasksSelected
+			}
 			return m, nil
 		case tea.KeyEnter:
+			if m.tasksAgentFilterFocused {
+				m.tasksAgentFilterFocused = false
+				return m, nil
+			}
 			if m.tasksConfirm.Active() {
 				if task, ok := m.selectedTaskRecord(); ok && m.taskConfirmationMatches(task, m.tasksConfirm.Action) {
 					return m.confirmOrRunTaskAction(task, m.tasksConfirm.Action)
@@ -107,8 +128,29 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 				m.directInputStatusErr = true
 				return m, nil
 			}
+			if !m.tasksChainFocused && len(m.taskData().Chains) > 0 {
+				m.tasksChainFocused = true
+				m.tasksChainSelected = m.tasksSelected
+				m.tasksSelected = 0
+				m.tasksOffset = 0
+				return m, nil
+			}
 			m.tasksPalette = taskCommandPaletteState{Open: true}
 			return m, nil
+		case tea.KeyBackspace:
+			if m.tasksAgentFilterFocused && len(m.tasksAgentFilter) > 0 {
+				m.tasksAgentFilter = m.tasksAgentFilter[:len(m.tasksAgentFilter)-1]
+				m.tasksSelected = 0
+				m.tasksOffset = 0
+				m.tasksChainSelected = 0
+				m.tasksChainFocused = false
+			}
+			return m, nil
+		case tea.KeySpace:
+			if m.tasksAgentFilterFocused {
+				m.tasksAgentFilter = append(m.tasksAgentFilter, ' ')
+				return m, nil
+			}
 		case tea.KeyUp:
 			m.moveTaskSelection(-1)
 			return m, nil
@@ -136,6 +178,14 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 			m.selectLatestMessage()
 			return m, m.loadActiveTabCmd()
 		case tea.KeyRunes:
+			if m.tasksAgentFilterFocused {
+				m.tasksAgentFilter = append(m.tasksAgentFilter, msg.Runes...)
+				m.tasksSelected = 0
+				m.tasksOffset = 0
+				m.tasksChainSelected = 0
+				m.tasksChainFocused = false
+				return m, nil
+			}
 			if len(msg.Runes) != 1 {
 				return m, nil
 			}
@@ -144,6 +194,9 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 				m.tasksLoading = true
 				m.tasksErr = nil
 				return m, loadTasksCmd()
+			case '/', 'f':
+				m.tasksAgentFilterFocused = true
+				return m, nil
 			case 'j':
 				m.moveTaskSelection(1)
 				return m, nil

@@ -296,24 +296,33 @@ func orderedTaskRows(buckets []taskBucket) []taskRecord {
 }
 
 func (m *model) clampTaskSelection() {
-	rows := orderedTaskRows(m.taskData().Buckets)
-	if len(rows) == 0 {
+	data := m.taskData()
+	count := len(data.Chains)
+	if m.tasksChainFocused {
+		count = len(orderedTaskRows(data.Buckets))
+		m.tasksChainSelected = min(max(0, m.tasksChainSelected), max(0, len(data.Chains)-1))
+	}
+	if count == 0 {
 		m.tasksSelected = 0
 		m.tasksOffset = 0
 		return
 	}
-	m.tasksSelected = min(max(0, m.tasksSelected), len(rows)-1)
-	m.tasksOffset = min(max(0, m.tasksOffset), max(0, len(rows)-1))
+	m.tasksSelected = min(max(0, m.tasksSelected), count-1)
+	m.tasksOffset = min(max(0, m.tasksOffset), max(0, count-1))
 }
 
 func (m *model) moveTaskSelection(delta int) {
-	rows := orderedTaskRows(m.taskData().Buckets)
-	if len(rows) == 0 {
+	data := m.taskData()
+	count := len(data.Chains)
+	if m.tasksChainFocused {
+		count = len(orderedTaskRows(data.Buckets))
+	}
+	if count == 0 {
 		m.tasksSelected = 0
 		m.tasksOffset = 0
 		return
 	}
-	m.tasksSelected = min(max(0, m.tasksSelected+delta), len(rows)-1)
+	m.tasksSelected = min(max(0, m.tasksSelected+delta), count-1)
 	m.tasksOffset = m.tasksSelected
 }
 
@@ -385,4 +394,301 @@ func approvalsForTasks(approvals []taskApprovalRecord, tasks []taskRecord) []tas
 		}
 	}
 	return out
+}
+
+func chainSummaries(tasks []taskRecord, states []taskWorkingState, approvals []taskApprovalRecord) []taskChainSummary {
+	stateByTask := latestStateByTask(states)
+	approvalByTask := approvalsByTask(approvals)
+	chainByTask := map[string]string{}
+	rootByTask := map[string]string{}
+	for _, task := range tasks {
+		chainID, rootID := taskChainIDs(task, stateByTask[task.TaskID])
+		chainByTask[task.TaskID] = chainID
+		rootByTask[task.TaskID] = rootID
+	}
+	changed := true
+	for changed {
+		changed = false
+		for _, task := range tasks {
+			for _, dep := range task.DependsOn {
+				if depChain := chainByTask[dep]; depChain != "" && chainByTask[task.TaskID] != depChain {
+					chainByTask[task.TaskID] = depChain
+					rootByTask[task.TaskID] = firstNonEmpty(rootByTask[dep], dep)
+					changed = true
+				}
+			}
+		}
+	}
+	groups := map[string][]taskRecord{}
+	roots := map[string]string{}
+	for _, task := range tasks {
+		chainID := firstNonEmpty(chainByTask[task.TaskID], task.TaskID)
+		groups[chainID] = append(groups[chainID], task)
+		if roots[chainID] == "" {
+			roots[chainID] = rootByTask[task.TaskID]
+		}
+	}
+	out := make([]taskChainSummary, 0, len(groups))
+	for chainID, group := range groups {
+		group = sortedTasks(group)
+		rootID := firstNonEmpty(roots[chainID], chainID)
+		buckets := bucketTasks(group, "", stateByTask, approvalByTask)
+		participants, agents := participantsForChain(group, states)
+		current, next := currentNextTasks(buckets)
+		latestActivity, latestUpdate := latestChainActivity(group, states)
+		out = append(out, taskChainSummary{
+			ChainID:        chainID,
+			RootTaskID:     rootID,
+			RootTitle:      chainRootTitle(group, rootID),
+			Tasks:          group,
+			Buckets:        buckets,
+			Counts:         countTaskBuckets(buckets),
+			Participants:   participants,
+			Agents:         agents,
+			CurrentTask:    current,
+			NextTask:       next,
+			LatestActivity: latestActivity,
+			LatestUpdate:   latestUpdate,
+			Blockers:       collectTaskBlockers(group, stateByTask),
+			Approvals:      approvalsForTasks(approvals, group),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].LatestUpdate == out[j].LatestUpdate {
+			return out[i].ChainID < out[j].ChainID
+		}
+		return out[i].LatestUpdate > out[j].LatestUpdate
+	})
+	return out
+}
+
+func taskChainIDs(task taskRecord, state taskWorkingState) (string, string) {
+	rootID := firstNonEmpty(state.RootTaskID)
+	chainID := firstNonEmpty(state.TaskChainID)
+	for _, participant := range task.Participants {
+		rootID = firstNonEmpty(rootID, participant.RootTaskID)
+		chainID = firstNonEmpty(chainID, participant.TaskChainID)
+	}
+	rootID = firstNonEmpty(rootID, firstDep(task), task.TaskID)
+	chainID = firstNonEmpty(chainID, rootID, task.TaskID)
+	return chainID, rootID
+}
+
+func firstDep(task taskRecord) string {
+	if len(task.DependsOn) == 0 {
+		return ""
+	}
+	return task.DependsOn[0]
+}
+
+func chainRootTitle(tasks []taskRecord, rootID string) string {
+	for _, task := range tasks {
+		if task.TaskID == rootID {
+			return firstNonEmpty(task.Title, task.TaskID)
+		}
+	}
+	if len(tasks) > 0 {
+		return firstNonEmpty(tasks[0].Title, tasks[0].TaskID)
+	}
+	return "Untitled chain"
+}
+
+func participantsForChain(tasks []taskRecord, states []taskWorkingState) ([]taskParticipant, []string) {
+	seen := map[string]bool{}
+	var participants []taskParticipant
+	var agents []string
+	add := func(agent, role, status string) {
+		agent = strings.TrimSpace(agent)
+		if agent == "" || seen[agent] {
+			return
+		}
+		seen[agent] = true
+		agents = append(agents, agent)
+		participants = append(participants, taskParticipant{Agent: agent, Role: firstNonEmpty(role, "participant"), Status: firstNonEmpty(status, "active")})
+	}
+	for _, task := range tasks {
+		add(task.AssignedAgent, "assignee", "active")
+		for _, p := range task.Participants {
+			add(p.Agent, p.Role, p.Status)
+		}
+	}
+	ids := map[string]bool{}
+	for _, task := range tasks {
+		ids[task.TaskID] = true
+	}
+	for _, state := range states {
+		if ids[state.TaskID] {
+			add(state.Agent, "state", state.Status)
+		}
+	}
+	sort.Strings(agents)
+	return participants, agents
+}
+
+func currentNextTasks(buckets []taskBucket) (taskRecord, taskRecord) {
+	var current, next taskRecord
+	for _, bucket := range buckets {
+		if bucket.Name == "Current" && len(bucket.Tasks) > 0 {
+			current = bucket.Tasks[0]
+		}
+		if bucket.Name == "Next" && len(bucket.Tasks) > 0 {
+			next = bucket.Tasks[0]
+		}
+	}
+	if next.TaskID == "" {
+		for _, bucket := range buckets {
+			if bucket.Name == "Queue" && len(bucket.Tasks) > 0 {
+				next = bucket.Tasks[0]
+			}
+		}
+	}
+	return current, next
+}
+
+func latestChainActivity(tasks []taskRecord, states []taskWorkingState) (string, string) {
+	ids := map[string]bool{}
+	latest := ""
+	activity := ""
+	for _, task := range tasks {
+		ids[task.TaskID] = true
+		if task.UpdatedAt >= latest {
+			latest = task.UpdatedAt
+			activity = firstNonEmpty(task.NextStep, task.ResultSummary, task.Title)
+		}
+	}
+	for _, state := range states {
+		if ids[state.TaskID] && state.UpdatedAt >= latest {
+			latest = state.UpdatedAt
+			activity = firstNonEmpty(state.CurrentActivity, state.NextStep, state.Status)
+		}
+	}
+	return activity, latest
+}
+
+func filterTasksByAgent(tasks []taskRecord, states []taskWorkingState, selected agentRow, query string) []taskRecord {
+	if query == "" {
+		return tasks
+	}
+	var out []taskRecord
+	for _, task := range tasks {
+		if taskMatchesAgentFilter(task, states, selected, query) {
+			out = append(out, task)
+		}
+	}
+	return out
+}
+
+func filterChainsByAgent(chains []taskChainSummary, selected agentRow, query string) []taskChainSummary {
+	if query == "" {
+		return chains
+	}
+	var out []taskChainSummary
+	for _, chain := range chains {
+		matched := false
+		for _, agent := range chain.Agents {
+			if agentMatchesFilter(agent, selected, query) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			out = append(out, chain)
+		}
+	}
+	return out
+}
+
+func taskMatchesAgentFilter(task taskRecord, states []taskWorkingState, selected agentRow, query string) bool {
+	if agentMatchesFilter(task.AssignedAgent, selected, query) {
+		return true
+	}
+	for _, p := range task.Participants {
+		if agentMatchesFilter(p.Agent, selected, query) {
+			return true
+		}
+	}
+	for _, state := range states {
+		if state.TaskID == task.TaskID && agentMatchesFilter(state.Agent, selected, query) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentMatchesFilter(agent string, selected agentRow, query string) bool {
+	agent = strings.TrimSpace(agent)
+	query = strings.ToLower(strings.TrimSpace(query))
+	if agent == "" || query == "" {
+		return false
+	}
+	lowerAgent := strings.ToLower(agent)
+	if strings.Contains(lowerAgent, query) || strings.Contains(query, lowerAgent) {
+		return true
+	}
+	if strings.Contains(query, "/") {
+		parts := strings.Split(query, "/")
+		if parts[len(parts)-1] == lowerAgent {
+			return true
+		}
+	}
+	if selected.Name != "" && (strings.EqualFold(selected.Name, query) || strings.EqualFold(selected.AgentName, query) || strings.EqualFold(selected.TargetAddress, query)) && selectedAgentMatchesName(selected, agent) {
+		return true
+	}
+	return false
+}
+
+func taskFilterAgents(tasks []taskRecord, states []taskWorkingState) []string {
+	seen := map[string]bool{}
+	var agents []string
+	add := func(agent string) {
+		agent = strings.TrimSpace(agent)
+		if agent != "" && !seen[agent] {
+			seen[agent] = true
+			agents = append(agents, agent)
+		}
+	}
+	for _, task := range tasks {
+		add(task.AssignedAgent)
+		for _, p := range task.Participants {
+			add(p.Agent)
+		}
+	}
+	for _, state := range states {
+		add(state.Agent)
+	}
+	sort.Strings(agents)
+	return agents
+}
+
+func aggregateChainCounts(chains []taskChainSummary) taskCounts {
+	var counts taskCounts
+	for _, chain := range chains {
+		counts.Total += chain.Counts.Total
+		counts.Working += chain.Counts.Working
+		counts.Ready += chain.Counts.Ready
+		counts.Queued += chain.Counts.Queued
+		counts.Blocked += chain.Counts.Blocked
+		counts.Review += chain.Counts.Review
+		counts.Completed += chain.Counts.Completed
+	}
+	return counts
+}
+
+func (m *model) cycleTaskAgentFilter() {
+	agents := taskFilterAgents(activeTaskRecords(m.tasksItems), m.tasksStates)
+	if len(agents) == 0 {
+		m.tasksAgentFilter = nil
+		m.tasksAgentChip = 0
+		return
+	}
+	m.tasksAgentChip = (m.tasksAgentChip + 1) % (len(agents) + 1)
+	if m.tasksAgentChip == 0 {
+		m.tasksAgentFilter = nil
+	} else {
+		m.tasksAgentFilter = []rune(agents[m.tasksAgentChip-1])
+	}
+	m.tasksSelected = 0
+	m.tasksOffset = 0
+	m.tasksChainSelected = 0
+	m.tasksChainFocused = false
 }

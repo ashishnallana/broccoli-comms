@@ -333,6 +333,7 @@ func TestTasksTabDoesNotTrapAgentOrTaskNavigation(t *testing.T) {
 		tasksItems: []taskRecord{
 			{TaskID: "task-1", Title: "One", Status: "ready", AssignedAgent: "alpha"},
 			{TaskID: "task-2", Title: "Two", Status: "ready", AssignedAgent: "alpha", DependsOn: []string{"task-1"}},
+			{TaskID: "task-3", Title: "Other chain", Status: "ready", AssignedAgent: "beta"},
 		},
 	}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
@@ -348,7 +349,7 @@ func TestTasksTabDoesNotTrapAgentOrTaskNavigation(t *testing.T) {
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m = updated.(model)
 	if m.tasksSelected != 1 || cmd != nil {
-		t.Fatalf("down should move task selection without trapping, selected=%d cmd=%v", m.tasksSelected, cmd)
+		t.Fatalf("down should move chain selection without trapping, selected=%d cmd=%v", m.tasksSelected, cmd)
 	}
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
 	m = updated.(model)
@@ -698,5 +699,91 @@ func TestLoadTasksCmdParsesTaskStateAndApprovalJSON(t *testing.T) {
 	}
 	if len(calls) != 3 {
 		t.Fatalf("calls=%v", calls)
+	}
+}
+
+func TestChainInvestigationGroupsByChainAndRoot(t *testing.T) {
+	m := model{tasksItems: []taskRecord{
+		{TaskID: "root", Title: "Root feature", Status: "working", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{TaskID: "child", Title: "Child", Status: "ready", DependsOn: []string{"root"}, UpdatedAt: "2026-01-01T00:01:00Z"},
+		{TaskID: "other", Title: "Other root", Status: "ready", UpdatedAt: "2026-01-02T00:00:00Z"},
+	}, tasksStates: []taskWorkingState{{TaskID: "root", Agent: "coder", Status: "working", TaskChainID: "chain-a", RootTaskID: "root", UpdatedAt: "2026-01-01T00:02:00Z"}}}
+	data := m.taskData()
+	if len(data.Chains) != 2 {
+		t.Fatalf("chains=%+v, want 2", data.Chains)
+	}
+	var feature taskChainSummary
+	for _, chain := range data.Chains {
+		if chain.ChainID == "chain-a" {
+			feature = chain
+		}
+	}
+	if feature.ChainID == "" || feature.RootTaskID != "root" || feature.RootTitle != "Root feature" || len(feature.Tasks) != 2 {
+		t.Fatalf("feature chain summary = %+v", feature)
+	}
+	if feature.Counts.Working != 1 || feature.Counts.Ready != 1 || feature.CurrentTask.TaskID != "root" || feature.NextTask.TaskID != "child" {
+		t.Fatalf("feature counts/current/next = counts %+v current %+v next %+v", feature.Counts, feature.CurrentTask, feature.NextTask)
+	}
+}
+
+func TestChainInvestigationAgentFilterMatchesParticipantsAndRemoteAliases(t *testing.T) {
+	m := model{
+		rows: []agentRow{{Name: "host/coder", AgentName: "coder", TargetAddress: "host.example/coder"}},
+		tasksItems: []taskRecord{
+			{TaskID: "task-coder", Title: "Coder task", Status: "ready", AssignedAgent: "coder", Participants: []taskParticipant{{Agent: "reviewer", Role: "reviewer", Status: "active"}}},
+			{TaskID: "task-other", Title: "Other task", Status: "ready", AssignedAgent: "other"},
+		},
+		tasksStates:      []taskWorkingState{{TaskID: "task-coder", Agent: "coder", Status: "ready"}},
+		tasksAgentFilter: []rune("host/coder"),
+	}
+	data := m.taskData()
+	if len(data.Chains) != 1 || len(data.Tasks) != 1 || data.Tasks[0].TaskID != "task-coder" {
+		t.Fatalf("remote alias filter data = chains %+v tasks %+v", data.Chains, data.Tasks)
+	}
+	m.tasksAgentFilter = []rune("reviewer")
+	data = m.taskData()
+	if len(data.Tasks) != 1 || data.Tasks[0].TaskID != "task-coder" {
+		t.Fatalf("participant filter data = %+v", data.Tasks)
+	}
+}
+
+func TestChainFocusTimelineEnterEscAndNarrowLayout(t *testing.T) {
+	m := model{mode: tasksView, width: 100, height: 20, tasksItems: []taskRecord{
+		{TaskID: "task-current", Title: "Current work", Status: "working", AssignedAgent: "coder"},
+		{TaskID: "task-next", Title: "Next work", Status: "ready", AssignedAgent: "coder", DependsOn: []string{"task-current"}},
+	}, tasksStates: []taskWorkingState{{TaskID: "task-current", Agent: "coder", Status: "working", TaskChainID: "chain-1", RootTaskID: "task-current"}}}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd != nil || !m.tasksChainFocused || m.tasksSelected != 0 {
+		t.Fatalf("enter should focus selected chain, focused=%v selected=%d cmd=%v", m.tasksChainFocused, m.tasksSelected, cmd)
+	}
+	view := m.taskManagementView(100, 20)
+	for _, want := range []string{"Chain Timeline", "Current (1)", "Next (1)", "Current work", "Next work"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("focused timeline missing %q:\n%s", want, view)
+		}
+	}
+	narrow := m.taskManagementView(60, 16)
+	if strings.Contains(narrow, "Task details") || !strings.Contains(narrow, "Chain Timeline") {
+		t.Fatalf("narrow focused layout should hide right details and keep timeline usable:\n%s", narrow)
+	}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(model)
+	if cmd != nil || m.tasksChainFocused {
+		t.Fatalf("esc should return to chain list, focused=%v cmd=%v", m.tasksChainFocused, cmd)
+	}
+}
+
+func TestChainInvestigationFilterEmptyStateAndTabChip(t *testing.T) {
+	m := model{mode: tasksView, tasksItems: []taskRecord{{TaskID: "task-1", Title: "One", Status: "ready", AssignedAgent: "coder"}}}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	if cmd != nil || string(m.tasksAgentFilter) != "coder" {
+		t.Fatalf("tab should cycle to agent chip, filter=%q cmd=%v", string(m.tasksAgentFilter), cmd)
+	}
+	m.tasksAgentFilter = []rune("missing")
+	view := m.taskManagementView(100, 14)
+	if !strings.Contains(view, "No chains matching agent filter.") {
+		t.Fatalf("filter empty state missing:\n%s", view)
 	}
 }

@@ -7,21 +7,47 @@ func selectedTaskRecord(data taskManagementData) (taskRecord, bool) {
 	if len(rows) == 0 {
 		return taskRecord{}, false
 	}
+	if !data.ChainFocused {
+		if data.SelectedChain.CurrentTask.TaskID != "" {
+			return data.SelectedChain.CurrentTask, true
+		}
+		if data.SelectedChain.NextTask.TaskID != "" {
+			return data.SelectedChain.NextTask, true
+		}
+		return rows[0], true
+	}
 	return rows[dataSelectedIndex(data, len(rows))], true
+}
+
+func taskSelectedChainLines(data taskManagementData, width int) []string {
+	bg := colors.RightColumnBg
+	lines := []string{padStyledLine(sectionHeaderStyle.Render("Selected chain"), width, bg)}
+	chain := data.SelectedChain
+	if chain.ChainID == "" {
+		return append(lines, padStyledLine(mutedStyle.Render("No chain selected."), width, bg))
+	}
+	lines = append(lines,
+		padStyledLine(fgOnBg(colors.SelectedFg, colors.SelectedBg).Bold(true).Render(truncateCells(chain.ChainID+" · root "+firstNonEmpty(chain.RootTaskID, "—"), width)), width, colors.SelectedBg),
+		padStyledLine(fgOnBg(colors.SelectedFg, colors.SelectedBg).Render(truncateCells(firstNonEmpty(chain.RootTitle, "Untitled chain"), width)), width, colors.SelectedBg),
+		padStyledLine(mutedStyle.Render(truncateCells(fmt.Sprintf("working %d · ready %d · blocked %d · review %d · done %d", chain.Counts.Working, chain.Counts.Ready, chain.Counts.Blocked, chain.Counts.Review, chain.Counts.Completed), width)), width, bg),
+	)
+	if chain.LatestActivity != "" {
+		lines = append(lines, padStyledLine(mutedStyle.Render(truncateCells("latest "+chain.LatestActivity, width)), width, bg))
+	}
+	return lines
 }
 
 func taskSelectedTaskLines(data taskManagementData, width int) []string {
 	bg := colors.RightColumnBg
-	lines := []string{padStyledLine(sectionHeaderStyle.Render("Selected task"), width, bg)}
 	task, ok := selectedTaskRecord(data)
 	if !ok {
-		return append(lines, padStyledLine(mutedStyle.Render("No task selected."), width, bg))
+		return []string{padStyledLine(mutedStyle.Render("No task selected."), width, bg)}
 	}
 	status := firstNonEmpty(task.Status, task.ResultStatus, "unknown")
-	lines = append(lines,
+	lines := []string{
 		padStyledLine(fgOnBg(colors.SelectedFg, colors.SelectedBg).Bold(true).Render(truncateCells(task.TaskID+" · "+firstNonEmpty(task.Title, "Untitled task"), width)), width, colors.SelectedBg),
 		padStyledLine(fgOnBg(colors.SelectedFg, colors.SelectedBg).Render(truncateCells(status+" · "+firstNonEmpty(task.Priority, "priority —"), width)), width, colors.SelectedBg),
-	)
+	}
 	if task.NextStep != "" {
 		lines = append(lines, padStyledLine(mutedStyle.Render(truncateCells("next "+task.NextStep, width)), width, bg))
 	}
@@ -33,38 +59,23 @@ func taskSelectedTaskLines(data taskManagementData, width int) []string {
 
 func taskParticipantLines(data taskManagementData, width, height int) []string {
 	bg := colors.RightColumnBg
-	task, ok := selectedTaskRecord(data)
-	if !ok {
-		return []string{padStyledLine(mutedStyle.Render("No participants."), width, bg)}
-	}
-	participants := task.Participants
-	if len(participants) == 0 && task.AssignedAgent != "" {
-		participants = []taskParticipant{{Agent: task.AssignedAgent, Role: "assignee", Status: "active", Compatibility: true}}
+	participants := data.SelectedChain.Participants
+	if len(participants) == 0 {
+		task, ok := selectedTaskRecord(data)
+		if ok && task.AssignedAgent != "" {
+			participants = []taskParticipant{{Agent: task.AssignedAgent, Role: "assignee", Status: "active", Compatibility: true}}
+		}
 	}
 	if len(participants) == 0 {
 		return []string{padStyledLine(mutedStyle.Render("No participants."), width, bg)}
 	}
-	stateByAgent := map[string]taskWorkingState{}
-	for _, state := range data.States {
-		if state.TaskID == task.TaskID && state.Agent != "" {
-			prev, ok := stateByAgent[state.Agent]
-			if !ok || state.UpdatedAt >= prev.UpdatedAt {
-				stateByAgent[state.Agent] = state
-			}
-		}
-	}
 	lines := make([]string, 0, len(participants)*2)
 	for _, p := range participants {
-		state := stateByAgent[p.Agent]
-		status := firstNonEmpty(state.Status, p.Status, "active")
-		line := fmt.Sprintf("%s · %s · %s", firstNonEmpty(p.Agent, "agent"), firstNonEmpty(p.Role, "role"), status)
+		line := fmt.Sprintf("%s · %s · %s", firstNonEmpty(p.Agent, "agent"), firstNonEmpty(p.Role, "role"), firstNonEmpty(p.Status, "active"))
 		if p.Compatibility {
 			line += " · legacy"
 		}
 		lines = append(lines, padStyledLine(fgOnBg(colors.Accent, bg).Render(truncateCells(line, width)), width, bg))
-		if state.CurrentActivity != "" {
-			lines = append(lines, padStyledLine(mutedStyle.Render(truncateCells("  "+state.CurrentActivity, width)), width, bg))
-		}
 		if len(lines) >= height {
 			return lines[:height]
 		}

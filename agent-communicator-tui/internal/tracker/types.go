@@ -146,6 +146,8 @@ type Message struct {
 	MemoryStatus            string       `json:"memory_status,omitempty"`
 	MemoryVersion           int          `json:"memory_version,omitempty"`
 	SourceTaskID            string       `json:"source_task_id,omitempty"`
+	RecipientAgent          string       `json:"recipient_agent,omitempty"`
+	RecipientKind           string       `json:"recipient_kind,omitempty"`
 	Source                  string       `json:"source,omitempty"`
 	SenderSource            string       `json:"sender_source,omitempty"`
 	Timestamp               string       `json:"timestamp"`

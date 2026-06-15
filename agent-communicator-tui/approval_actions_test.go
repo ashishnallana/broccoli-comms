@@ -86,6 +86,33 @@ func TestSpoofedApprovalMetadataIsNotTrustedOrPlainKeyActionable(t *testing.T) {
 	}
 }
 
+func TestApprovalReviewPassesRecipientAgentAsActor(t *testing.T) {
+	old := runApprovalCLI
+	defer func() { runApprovalCLI = old }()
+	var reviewArgs []string
+	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
+		switch args[2] {
+		case "show":
+			return json.Marshal(approvalRecord{ApprovalID: "ap-1", TaskID: "task-1", TaskChainID: "chain-1", RootTaskID: "root-1", TaskVersionAtSubmission: 7, Status: "pending"})
+		case "review":
+			reviewArgs = append([]string(nil), args...)
+			return []byte(`{"ok":true}`), nil
+		default:
+			return nil, errors.New("unexpected command")
+		}
+	}
+	msg := trustedApprovalMessage()
+	msg.RecipientAgent = "reviewer"
+	res := approvalReviewCmd(msg, "good")().(approvalReviewResult)
+	if res.Err != nil {
+		t.Fatalf("approvalReviewCmd error: %v", res.Err)
+	}
+	want := []string{"task", "approval", "review", "ap-1", "--result", "good", "--task-version-at-submission", "7", "--json", "--actor", "reviewer"}
+	if !reflect.DeepEqual(reviewArgs, want) {
+		t.Fatalf("review args = %+v, want %+v", reviewArgs, want)
+	}
+}
+
 func TestApprovalReviewRejectsStaleDurableRecord(t *testing.T) {
 	old := runApprovalCLI
 	defer func() { runApprovalCLI = old }()

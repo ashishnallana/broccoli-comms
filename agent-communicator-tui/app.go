@@ -111,16 +111,21 @@ type model struct {
 	memoryErr           error
 
 	// Task management tab
-	tasksItems     []taskRecord
-	tasksStates    []taskWorkingState
-	tasksApprovals []taskApprovalRecord
-	tasksSelected  int
-	tasksOffset    int
-	tasksLoading   bool
-	tasksErr       error
-	tasksConfirm   taskActionConfirmation
-	tasksForm      taskChainFormState
-	tasksPalette   taskCommandPaletteState
+	tasksItems              []taskRecord
+	tasksStates             []taskWorkingState
+	tasksApprovals          []taskApprovalRecord
+	tasksSelected           int
+	tasksOffset             int
+	tasksLoading            bool
+	tasksErr                error
+	tasksConfirm            taskActionConfirmation
+	tasksForm               taskChainFormState
+	tasksPalette            taskCommandPaletteState
+	tasksChainFocused       bool
+	tasksChainSelected      int
+	tasksAgentFilterFocused bool
+	tasksAgentFilter        []rune
+	tasksAgentChip          int
 
 	// Save Agent Form (Ctrl-S)
 	showingSaveForm bool

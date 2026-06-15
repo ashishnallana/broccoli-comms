@@ -554,6 +554,8 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
             "memory_status",
             "memory_version",
             "source_task_id",
+            "recipient_agent",
+            "recipient_kind",
         ):
             if key in content_metadata:
                 payload[key] = content_metadata[key]

@@ -30,12 +30,7 @@ type taskEditClosed struct {
 func (c taskActionConfirmation) Active() bool { return c.Action != "" && c.TaskID != "" }
 
 func (m model) selectedTaskRecord() (taskRecord, bool) {
-	rows := orderedTaskRows(m.taskData().Buckets)
-	if len(rows) == 0 {
-		return taskRecord{}, false
-	}
-	idx := min(max(0, m.tasksSelected), len(rows)-1)
-	return rows[idx], true
+	return selectedTaskRecord(m.taskData())
 }
 
 func (m model) taskConfirmationMatches(task taskRecord, action string) bool {

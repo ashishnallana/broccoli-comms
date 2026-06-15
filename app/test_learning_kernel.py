@@ -557,7 +557,9 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertEqual(k.show_approval(approval["approval_id"])["status"], "pending")
             self.assertEqual(k.list_approvals()[0]["approval_id"], approval["approval_id"])
             failed = [e for e in k.events(task_id=task["task_id"]) if e["event_type"] == "task_approval_notification_failed"]
-            self.assertEqual(len(failed), 1)
+            self.assertEqual(len(failed), 2)
+            self.assertTrue(any(e["payload"].get("detail") == "offline" for e in failed))
+            self.assertTrue(any("participant:a" in e["payload"].get("detail", "") for e in failed))
             md = broccoli.approval_fallback_markdown(approval)
             self.assertIn("Approval required", md)
             self.assertIn(f"Task {task['task_id']} needs your attention", md)
@@ -573,10 +575,10 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertFalse(notice["sent"])
             failed = [e for e in k.events(task_id=task["task_id"]) if e["event_type"] == "task_approval_notification_failed"]
             sent = [e for e in k.events(task_id=task["task_id"]) if e["event_type"] == "task_approval_notification_sent"]
-            self.assertEqual(len(failed), 1)
+            self.assertEqual(len(failed), 2)
             self.assertEqual(sent, [])
 
-    def test_approval_notification_uses_structured_metadata_and_task_kernel_sender(self):
+    def test_approval_notification_uses_structured_metadata_and_submitter_sender(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp), mock.patch.object(broccoli, "tracker_rpc", return_value=True) as tracker_rpc:
             k = broccoli.learning_kernel()
             task = k.task_create(title="approval", assigned_agent="a")
@@ -585,7 +587,7 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertTrue(notice["sent"])
             method, params = tracker_rpc.call_args.args
             self.assertEqual(method, "send_message")
-            self.assertEqual(params["sender_name"], "task-kernel")
+            self.assertEqual(params["sender_name"], "a")
             self.assertEqual(params["metadata"]["content_type"], "application/vnd.broccoli.task-approval+json")
             self.assertEqual(params["metadata"]["approval_id"], approval["approval_id"])
             self.assertEqual(params["metadata"]["task_version_at_submission"], approval["task_version_at_submission"])
@@ -751,6 +753,92 @@ class TestLearningKernelCli(unittest.TestCase):
                 k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"nested": {"Score": 1}})
             with self.assertRaisesRegex(ValueError, "unsupported"):
                 k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"extra": "no"})
+
+    def test_direct_completion_is_blocked_when_review_roles_are_active(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="needs review", assigned_agent="coder")
+            k.task_participant_add(task["task_id"], "reviewer", "reviewer")
+            with self.assertRaisesRegex(ValueError, "submit completion for review"):
+                k.task_update(task["task_id"], status="done", actor="coder")
+            with self.assertRaisesRegex(ValueError, "submit completion for review"):
+                k.mark_result(task["task_id"], "good", actor="coder")
+            approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
+            decided = k.review_completion(approval["approval_id"], "good", actor="reviewer", task_version_at_submission=approval["task_version_at_submission"])
+            self.assertEqual(decided["task"]["status"], "validated")
+
+    def test_approval_review_requires_active_reviewer_or_verifier(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="needs reviewer", assigned_agent="coder")
+            k.task_participant_add(task["task_id"], "reviewer", "reviewer")
+            approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
+            with self.assertRaisesRegex(ValueError, "active reviewer/verifier"):
+                k.review_completion(approval["approval_id"], "good", actor="intruder")
+            decided = k.review_completion(approval["approval_id"], "good", actor="reviewer", task_version_at_submission=approval["task_version_at_submission"])
+            self.assertEqual(decided["approval"]["result"], "good")
+
+    def test_root_chain_completion_blocks_open_tasks_and_pending_approvals(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            root = k.task_create(title="root", assigned_agent="coder", status="working")
+            child = k.task_create(title="child", assigned_agent="coder", depends_on=[root["task_id"]], status="ready")
+            with self.assertRaisesRegex(ValueError, "cannot complete task chain"):
+                k.submit_completion(root["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="chain done")
+            k.task_update(child["task_id"], status="done")
+            approval = k.submit_completion(child["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="child done")["approval"]
+            with self.assertRaisesRegex(ValueError, "pending approval"):
+                k.submit_completion(root["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="chain done")
+            k.review_completion(approval["approval_id"], "good", task_version_at_submission=approval["task_version_at_submission"])
+            payload = k.submit_completion(root["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="chain done")
+            self.assertEqual(payload["task"]["status"], "review")
+
+    def test_submit_completion_notifies_review_participants_and_records_results(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="notify", assigned_agent="coder")
+            k.task_participant_add(task["task_id"], "reviewer", "reviewer")
+            k.task_participant_add(task["task_id"], "verifier", "verifier")
+            approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
+            calls = []
+            with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+                notice = broccoli.notify_approval_request(k, approval)
+            self.assertTrue(notice["sent"])
+            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder", "reviewer", "verifier"])
+            for _method, payload in calls:
+                self.assertEqual(payload["sender_name"], "coder")
+            participant_payloads = [payload for _method, payload in calls[1:]]
+            self.assertEqual([payload["metadata"]["recipient_agent"] for payload in participant_payloads], ["coder", "reviewer", "verifier"])
+            self.assertEqual([p["agent"] for p in notice["participant_notifications"]], ["coder", "reviewer", "verifier"])
+            events = [e for e in k.events(task_id=task["task_id"]) if e["event_type"] == "task_approval_notification_sent"]
+            details = [e["payload"].get("detail") for e in events]
+            self.assertIn("agent-communicator", details)
+            self.assertIn("participant:coder", details)
+            self.assertIn("participant:reviewer", details)
+            self.assertIn("participant:verifier", details)
+
+    def test_approval_review_cli_actor_allows_tui_without_agent_env(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="review", assigned_agent="coder")
+            k.task_participant_add(task["task_id"], "reviewer", "reviewer")
+            approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
+            args = argparse.Namespace(approval_id=approval["approval_id"], result="good", next_step=None, notes=None, status=None, task_version_at_submission=approval["task_version_at_submission"], actor="reviewer", json=True)
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", return_value={"ok": True}):
+                broccoli.task_approval_review(args)
+            self.assertEqual(k.show_approval(approval["approval_id"])["result"], "good")
+
+    def test_approval_review_cli_notifies_assignee_on_need_improvements(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="review", assigned_agent="coder")
+            k.task_participant_add(task["task_id"], "reviewer", "reviewer")
+            approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
+            args = argparse.Namespace(approval_id=approval["approval_id"], result="need_improvements", next_step="fix", notes=None, status=None, task_version_at_submission=approval["task_version_at_submission"], json=True)
+            calls = []
+            with mock.patch.dict(os.environ, {"AGENT_NAME": "reviewer"}, clear=False), mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+                broccoli.task_approval_review(args)
+            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder"])
 
 
 if __name__ == "__main__":
