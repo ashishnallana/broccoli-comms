@@ -1536,6 +1536,28 @@ def _remote_run_wait_result(request_id: str, timeout_seconds: float) -> dict:
                 return event
 
 
+def _provider_arg_list(value) -> list[str]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return shlex.split(value)
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item)]
+    return [str(value)]
+
+
+def _provider_str(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _provider_initial_message_args(provider_cfg: dict) -> list[str]:
+    prompt_flag = _provider_str(provider_cfg.get("prompt-flag-name", ""))
+    initial_message = _provider_str(provider_cfg.get("initial-message", ""))
+    if not prompt_flag or not initial_message:
+        return []
+    return [prompt_flag, initial_message]
+
+
 def run_remote(args: argparse.Namespace, command: list[str]) -> None:
     ensure_tracker()
     tracker = _resolve_remote_run_tracker(args.host)
@@ -1597,10 +1619,10 @@ def run(args: argparse.Namespace) -> None:
         provider_cfg = get_toml_config("providers", provider_alias, {})
         if provider_cfg:
             cmd_override = provider_cfg.get("cmd", provider_alias)
-            default_args = provider_cfg.get("defaultArgs", [])
-            if isinstance(default_args, str):
-                default_args = shlex.split(default_args)
-            command = [cmd_override] + default_args + command[1:]
+            default_args = _provider_arg_list(provider_cfg.get("defaultArgs", []))
+            auto_accept_args = _provider_arg_list(provider_cfg.get("auto-accept-flag", provider_cfg.get("autoAcceptFlag", provider_cfg.get("auto_accept_flag", ""))))
+            initial_message_args = _provider_initial_message_args(provider_cfg)
+            command = [cmd_override] + default_args + auto_accept_args + initial_message_args + command[1:]
             if "agentsDir" in provider_cfg:
                 agents_dir = provider_cfg["agentsDir"]
 

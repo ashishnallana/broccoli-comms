@@ -56,6 +56,66 @@ config_dir = "/home/alice/.config/broccoli-comms"
 
 With that config, the tracker socket is `/home/alice/.cache/broccoli-comms/runtime/agent-tracker.sock`.
 
+### Example `config.toml`
+
+`config.toml` controls runtime paths, tracker settings, scheduled jobs, and provider-level launch defaults. Managed agent definitions still live in `config.json`, but provider entries in `config.toml` can rewrite provider commands and add provider-specific launch flags.
+
+This example intentionally includes only common public providers (`pi`, `codex`, and `claude`) and omits any private/internal providers:
+
+```toml
+[paths]
+runtime_dir = "/home/alice/.cache/broccoli-comms/runtime"
+cache_dir = "/home/alice/.cache/broccoli-comms"
+config_dir = "/home/alice/.config/broccoli-comms"
+
+[tracker]
+http_port = 19876
+
+[registry]
+heartbeat_seconds = 30
+auth_enabled = true
+
+[ui]
+capture_pane_default_lines = 20
+
+[core]
+enable_reliable_send_keys = true
+
+[scheduled_jobs]
+enabled = true
+
+[scheduled_jobs.agent_task_nudge]
+enabled = true
+interval_seconds = 600
+backoff_multiplier = 2
+max_nudges = 5
+
+[providers.pi]
+cmd = "pi"
+auto-accept-flag = ""
+prompt-flag-name = ""
+initial-message = ""
+
+[providers.codex]
+cmd = "codex"
+auto-accept-flag = ""
+prompt-flag-name = ""
+initial-message = ""
+
+[providers.claude]
+cmd = "claude"
+auto-accept-flag = ""
+prompt-flag-name = ""
+initial-message = ""
+```
+
+Provider fields:
+
+- `cmd`: executable or absolute path to launch for the provider alias used in `broccoli-comms run NAME -- PROVIDER ...`.
+- `defaultArgs`: optional string or TOML array appended after `cmd` for every launch of that provider.
+- `auto-accept-flag`: optional provider-specific flag that enables auto-accept/auto-approve mode. Leave empty to disable.
+- `prompt-flag-name` plus `initial-message`: when both are non-empty, `broccoli-comms run` passes them as the provider's initial prompt/message flag and value. The message is passed as the configured provider argument; it is not converted into an inbox notification.
+
 ## Install and quick start
 
 ### Nix machine
@@ -312,7 +372,7 @@ Use the higher-level Broccoli commands for most workflows:
 
 | Use case | Command | Notes |
 | --- | --- | --- |
-| Start a fresh named agent launch | `broccoli-comms run NAME -- COMMAND [ARGS...]` | Creates a workspace under `/tmp/broccoli-agents/<name>/`, writes `AGENTS.md`, and writes bootstrap payload to `bootstrap.json`. |
+| Start a fresh named agent launch | `broccoli-comms run NAME -- COMMAND [ARGS...]` | Creates a fresh workspace under `/tmp/broccoli-agents/<name>/`, writes bootstrap context such as `AGENTS.md`, and starts the command through the Broccoli tracker wrapper. |
 | Edit and restart an already-running managed agent | `broccoli-comms agent edit NAME [--rename NEW_NAME] [--cwd DIR] [--swarm SWARM --role {main,subagent}] [--] [COMMAND [ARGS...]]` | Edit works only on a live managed agent and applies immediately by restart. |
 
 The public launch surface is limited to `run` and `agent edit`.
@@ -325,7 +385,7 @@ If `run` is used for tracker-level experiments, use `run` with the desired profi
 - `run` requires a unique `name` that is not currently running; if the name already has a managed window, stop it first (or use `agent edit` for that running agent).
 - Example:
   - `broccoli-comms run planner --cwd ~/projects/my-app -- pi --role planner`
-- This writes `AGENTS.md` and `bootstrap.json` into `/tmp/broccoli-agents/planner/<random>/`.
+- This writes bootstrap context such as `AGENTS.md` into `/tmp/broccoli-agents/planner/<random>/`.
 
 ### Edit a live managed agent
 
@@ -564,7 +624,7 @@ Use full paths in service files because boot/login services often have a minimal
 command -v broccoli-comms
 ```
 
-Also make sure any agent commands in your config, such as `pi`, `claude`, or `codex`, are either on the service `PATH` or written as absolute paths in `~/.config/broccoli-comms/config.json` (or your equivalent `config.toml` paths).
+Also make sure any agent commands in your config, such as `pi`, `claude`, or `codex`, are either on the service `PATH` or written as absolute paths in `~/.config/broccoli-comms/config.json` managed-agent definitions or the matching `[providers.<name>].cmd` entry in `~/.config/broccoli-comms/config.toml`.
 
 ### Linux systemd user services
 

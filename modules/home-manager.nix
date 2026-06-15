@@ -260,15 +260,27 @@ in {
         [providers.jetski]
         cmd = "/google/bin/releases/jetski-devs/tools/cli"
         agentsDir = "_agents"
+        auto-accept-flag = ""
+        prompt-flag-name = ""
+        initial-message = ""
 
         [providers.pi]
         cmd = "pi"
+        auto-accept-flag = ""
+        prompt-flag-name = ""
+        initial-message = ""
 
         [providers.codex]
         cmd = "codex"
+        auto-accept-flag = ""
+        prompt-flag-name = ""
+        initial-message = ""
 
         [providers.claude]
         cmd = "claude"
+        auto-accept-flag = ""
+        prompt-flag-name = ""
+        initial-message = ""
 
       '';
     })

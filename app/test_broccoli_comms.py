@@ -265,6 +265,105 @@ agent_communicator_tui = "/config/agent-communicator"
         self.assertIn("AGENT_TRACKER_SOCKET", launched)
         self.assertIn("task bootstrap", launched)
 
+    def test_run_includes_provider_hyphenated_auto_accept_flag_from_toml(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text('[providers.pi]\ncmd = "pi"\nauto-accept-flag = "--dangerously-skip-permissions"\n')
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope=None, swarm=None, role=None, host=None, command=["pi"], json=True))
+
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertIn("--dangerously-skip-permissions", launched)
+
+    def test_run_includes_provider_initial_message_prompt_flag_from_toml(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text('[providers.pi]\ncmd = "pi"\nprompt-flag-name = "--prompt"\ninitial-message = "Run/bootstrap with Broccoli Comms, then start assigned task."\n')
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope=None, swarm=None, role=None, host=None, command=["pi"], json=True))
+
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertIn("--prompt", launched)
+        self.assertIn("Run/bootstrap with Broccoli Comms, then start assigned task.", launched)
+        self.assertNotIn("New message in inbox", launched)
+
+    def test_run_omits_provider_initial_message_when_prompt_flag_missing(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text('[providers.pi]\ncmd = "pi"\ninitial-message = "Run/bootstrap exactly."\n')
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope=None, swarm=None, role=None, host=None, command=["pi"], json=True))
+
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertNotIn("Run/bootstrap exactly.", launched)
+
+    def test_run_omits_empty_provider_auto_accept_flag_from_toml(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text('[providers.pi]\ncmd = "pi"\nauto-accept-flag = ""\n')
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace"):
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope=None, swarm=None, role=None, host=None, command=["pi"], json=True))
+
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertIn("_broccoli_agent_bootstrap pi", launched)
+        self.assertNotIn("--dangerously-skip-permissions", launched)
+
     def test_reconcile_agents_includes_scope_bootstrap_wrapper(self):
         calls = []
 
