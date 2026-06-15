@@ -23,16 +23,39 @@ import pane_output_registry
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 LOG = logging.getLogger("agent-registry")
 
-TOKEN = config.get("registry", "token", "")
-AUTH_REQUIRED = config.get("registry", "auth_enabled", True)
-AGENT_REGISTRY_BROAD_WATCH_ALLOWED = config.get("registry", "broad_watch_allowed", False)
-MAX_BODY_BYTES = config.get("tracker", "max_delivery_bytes", 5242880)
-STALE = config.get("tracker", "heartbeat_stale_seconds", 60)
-GONE = config.get("tracker", "heartbeat_gone_seconds", 180)
-DELIVERY_WAIT_SECONDS = config.get("registry", "delivery_wait_seconds", 25)
-REMOTE_PANE_INPUT_MAX_TEXT_BYTES = config.get("registry", "remote_pane_input_max_text_bytes", 4096)
-REMOTE_PANE_INPUT_MAX_KEYS = config.get("registry", "remote_pane_input_max_keys", 16)
-STATE_PATH = config.get("paths", "registry_state", os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "agent-registry", "state.json"))
+
+def _env_bool(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _env_int(name, default):
+    value = os.environ.get(name)
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        LOG.warning("invalid integer env %s=%r; using default %r", name, value, default)
+        return default
+
+
+def _env_str(name, default):
+    return os.environ.get(name) or default
+
+
+TOKEN = os.environ.get("AGENT_REGISTRY_TOKEN") or config.get("registry", "token", "")
+AUTH_REQUIRED = _env_bool("AGENT_REGISTRY_AUTH", config.get("registry", "auth_enabled", True))
+AGENT_REGISTRY_BROAD_WATCH_ALLOWED = _env_bool("AGENT_REGISTRY_BROAD_WATCH_ALLOWED", config.get("registry", "broad_watch_allowed", False))
+MAX_BODY_BYTES = _env_int("AGENT_REGISTRY_MAX_BODY_BYTES", config.get("tracker", "max_delivery_bytes", 5242880))
+STALE = _env_int("TRACKER_STALE_SECONDS", config.get("tracker", "heartbeat_stale_seconds", 60))
+GONE = _env_int("TRACKER_GONE_SECONDS", config.get("tracker", "heartbeat_gone_seconds", 180))
+DELIVERY_WAIT_SECONDS = _env_int("AGENT_REGISTRY_DELIVERY_WAIT_SECONDS", config.get("registry", "delivery_wait_seconds", 25))
+REMOTE_PANE_INPUT_MAX_TEXT_BYTES = _env_int("AGENT_REGISTRY_REMOTE_PANE_INPUT_MAX_TEXT_BYTES", config.get("registry", "remote_pane_input_max_text_bytes", 4096))
+REMOTE_PANE_INPUT_MAX_KEYS = _env_int("AGENT_REGISTRY_REMOTE_PANE_INPUT_MAX_KEYS", config.get("registry", "remote_pane_input_max_keys", 16))
+STATE_PATH = _env_str("AGENT_REGISTRY_STATE_PATH", config.get("paths", "registry_state", os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "agent-registry", "state.json")))
 CURRENT_TASK_FIELD_LIMITS = {
     "current_task": 200,
     "current_task_id": 200,
@@ -1179,8 +1202,8 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
 
 
 def serve_forever():
-    host = config.get("tracker", "registry_host", "0.0.0.0")
-    port = config.get("tracker", "registry_port", 8080)
+    host = _env_str("AGENT_REGISTRY_HOST", config.get("tracker", "registry_host", "0.0.0.0"))
+    port = _env_int("AGENT_REGISTRY_PORT", config.get("tracker", "registry_port", 8080))
     LOG.info("starting agent-registry bind=%s port=%s state_path=%s auth_required=%s", host, port, STATE_PATH, AUTH_REQUIRED)
     ThreadingHTTPServer((host, port), make_handler()).serve_forever()
 

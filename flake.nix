@@ -66,7 +66,10 @@
           agentRegistry = pkgs.writeShellApplication {
             name = "agent-registry";
             runtimeInputs = [ pkgs.python3 ];
-            text = ''exec ${pkgs.python3}/bin/python3 ${./agent-registry/server.py} "$@"'';
+            text = ''
+              export PYTHONPATH=${./agent-tracker}:''${PYTHONPATH:-}
+              exec ${pkgs.python3}/bin/python3 ${./agent-registry/server.py} "$@"
+            '';
           };
 
           managedAgent = pkgs.writeShellApplication {

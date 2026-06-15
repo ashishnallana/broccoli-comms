@@ -89,6 +89,15 @@ Preferred shared styles/helpers:
 
 Rule: if a component has a non-base background, every visible cell in that component should be padded/styled with the same background to avoid terminal color gaps.
 
+### Accent usage for scannable metadata
+
+Use accent color to improve readability for high-signal metadata fields, not as decoration.
+
+- Highlight metadata values that identify or classify records, such as memory type, memory status, subject/assigned agent name, sender/agent name, and current agent.
+- Prefer `colors.Accent` for normal metadata emphasis and `colors.AccentStrong` for selected, primary, or especially important metadata values.
+- Keep low-signal metadata muted so accent-colored fields remain easy to scan.
+- Do not rely on color alone: pair emphasized statuses with readable text, dots, badges, or labels.
+
 ## Typography and labels
 
 - Titles use short nouns: `Simple Chat`, `Swarm Mode`, `Saved Messages`, `Switch agent`.
@@ -109,12 +118,13 @@ Simple Chat uses spacing as structure. Follow these defaults:
 - Use borders only for controls that need button affordance or modal separation.
 - Keep cards compact: usually 2 lines for list rows, 1-3 lines for status summaries.
 
-## Composer pattern
+## Composer and input box pattern
 
-The composer is the primary action surface.
+The composer is the primary action surface, and Simple Chat is the reference for every editable input box.
 
-- Place it directly under the view title in chat-like screens.
-- Use `colors.InputBg` and padded full-width lines.
+- Place the primary composer directly under the view title in chat-like screens.
+- Use the same visual treatment as the Simple Chat composer for all primary input boxes: `colors.InputBg`, full-width padded background fill, rounded/soft spacing via padding rather than heavy borders, and a calm single-surface look.
+- Composer, search, filter, and form fields may vary in size, but should still read as the same component family; avoid introducing alternate boxed/bordered input styles unless a modal requires explicit separation.
 - Show the active mode as a small accent prefix, for example `/msg`, `/text`, `/keys`.
 - Keep mode help outside the input box on `BaseBg` using muted text.
 - Limit composer growth; preserve room for the message/content stream.
