@@ -8,6 +8,9 @@ import (
 )
 
 func (m model) taskManagementView(width, height int) string {
+	if m.tasksPalette.Open {
+		return m.taskCommandPaletteView(width, height)
+	}
 	if width < 70 {
 		return m.taskPrimaryPanel(width, height, false)
 	}
@@ -36,8 +39,8 @@ func (m model) taskPrimaryPanel(width, height int, wide bool) string {
 	lines := []string{
 		padStyledLine(titleStyle.Render("Tasks"), innerW, bg),
 		padStyledLine(mutedStyle.Render(truncateCells(taskSummaryLine(data), innerW)), innerW, bg),
-		padStyledLine(mutedStyle.Render("enter open · a add after · n new chain · s start · p progress · x/X assign · d/D archive"), innerW, bg),
-		padStyledLine(mutedStyle.Render("e next step · u result summary · form autocomplete: agent, priority, depends refs"), innerW, bg),
+		padStyledLine(mutedStyle.Render("ctrl-k commands · ctrl-n/ctrl-p agent · ↑/↓ task · j/k task · r refresh"), innerW, bg),
+		padStyledLine(mutedStyle.Render("forms use field-aware autocomplete: agent, priority, depends refs"), innerW, bg),
 		bgSpaces(innerW, bg),
 	}
 	if m.tasksForm.Active {

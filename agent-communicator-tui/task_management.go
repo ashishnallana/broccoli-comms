@@ -83,6 +83,14 @@ func (m model) taskData() taskManagementData {
 	approvalByTask := approvalsByTask(m.tasksApprovals)
 	chainID, rootID, currentTaskID := m.activeTaskChainFor(selected, stateByTask)
 	items := tasksForChain(m.tasksItems, chainID, rootID, currentTaskID)
+	if chainID == "" && rootID == "" && currentTaskID == "" && selected.Name != "" {
+		items = nil
+	}
+	items = mergeSelectedAgentTasks(items, m.tasksItems, selected)
+	approvals := approvalsForChain(m.tasksApprovals, chainID, rootID)
+	if chainID == "" && rootID == "" && selected.Name != "" {
+		approvals = approvalsForTasks(m.tasksApprovals, items)
+	}
 	buckets := bucketTasks(items, currentTaskID, stateByTask, approvalByTask)
 	rowCount := len(orderedTaskRows(buckets))
 	return taskManagementData{
@@ -95,7 +103,7 @@ func (m model) taskData() taskManagementData {
 		Buckets:       buckets,
 		Counts:        countTaskBuckets(buckets),
 		Blockers:      collectTaskBlockers(items, stateByTask),
-		Approvals:     approvalsForChain(m.tasksApprovals, chainID, rootID),
+		Approvals:     approvals,
 		Tasks:         items,
 		States:        m.tasksStates,
 	}

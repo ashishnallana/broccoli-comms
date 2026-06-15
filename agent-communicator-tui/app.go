@@ -116,6 +116,7 @@ type model struct {
 	tasksErr       error
 	tasksConfirm   taskActionConfirmation
 	tasksForm      taskChainFormState
+	tasksPalette   taskCommandPaletteState
 
 	// Save Agent Form (Ctrl-S)
 	showingSaveForm bool

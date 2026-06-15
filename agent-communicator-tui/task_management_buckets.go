@@ -95,6 +95,24 @@ func tasksForChain(tasks []taskRecord, chainID, rootID, currentTaskID string) []
 	return out
 }
 
+func mergeSelectedAgentTasks(items, all []taskRecord, selected agentRow) []taskRecord {
+	if selected.Name == "" {
+		return items
+	}
+	seen := map[string]bool{}
+	for _, task := range items {
+		seen[task.TaskID] = true
+	}
+	out := append([]taskRecord{}, items...)
+	for _, task := range all {
+		if !seen[task.TaskID] && task.AssignedAgent == selected.Name {
+			seen[task.TaskID] = true
+			out = append(out, task)
+		}
+	}
+	return out
+}
+
 func bucketTasks(tasks []taskRecord, currentTaskID string, states map[string]taskWorkingState, approvals map[string][]taskApprovalRecord) []taskBucket {
 	buckets := []taskBucket{{Name: "Current"}, {Name: "Next"}, {Name: "Queue"}, {Name: "Review"}, {Name: "Completed"}}
 	for _, task := range sortedTasks(tasks) {
@@ -235,6 +253,22 @@ func approvalsForChain(approvals []taskApprovalRecord, chainID, rootID string) [
 	var out []taskApprovalRecord
 	for _, approval := range approvals {
 		if (chainID != "" && approval.TaskChainID == chainID) || (rootID != "" && approval.RootTaskID == rootID) {
+			out = append(out, approval)
+		}
+	}
+	return out
+}
+
+func approvalsForTasks(approvals []taskApprovalRecord, tasks []taskRecord) []taskApprovalRecord {
+	visible := map[string]bool{}
+	for _, task := range tasks {
+		if task.TaskID != "" {
+			visible[task.TaskID] = true
+		}
+	}
+	var out []taskApprovalRecord
+	for _, approval := range approvals {
+		if visible[approval.TaskID] {
 			out = append(out, approval)
 		}
 	}

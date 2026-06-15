@@ -37,6 +37,9 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		return m, nil
 	}
 	if m.mode == tasksView {
+		if m.tasksPalette.Open {
+			return m.updateTaskCommandPalette(msg)
+		}
 		if m.tasksForm.Active {
 			switch msg.Type {
 			case tea.KeyEsc:
@@ -70,6 +73,9 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyCtrlQ:
 			return m, tea.Quit
+		case tea.KeyCtrlK:
+			m.tasksPalette = taskCommandPaletteState{Open: true}
+			return m, nil
 		case tea.KeyCtrlP:
 			if len(m.rows) > 0 {
 				m.selectNextInSection(-1)
@@ -92,10 +98,7 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 			m.tasksConfirm = taskActionConfirmation{}
 			return m, nil
 		case tea.KeyEnter:
-			if task, ok := m.selectedTaskRecord(); ok {
-				m.directInputStatus = "Task details · " + task.TaskID + " · " + firstNonEmpty(task.Title, "Untitled task")
-				m.directInputStatusErr = false
-			}
+			m.tasksPalette = taskCommandPaletteState{Open: true}
 			return m, nil
 		case tea.KeyUp:
 			m.moveTaskSelection(-1)
@@ -138,40 +141,6 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 			case 'k':
 				m.moveTaskSelection(-1)
 				return m, nil
-			case 'a':
-				if task, ok := m.selectedTaskRecord(); ok {
-					return m.startTaskChainForm("add_after", []string{task.TaskID}), nil
-				}
-			case 'n':
-				return m.startTaskChainForm("new_chain", nil), nil
-			case 'p':
-				m.tasksLoading = true
-				return m, summarizeTaskChainCmd(firstNonEmpty(m.taskData().ActiveChainID, m.taskData().RootTaskID))
-			case 'e', 'E':
-				if task, ok := m.selectedTaskRecord(); ok {
-					return m, editTaskFieldInEditor(task, "next_step")
-				}
-			case 'u', 'U':
-				if task, ok := m.selectedTaskRecord(); ok {
-					return m, editTaskFieldInEditor(task, "result_summary")
-				}
-			case 'd':
-				if task, ok := m.selectedTaskRecord(); ok {
-					return m.confirmOrRunTaskAction(task, "archive")
-				}
-			case 'D':
-				return m.confirmOrRunChainArchive()
-			case 'x':
-				if task, ok := m.selectedTaskRecord(); ok {
-					return m.confirmOrRunTaskAction(task, "assign")
-				}
-			case 'X':
-				return m.confirmOrRunChainAssign()
-			case 's', 'S':
-				if task, ok := m.selectedTaskRecord(); ok {
-					m.tasksLoading = true
-					return m, taskActionCmd(task, "start", m.currentRow().Name)
-				}
 			}
 		}
 		return m, nil
