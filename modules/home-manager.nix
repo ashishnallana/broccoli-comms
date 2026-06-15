@@ -26,6 +26,7 @@ let
   broccoliRuntimeDir = cfg.runtimeDir;
   broccoliCacheDir = if cfg.cacheDir != null then cfg.cacheDir else "${cacheRoot}/broccoli-comms";
   broccoliConfigDir = if cfg.configDir != null then cfg.configDir else "${configRoot}/broccoli-comms";
+  broccoliAgentRootDir = cfg.agentRootDir;
   trackerSocket = if broccoliRuntimeDir != null then "${broccoliRuntimeDir}/agent-tracker.sock" else null;
   trackerStdout = "${broccoliCacheDir}/launchd.stdout.log";
   trackerStderr = "${broccoliCacheDir}/launchd.stderr.log";
@@ -164,6 +165,7 @@ in {
     runtimeDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_RUNTIME_DIR. When unset, Broccoli Comms uses its canonical CLI default: \${XDG_RUNTIME_DIR:-/tmp/$UID}/broccoli-comms."; };
     cacheDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_CACHE_DIR. Defaults to ~/.cache/broccoli-comms for Home Manager-managed logs and state."; };
     configDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_CONFIG_DIR. Defaults to ~/.config/broccoli-comms."; };
+    agentRootDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional stable root for `broccoli-comms run` agent workspaces. When unset, run uses temp directories; when set, workspaces are <agentRootDir>/<agent-name>."; };
 
     tracker = {
       enable = mkOption { type = types.bool; default = cfg.enable; description = "Enable agent-tracker as a systemd user service or launchd agent."; };
@@ -234,6 +236,7 @@ in {
         ${lib.optionalString (broccoliRuntimeDir != null) ''runtime_dir = "${broccoliRuntimeDir}"''}
         cache_dir = "${broccoliCacheDir}"
         config_dir = "${broccoliConfigDir}"
+        ${lib.optionalString (broccoliAgentRootDir != null) ''agent-root-dir = "${broccoliAgentRootDir}"''}
 
         [tracker]
         http_port = ${toString cfg.tracker.httpPort}

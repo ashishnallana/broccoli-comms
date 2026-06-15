@@ -67,6 +67,9 @@ This example intentionally includes only common public providers (`pi`, `codex`,
 runtime_dir = "/home/alice/.cache/broccoli-comms/runtime"
 cache_dir = "/home/alice/.cache/broccoli-comms"
 config_dir = "/home/alice/.config/broccoli-comms"
+# Optional: when set, `broccoli-comms run NAME ...` creates the agent workspace
+# under this stable root as <agent-root-dir>/<agent-name>/ instead of a temp dir.
+agent-root-dir = "/home/alice/.cache/broccoli-comms/agents"
 
 [tracker]
 http_port = 19876
@@ -115,6 +118,10 @@ Provider fields:
 - `defaultArgs`: optional string or TOML array appended after `cmd` for every launch of that provider.
 - `auto-accept-flag`: optional provider-specific flag that enables auto-accept/auto-approve mode. Leave empty to disable.
 - `prompt-flag-name` plus `initial-message`: when both are non-empty, `broccoli-comms run` passes them as the provider's initial prompt/message flag and value. The message is passed as the configured provider argument; it is not converted into an inbox notification.
+
+Path fields:
+
+- `[paths].agent-root-dir`: optional stable root for agent workspaces. When unset, `broccoli-comms run` preserves the existing temp workspace behavior. When set, a run named `NAME` uses `<agent-root-dir>/<NAME>/` as the launch/context root, with unsafe characters in `NAME` sanitized the same way as temp workspaces.
 
 ## Install and quick start
 

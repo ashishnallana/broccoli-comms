@@ -15,6 +15,8 @@ TASK_STATUSES = {"queued", "ready", "working", "blocked", "review", "done", "val
 STATE_STATUSES = {"working", "blocked", "waiting", "review", "done"}
 RESULT_STATUSES = {"good", "bad", "need_improvements"}
 APPROVAL_STATUSES = {"pending", "decided", "superseded"}
+PARTICIPANT_ROLES = {"assignee", "reviewer", "verifier", "coordinator", "observer", "specialist"}
+PARTICIPANT_STATUSES = {"active", "inactive"}
 MEMORY_TYPES = {"fact", "habit", "episode", "expertise", "skill"}
 MEMORY_STATUSES = {"pending", "active", "rejected", "revoked", "superseded"}
 TRUSTED_MEMORY_ACTORS = {"user", "coordinator", "task-kernel", "agent-communicator"}
@@ -210,10 +212,26 @@ class LearningKernel:
               created_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
               version INTEGER NOT NULL DEFAULT 1
             );
+            CREATE TABLE IF NOT EXISTS task_participants(
+              participant_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_chain_id TEXT NOT NULL DEFAULT '', root_task_id TEXT,
+              agent TEXT NOT NULL, role TEXT NOT NULL, instance_id TEXT, status TEXT NOT NULL DEFAULT 'active',
+              created_by TEXT NOT NULL, updated_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+              version INTEGER NOT NULL DEFAULT 1,
+              UNIQUE(task_id, task_chain_id, agent, role, instance_id)
+            );
+            CREATE TABLE IF NOT EXISTS task_chain_default_participants(
+              default_id TEXT PRIMARY KEY, task_chain_id TEXT NOT NULL, root_task_id TEXT,
+              agent TEXT NOT NULL, role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+              created_by TEXT NOT NULL, updated_by TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+              version INTEGER NOT NULL DEFAULT 1,
+              UNIQUE(task_chain_id, agent, role)
+            );
             CREATE INDEX IF NOT EXISTS idx_tasks_next ON tasks(status, assigned_agent, scope, updated_at);
             CREATE INDEX IF NOT EXISTS idx_events_subject ON events(subject_type, subject_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_memory_lookup ON memory_records(status, type, scope, subject_agent, validated_at);
             CREATE INDEX IF NOT EXISTS idx_chain_summaries_root ON task_chain_summaries(root_task_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_task_participants_task ON task_participants(task_id, task_chain_id, role, agent);
+            CREATE INDEX IF NOT EXISTS idx_chain_default_participants_chain ON task_chain_default_participants(task_chain_id, role, agent);
             """)
             self._migrate_working_states(conn)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_states_lookup ON working_states(task_id, agent, task_chain_id)")
@@ -311,6 +329,16 @@ class LearningKernel:
     def row_chain_summary(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
         return dict(row) if row else None
 
+    def row_participant(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        return dict(row) if row else None
+
+    def row_chain_default_participant(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
+        return dict(row) if row else None
+
+    def _chain_default_participant_id(self, task_chain_id: str, agent: str, role: str) -> str:
+        raw = "|".join([task_chain_id or "", agent or "", role or ""])
+        return f"cpdef-{uuid.uuid5(uuid.NAMESPACE_URL, raw).hex[:12]}"
+
     def _clean_discoveries(self, discoveries: list[dict[str, Any]] | None) -> list[dict[str, str]]:
         cleaned = []
         for item in (discoveries or [])[:20]:
@@ -337,6 +365,9 @@ class LearningKernel:
         acceptance = clean_text_list(kw.get("acceptance_criteria") or [], "list_item")
         context_refs = clean_text_list(kw.get("context_refs") or [], "list_item")
         actor = clean_text(kw.get("actor") or "user", "agent") or "user"
+        default_participants = list(kw.get("participants") or [])
+        task_chain_id = clean_text(kw.get("task_chain_id"), "list_item")
+        root_task_id = clean_text(kw.get("root_task_id"), "list_item")
         ts = now_iso()
         with closing(self.connect()) as conn:
             self._validate_deps(conn, deps, task_id)
@@ -347,9 +378,68 @@ class LearningKernel:
             )
             self.event(conn, "task_created", "user", actor, "task", task_id, {"title": title, "status": status, "assigned_agent": assigned_agent}, task_id, scope)
             if assigned_agent:
+                self._upsert_task_participant_in_tx(conn, task_id=task_id, agent=assigned_agent, role="assignee", actor=actor, emit_event=False)
                 self.event(conn, "task_assigned", "user", actor, "task", task_id, {"assigned_agent": assigned_agent}, task_id, scope)
+            for participant in self._chain_default_participants_for_create(conn, task_chain_id, default_participants):
+                if not isinstance(participant, dict):
+                    raise ValueError("participant must be an object")
+                self._upsert_task_participant_in_tx(
+                    conn,
+                    task_id=task_id,
+                    agent=participant.get("agent"),
+                    role=participant.get("role"),
+                    actor=actor,
+                    task_chain_id=participant.get("task_chain_id") or task_chain_id,
+                    root_task_id=participant.get("root_task_id") or root_task_id,
+                    instance_id=participant.get("instance_id"),
+                    status=participant.get("status"),
+                )
             conn.execute("COMMIT")
             return self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
+
+    def task_chain_default_participant_set(self, task_chain_id: str, agent: str, role: str, *, root_task_id: str | None = None, status: str | None = None, actor: str = "user") -> dict[str, Any]:
+        task_chain_id = clean_text(task_chain_id, "list_item", required=True) or ""
+        agent = clean_text(agent, "agent", required=True) or ""
+        role = clean_text(role, "list_item", required=True) or ""
+        if role not in PARTICIPANT_ROLES:
+            raise ValueError("invalid participant role")
+        status = clean_text(status or "active", "list_item") or "active"
+        if status not in PARTICIPANT_STATUSES:
+            raise ValueError("invalid participant status")
+        root_task_id = clean_text(root_task_id, "list_item")
+        actor = clean_text(actor or "user", "agent") or "user"
+        default_id = self._chain_default_participant_id(task_chain_id, agent, role)
+        ts = now_iso()
+        with closing(self.connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            old = self.row_chain_default_participant(conn.execute("SELECT * FROM task_chain_default_participants WHERE default_id=?", (default_id,)).fetchone())
+            if old:
+                conn.execute("UPDATE task_chain_default_participants SET root_task_id=?, status=?, updated_by=?, updated_at=?, version=version+1 WHERE default_id=?", (root_task_id, status, actor, ts, default_id))
+                event_type = "task_chain_default_participant_updated"
+            else:
+                conn.execute("INSERT INTO task_chain_default_participants(default_id,task_chain_id,root_task_id,agent,role,status,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (default_id, task_chain_id, root_task_id, agent, role, status, actor, actor, ts, ts))
+                event_type = "task_chain_default_participant_added"
+            participant = self.row_chain_default_participant(conn.execute("SELECT * FROM task_chain_default_participants WHERE default_id=?", (default_id,)).fetchone())
+            self.event(conn, event_type, "user", actor, "task_chain_default_participant", default_id, participant, root_task_id or task_chain_id)
+            conn.execute("COMMIT")
+            return participant
+
+    def task_chain_default_participant_list(self, task_chain_id: str) -> list[dict[str, Any]]:
+        task_chain_id = clean_text(task_chain_id, "list_item", required=True) or ""
+        with closing(self.connect()) as conn:
+            return [self.row_chain_default_participant(r) for r in conn.execute("SELECT * FROM task_chain_default_participants WHERE task_chain_id=? ORDER BY role, agent", (task_chain_id,)).fetchall()]
+
+    def _chain_default_participants_for_create(self, conn: sqlite3.Connection, task_chain_id: str | None, explicit: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        task_chain_id = clean_text(task_chain_id or "", "list_item") or ""
+        if not task_chain_id:
+            return explicit
+        explicit_roles = {p.get("role") for p in explicit if isinstance(p, dict) and p.get("role")}
+        defaults = []
+        for row in conn.execute("SELECT * FROM task_chain_default_participants WHERE task_chain_id=? AND status='active' ORDER BY role, agent", (task_chain_id,)).fetchall():
+            item = self.row_chain_default_participant(row)
+            if item.get("role") not in explicit_roles:
+                defaults.append({"agent": item.get("agent"), "role": item.get("role"), "task_chain_id": task_chain_id, "root_task_id": item.get("root_task_id")})
+        return [*defaults, *explicit]
 
     def _validate_deps(self, conn: sqlite3.Connection, deps: list[str], self_id: str) -> None:
         if self_id in deps:
@@ -358,16 +448,133 @@ class LearningKernel:
             if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (dep,)).fetchone():
                 raise ValueError(f"missing dependency: {dep}")
 
-    def task_show(self, task_id: str) -> dict[str, Any]:
+    def task_show(self, task_id: str, include_participants: bool = False) -> dict[str, Any]:
         with closing(self.connect()) as conn:
             task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
             if not task:
                 raise KeyError(task_id)
+            if include_participants:
+                task["participants"] = self._task_participants_for_task(conn, task)
             return task
 
-    def task_list(self, agent: str | None = None, statuses: list[str] | None = None, include_archived: bool = False, scope: str | None = None) -> list[dict[str, Any]]:
+    def _participant_id(self, task_id: str, task_chain_id: str, agent: str, role: str, instance_id: str | None = None) -> str:
+        raw = "|".join([task_id or "", task_chain_id or "", agent or "", role or "", instance_id or ""])
+        return f"part-{uuid.uuid5(uuid.NAMESPACE_URL, raw).hex[:12]}"
+
+    def _clean_participant_fields(self, task_id: str, agent: str, role: str, *, task_chain_id: str | None = None, root_task_id: str | None = None, instance_id: str | None = None, status: str | None = None) -> dict[str, Any]:
+        task_id = clean_text(task_id, "list_item", required=True) or ""
+        agent = clean_text(agent, "agent", required=True) or ""
+        role = clean_text(role, "list_item", required=True) or ""
+        if role not in PARTICIPANT_ROLES:
+            raise ValueError("invalid participant role")
+        status = clean_text(status or "active", "list_item") or "active"
+        if status not in PARTICIPANT_STATUSES:
+            raise ValueError("invalid participant status")
+        task_chain_id = clean_text(task_chain_id or "", "list_item") or ""
+        root_task_id = clean_text(root_task_id, "list_item")
+        instance_id = clean_text(instance_id, "list_item")
+        return {"task_id": task_id, "task_chain_id": task_chain_id, "root_task_id": root_task_id, "agent": agent, "role": role, "instance_id": instance_id, "status": status}
+
+    def _upsert_task_participant_in_tx(self, conn: sqlite3.Connection, *, task_id: str, agent: str, role: str, actor: str, task_chain_id: str | None = None, root_task_id: str | None = None, instance_id: str | None = None, status: str | None = None, emit_event: bool = True) -> dict[str, Any]:
+        fields = self._clean_participant_fields(task_id, agent, role, task_chain_id=task_chain_id, root_task_id=root_task_id, instance_id=instance_id, status=status)
+        if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (fields["task_id"],)).fetchone():
+            raise KeyError(fields["task_id"])
+        participant_id = self._participant_id(fields["task_id"], fields["task_chain_id"], fields["agent"], fields["role"], fields["instance_id"])
+        old = self.row_participant(conn.execute("SELECT * FROM task_participants WHERE participant_id=?", (participant_id,)).fetchone())
+        ts = now_iso()
+        if old:
+            conn.execute(
+                "UPDATE task_participants SET root_task_id=?, status=?, updated_by=?, updated_at=?, version=version+1 WHERE participant_id=?",
+                (fields["root_task_id"], fields["status"], actor, ts, participant_id),
+            )
+            event_type = "task_participant_updated"
+        else:
+            conn.execute(
+                "INSERT INTO task_participants(participant_id,task_id,task_chain_id,root_task_id,agent,role,instance_id,status,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (participant_id, fields["task_id"], fields["task_chain_id"], fields["root_task_id"], fields["agent"], fields["role"], fields["instance_id"], fields["status"], actor, actor, ts, ts),
+            )
+            event_type = "task_participant_added"
+        participant = self.row_participant(conn.execute("SELECT * FROM task_participants WHERE participant_id=?", (participant_id,)).fetchone())
+        if emit_event:
+            self.event(conn, event_type, "user", actor, "task_participant", participant_id, participant, fields["task_id"])
+        return participant
+
+    def _task_participants_for_task(self, conn: sqlite3.Connection, task: dict[str, Any]) -> list[dict[str, Any]]:
+        participants = [self.row_participant(r) for r in conn.execute("SELECT * FROM task_participants WHERE task_id=? ORDER BY role, agent, created_at", (task["task_id"],)).fetchall()]
+        assigned = task.get("assigned_agent")
+        if assigned and not any(p.get("agent") == assigned and p.get("role") == "assignee" for p in participants):
+            participants.insert(0, {
+                "participant_id": self._participant_id(task["task_id"], "", assigned, "assignee"),
+                "task_id": task["task_id"], "task_chain_id": "", "root_task_id": None,
+                "agent": assigned, "role": "assignee", "instance_id": None, "status": "active",
+                "created_by": task.get("created_by"), "updated_by": task.get("updated_by"),
+                "created_at": task.get("created_at"), "updated_at": task.get("updated_at"), "version": task.get("version", 1),
+                "compatibility": True,
+            })
+        return participants
+
+    def task_participant_list(self, task_id: str) -> list[dict[str, Any]]:
+        with closing(self.connect()) as conn:
+            task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
+            if not task:
+                raise KeyError(task_id)
+            return self._task_participants_for_task(conn, task)
+
+    def task_participant_add(self, task_id: str, agent: str, role: str, *, actor: str = "user", task_chain_id: str | None = None, root_task_id: str | None = None, instance_id: str | None = None, status: str | None = None) -> dict[str, Any]:
+        actor = clean_text(actor or "user", "agent") or "user"
+        with closing(self.connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            participant = self._upsert_task_participant_in_tx(conn, task_id=task_id, agent=agent, role=role, actor=actor, task_chain_id=task_chain_id, root_task_id=root_task_id, instance_id=instance_id, status=status)
+            conn.execute("COMMIT")
+            return participant
+
+    def task_participant_update(self, participant_id: str, *, status: str | None = None, actor: str = "user") -> dict[str, Any]:
+        participant_id = clean_text(participant_id, "list_item", required=True) or participant_id
+        actor = clean_text(actor or "user", "agent") or "user"
+        if status is not None:
+            status = clean_text(status, "list_item") or "active"
+            if status not in PARTICIPANT_STATUSES:
+                raise ValueError("invalid participant status")
+        with closing(self.connect()) as conn:
+            old = self.row_participant(conn.execute("SELECT * FROM task_participants WHERE participant_id=?", (participant_id,)).fetchone())
+            if not old:
+                raise KeyError(participant_id)
+            conn.execute("BEGIN IMMEDIATE")
+            if status is not None:
+                conn.execute("UPDATE task_participants SET status=?, updated_by=?, updated_at=?, version=version+1 WHERE participant_id=?", (status, actor, now_iso(), participant_id))
+            participant = self.row_participant(conn.execute("SELECT * FROM task_participants WHERE participant_id=?", (participant_id,)).fetchone())
+            self.event(conn, "task_participant_updated", "user", actor, "task_participant", participant_id, participant, participant.get("task_id"))
+            conn.execute("COMMIT")
+            return participant
+
+    def task_participant_remove(self, participant_id: str, *, actor: str = "user") -> dict[str, Any]:
+        participant_id = clean_text(participant_id, "list_item", required=True) or participant_id
+        actor = clean_text(actor or "user", "agent") or "user"
+        with closing(self.connect()) as conn:
+            participant = self.row_participant(conn.execute("SELECT * FROM task_participants WHERE participant_id=?", (participant_id,)).fetchone())
+            if not participant:
+                raise KeyError(participant_id)
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM task_participants WHERE participant_id=?", (participant_id,))
+            self.event(conn, "task_participant_removed", "user", actor, "task_participant", participant_id, participant, participant.get("task_id"))
+            conn.execute("COMMIT")
+            return participant
+
+    def task_list(self, agent: str | None = None, statuses: list[str] | None = None, include_archived: bool = False, scope: str | None = None, include_participants: bool = False, participant_roles: list[str] | None = None) -> list[dict[str, Any]]:
         clauses, args = [], []
-        if agent:
+        roles = participant_roles or []
+        for role in roles:
+            if role not in PARTICIPANT_ROLES:
+                raise ValueError("invalid participant role")
+        if agent and roles:
+            role_placeholders = ",".join("?" for _ in roles)
+            role_args = list(roles)
+            participant_clause = f"task_id IN (SELECT task_id FROM task_participants WHERE agent=? AND status='active' AND role IN ({role_placeholders}))"
+            clauses.append(f"({participant_clause}" + (" OR assigned_agent=?" if "assignee" in roles else "") + ")")
+            args.extend([agent, *role_args])
+            if "assignee" in roles:
+                args.append(agent)
+        elif agent:
             clauses.append("assigned_agent=?"); args.append(agent)
         if statuses:
             clauses.append("status IN (%s)" % ",".join("?" for _ in statuses)); args.extend(statuses)
@@ -377,10 +584,20 @@ class LearningKernel:
             clauses.append("scope=?"); args.append(scope)
         sql = "SELECT * FROM tasks" + (" WHERE " + " AND ".join(clauses) if clauses else "") + " ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, created_at"
         with closing(self.connect()) as conn:
-            return [self.row_task(r) for r in conn.execute(sql, args).fetchall()]
+            tasks = [self.row_task(r) for r in conn.execute(sql, args).fetchall()]
+            if include_participants:
+                for task in tasks:
+                    task["participants"] = self._task_participants_for_task(conn, task)
+            return tasks
 
-    def task_next(self, agent: str | None = None, scope: str | None = None, include_profile: bool = False) -> dict[str, Any]:
-        candidates = self.task_list(agent=agent, statuses=["ready"], include_archived=False, scope=scope)
+    def _task_next_statuses(self, participant_roles: list[str] | None = None) -> list[str]:
+        roles = set(participant_roles or [])
+        if roles & {"reviewer", "verifier"}:
+            return ["review", "done"]
+        return ["ready"]
+
+    def task_next(self, agent: str | None = None, scope: str | None = None, include_profile: bool = False, participant_roles: list[str] | None = None) -> dict[str, Any]:
+        candidates = self.task_list(agent=agent, statuses=self._task_next_statuses(participant_roles), include_archived=False, scope=scope, participant_roles=participant_roles)
         with closing(self.connect()) as conn:
             for task in candidates:
                 deps = task.get("depends_on") or []
@@ -393,6 +610,20 @@ class LearningKernel:
         if include_profile:
             payload["user_profile"] = self.user_profile(raw=True)
         return payload
+
+    def task_ready_dependents(self, task_id: str, include_participants: bool = False) -> list[dict[str, Any]]:
+        with closing(self.connect()) as conn:
+            rows = [self.row_task(r) for r in conn.execute("SELECT * FROM tasks WHERE status IN ('ready','queued') ORDER BY created_at").fetchall()]
+            ready = []
+            for task in rows:
+                deps = task.get("depends_on") or []
+                if task_id not in deps:
+                    continue
+                if all((conn.execute("SELECT status FROM tasks WHERE task_id=?", (d,)).fetchone() or {"status": None})["status"] in DONE_STATUSES for d in deps):
+                    if include_participants:
+                        task["participants"] = self._task_participants_for_task(conn, task)
+                    ready.append(task)
+            return ready
 
     def task_update(self, task_id: str, **kw: Any) -> dict[str, Any]:
         allowed = {"status", "next_step", "blocked_reason", "result_summary", "assigned_agent"}
@@ -416,6 +647,8 @@ class LearningKernel:
             if "status" in updates and updates["status"] != old.get("status"):
                 self.event(conn, "task_status_changed", "user", actor, "task", task_id, {"old": old.get("status"), "new": updates["status"]}, task_id, old.get("scope"))
             if "assigned_agent" in updates and updates["assigned_agent"] != old.get("assigned_agent"):
+                if updates["assigned_agent"]:
+                    self._upsert_task_participant_in_tx(conn, task_id=task_id, agent=updates["assigned_agent"], role="assignee", actor=actor, emit_event=False)
                 self.event(conn, "task_assigned", "user", actor, "task", task_id, {"assigned_agent": updates["assigned_agent"]}, task_id, old.get("scope"))
             conn.execute("COMMIT")
             return self.task_show(task_id)

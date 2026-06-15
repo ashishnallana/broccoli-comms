@@ -1,22 +1,36 @@
 package main
 
+type taskParticipant struct {
+	ParticipantID string `json:"participant_id"`
+	TaskID        string `json:"task_id"`
+	TaskChainID   string `json:"task_chain_id"`
+	RootTaskID    string `json:"root_task_id"`
+	Agent         string `json:"agent"`
+	Role          string `json:"role"`
+	InstanceID    string `json:"instance_id"`
+	Status        string `json:"status"`
+	UpdatedAt     string `json:"updated_at"`
+	Compatibility bool   `json:"compatibility"`
+}
+
 type taskRecord struct {
-	TaskID             string   `json:"task_id"`
-	Title              string   `json:"title"`
-	Description        string   `json:"description"`
-	Status             string   `json:"status"`
-	Priority           string   `json:"priority"`
-	AssignedAgent      string   `json:"assigned_agent"`
-	Scope              string   `json:"scope"`
-	BlockedReason      string   `json:"blocked_reason"`
-	NextStep           string   `json:"next_step"`
-	ResultStatus       string   `json:"result_status"`
-	ResultSummary      string   `json:"result_summary"`
-	DependsOn          []string `json:"depends_on"`
-	AcceptanceCriteria []string `json:"acceptance_criteria"`
-	CreatedAt          string   `json:"created_at"`
-	UpdatedAt          string   `json:"updated_at"`
-	Version            int      `json:"version"`
+	TaskID             string            `json:"task_id"`
+	Title              string            `json:"title"`
+	Description        string            `json:"description"`
+	Status             string            `json:"status"`
+	Priority           string            `json:"priority"`
+	AssignedAgent      string            `json:"assigned_agent"`
+	Scope              string            `json:"scope"`
+	BlockedReason      string            `json:"blocked_reason"`
+	NextStep           string            `json:"next_step"`
+	ResultStatus       string            `json:"result_status"`
+	ResultSummary      string            `json:"result_summary"`
+	DependsOn          []string          `json:"depends_on"`
+	AcceptanceCriteria []string          `json:"acceptance_criteria"`
+	Participants       []taskParticipant `json:"participants"`
+	CreatedAt          string            `json:"created_at"`
+	UpdatedAt          string            `json:"updated_at"`
+	Version            int               `json:"version"`
 }
 
 type taskWorkingState struct {
@@ -80,17 +94,10 @@ type taskManagementData struct {
 func (m model) taskData() taskManagementData {
 	selected := m.currentRow()
 	stateByTask := latestStateByTask(m.tasksStates)
-	activeTasks := activeTaskRecords(m.tasksItems)
-	chainID, rootID, currentTaskID := m.activeTaskChainFor(selected, stateByTask)
-	items := tasksForChain(activeTasks, chainID, rootID, currentTaskID)
-	if chainID == "" && rootID == "" && currentTaskID == "" && selected.Name != "" {
-		items = nil
-	}
-	items = mergeSelectedAgentTasks(items, activeTasks, selected)
-	approvals := approvalsForChain(m.tasksApprovals, chainID, rootID)
-	if chainID == "" && rootID == "" && selected.Name != "" {
-		approvals = approvalsForTasks(m.tasksApprovals, items)
-	}
+	approvalByTaskAll := approvalsByTask(m.tasksApprovals)
+	items := openTaskRecords(activeTaskRecords(m.tasksItems), stateByTask, approvalByTaskAll)
+	chainID, rootID, currentTaskID := taskFocusFromSelection(items, m.tasksSelected)
+	approvals := approvalsForTasks(m.tasksApprovals, items)
 	approvalByTask := approvalsByTask(approvals)
 	buckets := bucketTasks(items, currentTaskID, stateByTask, approvalByTask)
 	rowCount := len(orderedTaskRows(buckets))

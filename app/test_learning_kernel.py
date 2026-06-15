@@ -54,6 +54,212 @@ class TestLearningKernelCli(unittest.TestCase):
             k.task_update(dep["task_id"], status="done")
             self.assertEqual(k.task_next(agent="a")["task"]["task_id"], child["task_id"])
 
+    def test_legacy_assigned_agent_appears_as_assignee_participant(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="legacy", assigned_agent="coder")
+            participants = k.task_participant_list(task["task_id"])
+            self.assertEqual([(p["agent"], p["role"]) for p in participants], [("coder", "assignee")])
+            shown = k.task_show(task["task_id"], include_participants=True)
+            self.assertEqual(shown["participants"][0]["agent"], "coder")
+            self.assertEqual(k.task_next(agent="coder")["task"]["task_id"], task["task_id"])
+
+    def test_task_participant_crud_is_audited(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="review", assigned_agent="coder")
+            participant = k.task_participant_add(task["task_id"], "reviewer", "reviewer", actor="tester")
+            self.assertEqual(participant["status"], "active")
+            updated = k.task_participant_update(participant["participant_id"], status="inactive", actor="tester")
+            self.assertEqual(updated["status"], "inactive")
+            removed = k.task_participant_remove(participant["participant_id"], actor="tester")
+            self.assertEqual(removed["agent"], "reviewer")
+            self.assertNotIn("reviewer", [p["agent"] for p in k.task_participant_list(task["task_id"])])
+            event_types = [e["event_type"] for e in k.events(task_id=task["task_id"])]
+            self.assertIn("task_participant_added", event_types)
+            self.assertIn("task_participant_updated", event_types)
+            self.assertIn("task_participant_removed", event_types)
+
+    def test_multiple_participants_roles_on_one_task_chain(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="chain", assigned_agent="coder")
+            chain = "chain-1"
+            k.task_participant_add(task["task_id"], "reviewer", "reviewer", task_chain_id=chain)
+            k.task_participant_add(task["task_id"], "reviewer", "verifier", task_chain_id=chain)
+            k.task_participant_add(task["task_id"], "coord", "coordinator", task_chain_id=chain)
+            participants = k.task_participant_list(task["task_id"])
+            pairs = {(p["agent"], p["role"], p["task_chain_id"]) for p in participants}
+            self.assertIn(("coder", "assignee", ""), pairs)
+            self.assertIn(("reviewer", "reviewer", chain), pairs)
+            self.assertIn(("reviewer", "verifier", chain), pairs)
+            self.assertIn(("coord", "coordinator", chain), pairs)
+
+    def test_task_create_accepts_default_participants(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="defaults", assigned_agent="coder", participants=[{"agent": "reviewer", "role": "reviewer"}, {"agent": "verifier", "role": "verifier"}])
+            participants = {(p["agent"], p["role"]) for p in k.task_participant_list(task["task_id"])}
+            self.assertIn(("coder", "assignee"), participants)
+            self.assertIn(("reviewer", "reviewer"), participants)
+            self.assertIn(("verifier", "verifier"), participants)
+            event_types = [e["event_type"] for e in k.events(task_id=task["task_id"])]
+            self.assertGreaterEqual(event_types.count("task_participant_added"), 2)
+
+    def test_chain_default_participants_are_inherited_and_explicit_roles_override(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            root = k.task_create(title="root", assigned_agent="coder")
+            chain = root["task_id"]
+            default = k.task_chain_default_participant_set(chain, "reviewer", "reviewer", root_task_id=root["task_id"], actor="tester")
+            self.assertEqual(default["status"], "active")
+            child = k.task_create(title="child", assigned_agent="coder", task_chain_id=chain, root_task_id=root["task_id"])
+            participants = {(p["agent"], p["role"], p["task_chain_id"]) for p in k.task_participant_list(child["task_id"])}
+            self.assertIn(("reviewer", "reviewer", chain), participants)
+            override = k.task_create(title="override", assigned_agent="coder", task_chain_id=chain, root_task_id=root["task_id"], participants=[{"agent": "other-reviewer", "role": "reviewer"}])
+            override_pairs = {(p["agent"], p["role"]) for p in k.task_participant_list(override["task_id"])}
+            self.assertIn(("other-reviewer", "reviewer"), override_pairs)
+            self.assertNotIn(("reviewer", "reviewer"), override_pairs)
+            event_types = [e["event_type"] for e in k.events(task_id=root["task_id"])]
+            self.assertIn("task_chain_default_participant_added", event_types)
+
+    def test_default_participant_cli_parser_supports_role_flags(self):
+        args = argparse.Namespace(reviewer=["reviewer"], verifier=["verifier"], coordinator=["coord"], participant=["observer:watcher"])
+        self.assertEqual(
+            broccoli._default_task_participants(args),
+            [
+                {"agent": "reviewer", "role": "reviewer"},
+                {"agent": "verifier", "role": "verifier"},
+                {"agent": "coord", "role": "coordinator"},
+                {"agent": "watcher", "role": "observer"},
+            ],
+        )
+
+    def test_task_status_notification_routes_done_review_to_reviewer_roles(self):
+        task = {"task_id": "task-1", "title": "Notify", "status": "review", "assigned_agent": "coder", "participants": [{"agent": "coder", "role": "assignee", "status": "active"}, {"agent": "reviewer", "role": "reviewer", "status": "active"}, {"agent": "verifier", "role": "verifier", "status": "active"}, {"agent": "old-reviewer", "role": "reviewer", "status": "inactive"}]}
+        calls = []
+        with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+            notice = broccoli.notify_task_update(task, "coder", {"status": "review"})
+        self.assertTrue(notice["sent"])
+        self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "reviewer", "verifier"])
+        def flaky_tracker(_method, payload, **_kw):
+            if payload["agent_name"] == "reviewer":
+                raise RuntimeError("offline")
+            return {"ok": True}
+        with mock.patch.object(broccoli, "tracker_rpc", side_effect=flaky_tracker):
+            notice = broccoli.notify_task_update(task, "coder", {"status": "review"})
+        self.assertTrue(notice["sent"])
+        self.assertFalse(notice["participant_notifications"][0]["sent"])
+        self.assertTrue(notice["participant_notifications"][1]["sent"])
+
+    def test_task_result_notifications_route_bad_to_assignee_and_good_to_ready_dependents(self):
+        task = {"task_id": "task-1", "title": "Notify", "status": "working", "assigned_agent": "coder", "participants": [{"agent": "coder", "role": "assignee", "status": "active"}]}
+        self.assertEqual(broccoli._task_update_notification_recipients(task, "reviewer", {"result_status": "need_improvements"}), ["coder"])
+        task["ready_dependents"] = [{"task_id": "task-2", "assigned_agent": "next", "participants": [{"agent": "coord", "role": "coordinator", "status": "active"}]}]
+        self.assertEqual(broccoli._task_update_notification_recipients(task, "reviewer", {"result_status": "good", "status": "validated"}), ["next", "coord"])
+
+    def test_ready_dependents_excludes_already_active_or_done_dependents(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            root = k.task_create(title="root", assigned_agent="coder")
+            ready = k.task_create(title="ready", assigned_agent="next", depends_on=[root["task_id"]], status="ready")
+            for status in ("working", "review", "done", "validated"):
+                k.task_create(title=status, assigned_agent="skip", depends_on=[root["task_id"]], status=status)
+            k.task_update(root["task_id"], status="done")
+            self.assertEqual([t["task_id"] for t in k.task_ready_dependents(root["task_id"])], [ready["task_id"]])
+
+    def test_task_update_validated_notifies_ready_dependent_assignee_and_coordinator(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            root = k.task_create(title="root", assigned_agent="coder")
+            child = k.task_create(title="child", assigned_agent="next", depends_on=[root["task_id"]], status="ready")
+            k.task_participant_add(child["task_id"], "coord", "coordinator")
+            args = argparse.Namespace(task_id=root["task_id"], status="validated", next_step=None, blocked_reason=None, result_summary=None, assign_agent=None, json=True)
+            calls = []
+            with mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+                broccoli.task_update(args)
+            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "next", "coord"])
+
+    def test_ui_notification_failure_still_attempts_participant_notifications(self):
+        task = {"task_id": "task-1", "title": "Notify", "status": "review", "participants": [{"agent": "reviewer", "role": "reviewer", "status": "active"}]}
+        calls = []
+        def flaky_tracker(_method, payload, **_kw):
+            calls.append(payload["agent_name"])
+            if payload["agent_name"] == broccoli.UI_AGENT_NAME:
+                raise RuntimeError("ui offline")
+            return {"ok": True}
+        with mock.patch.object(broccoli, "tracker_rpc", side_effect=flaky_tracker):
+            notice = broccoli.notify_task_update(task, "coder", {"status": "review"})
+        self.assertFalse(notice["sent"])
+        self.assertEqual(calls, [broccoli.UI_AGENT_NAME, "reviewer"])
+        self.assertTrue(notice["participant_notifications"][0]["sent"])
+
+    def test_task_mark_result_sends_role_aware_notification(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="review", assigned_agent="coder")
+            k.task_participant_add(task["task_id"], "reviewer", "reviewer")
+            args = argparse.Namespace(task_id=task["task_id"], result="need_improvements", notes=None, next_step="fix", status=None, json=True)
+            calls = []
+            with mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+                broccoli.task_mark_result(args)
+            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder"])
+
+    def test_assigned_agent_update_upserts_assignee_participant(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="reassign", assigned_agent="old")
+            updated = k.task_update(task["task_id"], assigned_agent="new")
+            self.assertEqual(updated["assigned_agent"], "new")
+            participants = k.task_participant_list(task["task_id"])
+            self.assertTrue(any(p["agent"] == "new" and p["role"] == "assignee" for p in participants))
+            self.assertEqual(k.task_next(agent="new")["task"]["task_id"], task["task_id"])
+
+    def test_role_aware_task_list_and_next_preserve_legacy_default(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            assignee_task = k.task_create(title="assignee", assigned_agent="coder")
+            review_task = k.task_create(title="review", assigned_agent="other", status="review")
+            k.task_participant_add(review_task["task_id"], "coder", "reviewer")
+
+            self.assertEqual([t["task_id"] for t in k.task_list(agent="coder")], [assignee_task["task_id"]])
+            reviewer_tasks = k.task_list(agent="coder", statuses=["review"], participant_roles=["reviewer"])
+            self.assertEqual([t["task_id"] for t in reviewer_tasks], [review_task["task_id"]])
+            self.assertEqual(k.task_next(agent="coder")["task"]["task_id"], assignee_task["task_id"])
+            self.assertEqual(k.task_next(agent="coder", participant_roles=["reviewer"])["task"]["task_id"], review_task["task_id"])
+
+    def test_reviewer_task_next_uses_review_handoff_statuses_not_ready(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            ready_review = k.task_create(title="ready but not review handoff", assigned_agent="other", status="ready")
+            review_task = k.task_create(title="review handoff", assigned_agent="other", status="review")
+            for task in (ready_review, review_task):
+                k.task_participant_add(task["task_id"], "reviewer", "reviewer")
+
+            self.assertEqual(k.task_next(agent="reviewer", participant_roles=["reviewer"])["task"]["task_id"], review_task["task_id"])
+            self.assertNotEqual(k.task_next(agent="reviewer", participant_roles=["reviewer"])["task"]["task_id"], ready_review["task_id"])
+
+    def test_reviewer_task_next_includes_done_handoff_status(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            done_task = k.task_create(title="done handoff", assigned_agent="other", status="done")
+            k.task_participant_add(done_task["task_id"], "reviewer", "reviewer")
+            self.assertEqual(k.task_next(agent="reviewer", participant_roles=["reviewer"])["task"]["task_id"], done_task["task_id"])
+
+    def test_default_assignee_next_remains_ready_only_even_with_review_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            review_task = k.task_create(title="review assigned", assigned_agent="coder", status="review")
+            ready_task = k.task_create(title="ready assigned", assigned_agent="coder", status="ready")
+            self.assertEqual(k.task_next(agent="coder")["task"]["task_id"], ready_task["task_id"])
+            self.assertNotEqual(k.task_next(agent="coder")["task"]["task_id"], review_task["task_id"])
+
+    def test_assignee_participant_role_includes_legacy_assigned_agent(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="legacy queue", assigned_agent="coder")
+            self.assertEqual(k.task_list(agent="coder", participant_roles=["assignee"])[0]["task_id"], task["task_id"])
+
     def test_stale_state_filter_and_contract(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()

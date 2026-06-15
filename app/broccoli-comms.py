@@ -97,6 +97,14 @@ def get_toml_config(section: str, key: str, default=None):
     return cfg.get(section, {}).get(key, default)
 
 
+def get_toml_config_any(section: str, keys: list[str], default=None):
+    cfg = load_toml_config().get(section, {})
+    for key in keys:
+        if key in cfg:
+            return cfg[key]
+    return default
+
+
 APP = "broccoli-comms"
 VERSION = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
 SESSION = "broccoli-comms-agents"
@@ -117,6 +125,13 @@ def xdg_cache() -> Path:
 
 def xdg_config() -> Path:
     return Path(get_toml_config("paths", "config_dir", Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / APP))
+
+
+def configured_agent_root_dir() -> Path | None:
+    value = get_toml_config_any("paths", ["agent-root-dir", "agent_root_dir"], None)
+    if not value:
+        return None
+    return Path(str(value)).expanduser()
 
 def get_active_tracker_socket() -> Path:
     candidates = []
@@ -727,10 +742,16 @@ def managed_track_env_assignments() -> list[str]:
 
 def ephemeral_agent_workspace(name: str, agents_dir: str | None = None, source_cwd: str | Path | None = None) -> str:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "-", name).strip("-._") or "agent"
-    base = Path(tempfile.gettempdir()) / "broccoli-agents" / safe_name
-    tmp_root = base / uuid.uuid4().hex[:12]
+    agent_root = configured_agent_root_dir()
+    if agent_root is not None:
+        tmp_root = agent_root / safe_name
+        exist_ok = True
+    else:
+        base = Path(tempfile.gettempdir()) / "broccoli-agents" / safe_name
+        tmp_root = base / uuid.uuid4().hex[:12]
+        exist_ok = False
     workspace = tmp_root / agents_dir if agents_dir else tmp_root
-    workspace.mkdir(parents=True, exist_ok=False)
+    workspace.mkdir(parents=True, exist_ok=exist_ok)
     (workspace / "AGENTS.md").write_text(agent_contract(name, f"{name}@pending", workspace, agent_contract_template(), source_cwd=source_cwd))
     return str(tmp_root)
 
@@ -2389,6 +2410,19 @@ def agent_tracker(args: argparse.Namespace) -> None:
     os.execvpe(cmd[0], cmd, env)
 
 
+def _default_task_participants(args: argparse.Namespace) -> list[dict]:
+    participants: list[dict] = []
+    for role, attr in (("reviewer", "reviewer"), ("verifier", "verifier"), ("coordinator", "coordinator")):
+        for agent in getattr(args, attr, None) or []:
+            participants.append({"agent": agent, "role": role})
+    for item in getattr(args, "participant", None) or []:
+        if ":" not in item:
+            raise ValueError("--participant must use role:agent")
+        role, agent = item.split(":", 1)
+        participants.append({"agent": agent, "role": role})
+    return participants
+
+
 def task_create(args: argparse.Namespace) -> None:
     try:
         task = learning_kernel().task_create(
@@ -2400,6 +2434,9 @@ def task_create(args: argparse.Namespace) -> None:
             acceptance_criteria=list(args.acceptance or []),
             depends_on=parse_csv(args.depends_on),
             priority=args.priority,
+            participants=_default_task_participants(args),
+            task_chain_id=args.task_chain_id,
+            root_task_id=args.root_task_id,
             actor=os.environ.get("AGENT_NAME") or "user",
         )
     except ValueError as e:
@@ -2409,14 +2446,70 @@ def task_create(args: argparse.Namespace) -> None:
 
 def task_show(args: argparse.Namespace) -> None:
     try:
-        _print_payload(learning_kernel().task_show(args.task_id), args.json)
+        _print_payload(learning_kernel().task_show(args.task_id, include_participants=getattr(args, "include_participants", False)), args.json)
     except KeyError:
         raise SystemExit(f"task not found: {args.task_id}")
 
 
 def task_list(args: argparse.Namespace) -> None:
     statuses = parse_csv(args.status)
-    _print_payload(learning_kernel().task_list(agent=args.agent, statuses=statuses or None, include_archived=args.include_archived, scope=args.scope), args.json)
+    roles = parse_csv(getattr(args, "participant_role", None))
+    try:
+        payload = learning_kernel().task_list(agent=args.agent, statuses=statuses or None, include_archived=args.include_archived, scope=args.scope, include_participants=getattr(args, "include_participants", False), participant_roles=roles or None)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def task_chain_default_participant_set(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().task_chain_default_participant_set(args.task_chain_id, args.agent, args.role, root_task_id=args.root_task_id, status=args.status, actor=os.environ.get("AGENT_NAME") or "user")
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def task_chain_default_participant_list(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().task_chain_default_participant_list(args.task_chain_id)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def task_participant_list(args: argparse.Namespace) -> None:
+    try:
+        _print_payload(learning_kernel().task_participant_list(args.task_id), args.json)
+    except KeyError:
+        raise SystemExit(f"task not found: {args.task_id}")
+
+
+def task_participant_add(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().task_participant_add(args.task_id, args.agent, args.role, actor=os.environ.get("AGENT_NAME") or "user", task_chain_id=args.task_chain_id, root_task_id=args.root_task_id, instance_id=args.instance, status=args.status)
+    except KeyError:
+        raise SystemExit(f"task not found: {args.task_id}")
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def task_participant_update(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().task_participant_update(args.participant_id, status=args.status, actor=os.environ.get("AGENT_NAME") or "user")
+    except KeyError:
+        raise SystemExit(f"participant not found: {args.participant_id}")
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_payload(payload, args.json)
+
+
+def task_participant_remove(args: argparse.Namespace) -> None:
+    try:
+        payload = learning_kernel().task_participant_remove(args.participant_id, actor=os.environ.get("AGENT_NAME") or "user")
+    except KeyError:
+        raise SystemExit(f"participant not found: {args.participant_id}")
+    _print_payload(payload, args.json)
 
 
 def duplicate_profile_instances(agent: str | None) -> list[dict]:
@@ -2434,11 +2527,46 @@ def duplicate_profile_instances(agent: str | None) -> list[dict]:
 
 def task_next(args: argparse.Namespace) -> None:
     agent = args.agent or os.environ.get("AGENT_NAME")
-    payload = learning_kernel().task_next(agent=agent, scope=args.scope, include_profile=args.include_profile)
+    roles = parse_csv(getattr(args, "participant_role", None))
+    try:
+        payload = learning_kernel().task_next(agent=agent, scope=args.scope, include_profile=args.include_profile, participant_roles=roles or None)
+    except ValueError as e:
+        raise SystemExit(str(e))
     conflicts = duplicate_profile_instances(agent)
     if conflicts:
         payload["profile_conflict"] = {"agent": agent, "instances": conflicts, "message": "duplicate same-profile instances detected; parallel different task chains are allowed, but same-chain auto-claiming should be coordinator-resolved"}
     _print_payload(payload, args.json)
+
+
+def _append_task_recipient(recipients: list[str], agent: str | None, actor: str) -> None:
+    if agent and agent not in {actor, UI_AGENT_NAME} and agent not in recipients:
+        recipients.append(agent)
+
+
+def _task_participant_agents(task: dict, roles: set[str], actor: str) -> list[str]:
+    recipients: list[str] = []
+    if "assignee" in roles:
+        _append_task_recipient(recipients, task.get("assigned_agent"), actor)
+    for participant in task.get("participants") or []:
+        if participant.get("status") == "active" and participant.get("role") in roles:
+            _append_task_recipient(recipients, participant.get("agent"), actor)
+    return recipients
+
+
+def _task_update_notification_recipients(task: dict, actor: str, updates: dict) -> list[str]:
+    if updates.get("result_status") in {"bad", "need_improvements"}:
+        return _task_participant_agents(task, {"assignee"}, actor)
+    if updates.get("result_status") == "good" or updates.get("status") == "validated":
+        recipients: list[str] = []
+        for dependent in task.get("ready_dependents") or []:
+            for agent in _task_participant_agents(dependent, {"assignee", "coordinator"}, actor):
+                _append_task_recipient(recipients, agent, actor)
+        return recipients
+    if updates.get("status") in {"done", "review"}:
+        return _task_participant_agents(task, {"reviewer", "verifier"}, actor)
+    if updates.get("status") == "ready":
+        return _task_participant_agents(task, {"assignee", "coordinator"}, actor)
+    return []
 
 
 def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
@@ -2464,13 +2592,30 @@ def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
         "source": "system/task-kernel",
         "sender_source": "system",
     }
+    message = "\n".join(lines)
+    ui_sent = False
+    ui_result = None
+    ui_error = None
     try:
-        result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": "\n".join(lines), "metadata": metadata, "sender_name": "task-kernel"})
-        if not result:
+        ui_result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": "task-kernel"})
+        if not ui_result:
             raise RuntimeError("tracker RPC send_message failed")
-        return {"sent": True, "result": result}
+        ui_sent = True
     except Exception as e:
-        return {"sent": False, "error": str(e)}
+        ui_error = str(e)
+    participant_results = []
+    if "status" in updates or "result_status" in updates:
+        for recipient in _task_update_notification_recipients(task, actor, updates):
+            participant_metadata = {**metadata, "recipient_agent": recipient, "recipient_kind": "task_participant"}
+            try:
+                participant_result = tracker_rpc("send_message", {"agent_name": recipient, "message": message, "metadata": participant_metadata, "sender_name": "task-kernel"})
+                participant_results.append({"agent": recipient, "sent": bool(participant_result), "result": participant_result})
+            except Exception as participant_error:
+                participant_results.append({"agent": recipient, "sent": False, "error": str(participant_error)})
+    payload = {"sent": ui_sent, "result": ui_result, "participant_notifications": participant_results}
+    if ui_error:
+        payload["error"] = ui_error
+    return payload
 
 
 def task_update(args: argparse.Namespace) -> None:
@@ -2497,17 +2642,26 @@ def task_update(args: argparse.Namespace) -> None:
     except ValueError as e:
         raise SystemExit(str(e))
     if updates:
-        payload["notification"] = notify_task_update(payload, actor, updates)
+        kernel = learning_kernel()
+        notify_payload = kernel.task_show(args.task_id, include_participants=True)
+        if updates.get("status") == "validated":
+            notify_payload["ready_dependents"] = kernel.task_ready_dependents(args.task_id, include_participants=True)
+        payload["notification"] = notify_task_update(notify_payload, actor, updates)
     _print_payload(payload, args.json)
 
 
 def task_mark_result(args: argparse.Namespace) -> None:
+    actor = os.environ.get("AGENT_NAME") or "user"
+    kernel = learning_kernel()
     try:
-        payload = learning_kernel().mark_result(args.task_id, args.result, args.notes, actor=os.environ.get("AGENT_NAME") or "user", next_step=args.next_step, status=args.status)
+        payload = kernel.mark_result(args.task_id, args.result, args.notes, actor=actor, next_step=args.next_step, status=args.status)
     except KeyError:
         raise SystemExit(f"task not found: {args.task_id}")
     except ValueError as e:
         raise SystemExit(str(e))
+    notify_payload = kernel.task_show(args.task_id, include_participants=True)
+    notify_payload["ready_dependents"] = kernel.task_ready_dependents(args.task_id, include_participants=True)
+    payload["notification"] = notify_task_update(notify_payload, actor, {"status": payload.get("status"), "result_status": args.result})
     _print_payload(payload, args.json)
 
 
@@ -3141,24 +3295,73 @@ def main() -> None:
     task_create_parser.add_argument("--scope")
     task_create_parser.add_argument("--next-step")
     task_create_parser.add_argument("--acceptance", action="append")
+    task_create_parser.add_argument("--reviewer", action="append", help="Default reviewer participant agent; repeatable")
+    task_create_parser.add_argument("--verifier", action="append", help="Default verifier participant agent; repeatable")
+    task_create_parser.add_argument("--coordinator", action="append", help="Default coordinator participant agent; repeatable")
+    task_create_parser.add_argument("--participant", action="append", help="Default participant as role:agent; repeatable")
     task_create_parser.add_argument("--depends-on", help="Comma-separated dependency task IDs")
+    task_create_parser.add_argument("--task-chain-id", help="Apply chain-level default participants while creating this task")
+    task_create_parser.add_argument("--root-task-id", help="Root task id for inherited/default participants")
     task_create_parser.add_argument("--priority", default="normal")
     task_create_parser.add_argument("--json", action="store_true")
     task_create_parser.set_defaults(func=task_create)
     task_show_parser = task_sub.add_parser("show")
     task_show_parser.add_argument("task_id")
+    task_show_parser.add_argument("--include-participants", action="store_true")
     task_show_parser.add_argument("--json", action="store_true")
     task_show_parser.set_defaults(func=task_show)
     task_list_parser = task_sub.add_parser("list")
     task_list_parser.add_argument("--agent")
     task_list_parser.add_argument("--scope")
     task_list_parser.add_argument("--status")
+    task_list_parser.add_argument("--participant-role", help="Comma-separated participant roles to match for --agent, e.g. reviewer,verifier")
     task_list_parser.add_argument("--include-archived", action="store_true")
+    task_list_parser.add_argument("--include-participants", action="store_true")
     task_list_parser.add_argument("--json", action="store_true")
     task_list_parser.set_defaults(func=task_list)
+    chain_defaults_parser = task_sub.add_parser("chain-defaults")
+    chain_defaults_sub = chain_defaults_parser.add_subparsers(dest="chain_defaults_command", required=True)
+    chain_defaults_set_parser = chain_defaults_sub.add_parser("set")
+    chain_defaults_set_parser.add_argument("task_chain_id")
+    chain_defaults_set_parser.add_argument("--agent", required=True)
+    chain_defaults_set_parser.add_argument("--role", required=True, choices=["assignee", "reviewer", "verifier", "coordinator", "observer", "specialist"])
+    chain_defaults_set_parser.add_argument("--root-task-id")
+    chain_defaults_set_parser.add_argument("--status", choices=["active", "inactive"])
+    chain_defaults_set_parser.add_argument("--json", action="store_true")
+    chain_defaults_set_parser.set_defaults(func=task_chain_default_participant_set)
+    chain_defaults_list_parser = chain_defaults_sub.add_parser("list")
+    chain_defaults_list_parser.add_argument("task_chain_id")
+    chain_defaults_list_parser.add_argument("--json", action="store_true")
+    chain_defaults_list_parser.set_defaults(func=task_chain_default_participant_list)
+    task_participant_parser = task_sub.add_parser("participant")
+    task_participant_sub = task_participant_parser.add_subparsers(dest="participant_command", required=True)
+    participant_list_parser = task_participant_sub.add_parser("list")
+    participant_list_parser.add_argument("task_id")
+    participant_list_parser.add_argument("--json", action="store_true")
+    participant_list_parser.set_defaults(func=task_participant_list)
+    participant_add_parser = task_participant_sub.add_parser("add")
+    participant_add_parser.add_argument("task_id")
+    participant_add_parser.add_argument("--agent", required=True)
+    participant_add_parser.add_argument("--role", required=True, choices=["assignee", "reviewer", "verifier", "coordinator", "observer", "specialist"])
+    participant_add_parser.add_argument("--instance")
+    participant_add_parser.add_argument("--task-chain-id")
+    participant_add_parser.add_argument("--root-task-id")
+    participant_add_parser.add_argument("--status", choices=["active", "inactive"])
+    participant_add_parser.add_argument("--json", action="store_true")
+    participant_add_parser.set_defaults(func=task_participant_add)
+    participant_update_parser = task_participant_sub.add_parser("update")
+    participant_update_parser.add_argument("participant_id")
+    participant_update_parser.add_argument("--status", choices=["active", "inactive"])
+    participant_update_parser.add_argument("--json", action="store_true")
+    participant_update_parser.set_defaults(func=task_participant_update)
+    participant_remove_parser = task_participant_sub.add_parser("remove")
+    participant_remove_parser.add_argument("participant_id")
+    participant_remove_parser.add_argument("--json", action="store_true")
+    participant_remove_parser.set_defaults(func=task_participant_remove)
     task_next_parser = task_sub.add_parser("next")
     task_next_parser.add_argument("--agent")
     task_next_parser.add_argument("--scope")
+    task_next_parser.add_argument("--participant-role", help="Comma-separated participant roles to match for --agent; default preserves legacy assignee behavior")
     task_next_parser.add_argument("--include-profile", action="store_true")
     task_next_parser.add_argument("--json", action="store_true")
     task_next_parser.set_defaults(func=task_next)

@@ -365,6 +365,10 @@ def format_registry_dots(states: list[tuple[str, bool]] | None, connected_fallba
     return f"#[range=user|agent-registries]{dots}#[norange] "
 
 
+def is_valid_local_pane_id(pane: str | None) -> bool:
+    return isinstance(pane, str) and pane.startswith("%") and pane[1:].isdigit()
+
+
 def format_status_bar(agents: dict, current_pane: str, registry_connected: bool = False, registry_states: list[tuple[str, bool]] | None = None) -> str:
     if not agents:
         return ""
@@ -377,15 +381,18 @@ def format_status_bar(agents: dict, current_pane: str, registry_connected: bool 
     color4 = config.get("ui", "palette_color4", "#2ac3de")
 
     formatted = []
+    current_pane_valid = is_valid_local_pane_id(current_pane)
     for name, info in agents.items():
         pane = info.get("tmux_pane")
+        if not is_valid_local_pane_id(pane):
+            continue
         waiting_approval = info.get("waiting_approval", False)
         status = info.get("status", "")
 
         color = color8
         if waiting_approval:
             color = color1
-        elif pane == current_pane:
+        elif current_pane_valid and pane == current_pane:
             color = color3
         elif status == "working":
             color = color6

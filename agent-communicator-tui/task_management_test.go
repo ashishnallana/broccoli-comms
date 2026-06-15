@@ -44,11 +44,11 @@ func TestTaskDataBucketsActiveChainInRequiredOrder(t *testing.T) {
 		tasksApprovals: []taskApprovalRecord{{ApprovalID: "apr-1", TaskID: "task-review", TaskChainID: "chain-1", RootTaskID: "root", Status: "pending"}},
 	}
 	data := m.taskData()
-	if data.ActiveChainID != "chain-1" || data.RootTaskID != "root" || data.CurrentTaskID != "task-current" {
-		t.Fatalf("chain/current = %q/%q/%q", data.ActiveChainID, data.RootTaskID, data.CurrentTaskID)
+	if data.ActiveChainID != "" || data.RootTaskID != "" || data.CurrentTaskID != "" {
+		t.Fatalf("task-oriented focus should not treat selection as current = %q/%q/%q", data.ActiveChainID, data.RootTaskID, data.CurrentTaskID)
 	}
 	if len(data.Tasks) != 6 {
-		t.Fatalf("chain task count=%d want 6", len(data.Tasks))
+		t.Fatalf("open task count=%d want 6", len(data.Tasks))
 	}
 	got := []string{}
 	for _, bucket := range data.Buckets {
@@ -56,7 +56,7 @@ func TestTaskDataBucketsActiveChainInRequiredOrder(t *testing.T) {
 			got = append(got, bucket.Name+":"+bucket.Tasks[0].TaskID)
 		}
 	}
-	want := []string{"Current:task-current", "Next:root", "Queue:task-blocked", "Review:task-review", "Completed:task-done"}
+	want := []string{"Current:task-current", "Next:root", "Queue:task-blocked", "Review:task-review"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("bucket order=%v want %v", got, want)
 	}
@@ -65,7 +65,51 @@ func TestTaskDataBucketsActiveChainInRequiredOrder(t *testing.T) {
 	}
 }
 
-func TestSelectedAgentWithoutActiveChainDoesNotShowOtherAgentsTasks(t *testing.T) {
+func TestTaskSelectionDoesNotChangeStatusBuckets(t *testing.T) {
+	m := model{tasksItems: []taskRecord{
+		{TaskID: "task-working", Title: "Working", Status: "working"},
+		{TaskID: "task-ready", Title: "Ready", Status: "ready"},
+		{TaskID: "task-blocked", Title: "Blocked", Status: "blocked"},
+	}}
+	m.tasksSelected = 1
+	data := m.taskData()
+	got := []string{}
+	for _, bucket := range data.Buckets {
+		if len(bucket.Tasks) > 0 {
+			got = append(got, bucket.Name+":"+bucket.Tasks[0].TaskID)
+		}
+	}
+	want := []string{"Current:task-working", "Next:task-ready", "Queue:task-blocked"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("bucket order changed with selection=%d: got %v want %v", m.tasksSelected, got, want)
+	}
+	m.tasksSelected = 2
+	data = m.taskData()
+	got = got[:0]
+	for _, bucket := range data.Buckets {
+		if len(bucket.Tasks) > 0 {
+			got = append(got, bucket.Name+":"+bucket.Tasks[0].TaskID)
+		}
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("bucket order changed after moving selection=%d: got %v want %v", m.tasksSelected, got, want)
+	}
+}
+
+func TestDonePendingReviewHandoffRemainsVisibleInReviewBucket(t *testing.T) {
+	m := model{tasksItems: []taskRecord{{
+		TaskID: "task-done-review", Title: "Done awaiting review", Status: "done", Participants: []taskParticipant{{Agent: "reviewer", Role: "reviewer", Status: "active"}},
+	}}, tasksApprovals: []taskApprovalRecord{{ApprovalID: "apr-1", TaskID: "task-done-review", Status: "pending"}}}
+	data := m.taskData()
+	if len(data.Tasks) != 1 || data.Tasks[0].TaskID != "task-done-review" {
+		t.Fatalf("done review handoff should remain visible: %+v", data.Tasks)
+	}
+	if len(data.Buckets) < 4 || len(data.Buckets[3].Tasks) != 1 || data.Buckets[3].Name != "Review" {
+		t.Fatalf("done review handoff should be bucketed under Review: %+v", data.Buckets)
+	}
+}
+
+func TestTaskOrientedViewShowsOpenTasksIndependentOfSelectedAgent(t *testing.T) {
 	m := model{
 		rows:     []agentRow{{Name: "coder"}},
 		selected: 0,
@@ -75,22 +119,19 @@ func TestSelectedAgentWithoutActiveChainDoesNotShowOtherAgentsTasks(t *testing.T
 		tasksApprovals: []taskApprovalRecord{{ApprovalID: "apr-review", TaskID: "task-review", Status: "pending"}},
 	}
 	data := m.taskData()
-	if len(data.Tasks) != 0 {
-		t.Fatalf("selected agent with no active/assigned tasks should not see other agents tasks: %+v", data.Tasks)
+	if len(data.Tasks) != 1 || data.Tasks[0].TaskID != "task-review" {
+		t.Fatalf("task-oriented view should show open tasks independent of selected agent: %+v", data.Tasks)
 	}
-	if len(data.Approvals) != 0 {
-		t.Fatalf("selected agent with no visible tasks should not see other agents approvals: %+v", data.Approvals)
+	if len(data.Approvals) != 1 {
+		t.Fatalf("task-oriented view should include open task approvals: %+v", data.Approvals)
 	}
 	view := m.taskManagementView(100, 12)
-	if strings.Contains(view, "Reviewer task") {
-		t.Fatalf("view leaked other agent task:\n%s", view)
-	}
-	if !strings.Contains(view, "No tasks found") {
-		t.Fatalf("view should show empty state for no assigned tasks:\n%s", view)
+	if !strings.Contains(view, "Reviewer task") {
+		t.Fatalf("view missing open task:\n%s", view)
 	}
 }
 
-func TestSelectedAgentNoActiveChainShowsAssignedApprovalsOnly(t *testing.T) {
+func TestTaskOrientedViewShowsOpenApprovals(t *testing.T) {
 	m := model{
 		rows:     []agentRow{{Name: "coder"}},
 		selected: 0,
@@ -102,21 +143,21 @@ func TestSelectedAgentNoActiveChainShowsAssignedApprovalsOnly(t *testing.T) {
 		tasksApprovals: []taskApprovalRecord{{ApprovalID: "apr-coder", TaskID: "task-queued", Status: "pending"}, {ApprovalID: "apr-other", TaskID: "task-other", Status: "pending"}},
 	}
 	data := m.taskData()
-	if len(data.Tasks) != 2 || len(data.Approvals) != 1 || data.Approvals[0].TaskID != "task-queued" {
-		t.Fatalf("assigned-only fallback tasks/approvals = tasks=%+v approvals=%+v", data.Tasks, data.Approvals)
+	if len(data.Tasks) != 2 || len(data.Approvals) != 2 {
+		t.Fatalf("task-oriented tasks/approvals = tasks=%+v approvals=%+v", data.Tasks, data.Approvals)
 	}
 	view := m.taskManagementView(120, 20)
-	for _, want := range []string{"Queued", "Done", "apr-coder"} {
+	for _, want := range []string{"Queued", "Other", "apr-coder", "apr-other"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("assigned fallback view missing %q:\n%s", want, view)
+			t.Fatalf("task-oriented view missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "Other") || strings.Contains(view, "apr-other") {
-		t.Fatalf("assigned fallback view leaked other agent task/approval:\n%s", view)
+	if strings.Contains(view, "Done") {
+		t.Fatalf("completed task leaked into open task view:\n%s", view)
 	}
 }
 
-func TestSelectedAgentTaskDataIncludesQueuedAndCompleted(t *testing.T) {
+func TestTaskOrientedTaskDataIncludesOpenTasksOnly(t *testing.T) {
 	m := model{
 		rows:     []agentRow{{Name: "coder", CurrentTaskID: "task-current"}},
 		selected: 0,
@@ -130,18 +171,16 @@ func TestSelectedAgentTaskDataIncludesQueuedAndCompleted(t *testing.T) {
 		tasksApprovals: []taskApprovalRecord{{ApprovalID: "apr-coder", TaskID: "task-queued", Status: "pending"}, {ApprovalID: "apr-other", TaskID: "task-other", Status: "pending"}},
 	}
 	data := m.taskData()
-	for _, approval := range data.Approvals {
-		if approval.TaskID == "task-other" {
-			t.Fatalf("selected-agent approvals leaked another agent task approval: %+v", data.Approvals)
-		}
+	if len(data.Tasks) != 3 {
+		t.Fatalf("task-oriented open tasks = %+v", data.Tasks)
 	}
 	view := m.taskManagementView(120, 20)
-	if strings.Contains(view, "Other agent task") {
-		t.Fatalf("selected-agent view leaked another agent task:\n%s", view)
+	if strings.Contains(view, "Done") || strings.Contains(view, "Completed") {
+		t.Fatalf("completed task leaked into open task view:\n%s", view)
 	}
-	for _, want := range []string{"Current", "Queued", "Done", "Completed"} {
+	for _, want := range []string{"Current", "Queued", "Other agent task"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("selected-agent tasks view missing %q:\n%s", want, view)
+			t.Fatalf("task-oriented view missing %q:\n%s", want, view)
 		}
 	}
 }
@@ -209,17 +248,17 @@ func TestSelectedRemoteAgentMatchesAssignedAgentName(t *testing.T) {
 		tasksStates: []taskWorkingState{{TaskID: "task-current", Agent: "coder", Status: "working", TaskChainID: "chain-1", RootTaskID: "root"}},
 	}
 	data := m.taskData()
-	if data.ActiveChainID != "chain-1" || len(data.Tasks) != 3 {
-		t.Fatalf("remote selected agent data = chain %q tasks %+v", data.ActiveChainID, data.Tasks)
+	if len(data.Tasks) != 3 {
+		t.Fatalf("task-oriented remote row data should include all open tasks: %+v", data.Tasks)
 	}
 	view := m.taskManagementView(120, 20)
-	for _, want := range []string{"Current", "Queued", "Done", "Completed"} {
+	for _, want := range []string{"Current", "Queued", "Other"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("remote selected-agent view missing %q:\n%s", want, view)
+			t.Fatalf("task-oriented view missing %q:\n%s", want, view)
 		}
 	}
-	if strings.Contains(view, "Other") {
-		t.Fatalf("remote selected-agent view leaked other task:\n%s", view)
+	if strings.Contains(view, "Done") || strings.Contains(view, "Completed") {
+		t.Fatalf("completed task leaked into open task view:\n%s", view)
 	}
 }
 
@@ -232,12 +271,12 @@ func TestSelectedRemoteAgentUsesRegistryCurrentTaskWhenTaskListUnavailable(t *te
 		},
 	}
 	data := m.taskData()
-	if len(data.Tasks) != 1 || data.Tasks[0].TaskID != "remote-task" || data.Tasks[0].AssignedAgent != "coder" {
-		t.Fatalf("remote current task fallback = %+v", data.Tasks)
+	if len(data.Tasks) != 1 || data.Tasks[0].TaskID != "local-task" {
+		t.Fatalf("task-oriented view should prefer durable open tasks over remote current fallback: %+v", data.Tasks)
 	}
 	view := m.taskManagementView(120, 20)
-	if !strings.Contains(view, "Remote feature") || strings.Contains(view, "Local only") {
-		t.Fatalf("remote current task view missing fallback or leaked local task:\n%s", view)
+	if !strings.Contains(view, "Local only") {
+		t.Fatalf("task-oriented view missing durable task:\n%s", view)
 	}
 }
 
@@ -253,12 +292,12 @@ func TestSelectedRemoteAgentDoesNotUseCollidingLocalCurrentTask(t *testing.T) {
 		tasksApprovals: []taskApprovalRecord{{ApprovalID: "apr-local", TaskID: "task-same", TaskChainID: "chain-local", RootTaskID: "task-same", Status: "pending"}},
 	}
 	data := m.taskData()
-	if data.ActiveChainID != "" || len(data.Tasks) != 1 || data.Tasks[0].Title != "Remote task" || len(data.Approvals) != 0 {
-		t.Fatalf("remote collision handling = chain %q tasks %+v approvals %+v", data.ActiveChainID, data.Tasks, data.Approvals)
+	if len(data.Tasks) != 2 || len(data.Approvals) != 1 {
+		t.Fatalf("task-oriented local tasks/approvals = tasks %+v approvals %+v", data.Tasks, data.Approvals)
 	}
 	view := m.taskManagementView(120, 20)
-	if strings.Contains(view, "Unrelated local") || strings.Contains(view, "Unrelated child") || !strings.Contains(view, "Remote task") {
-		t.Fatalf("remote collision view leaked local tasks:\n%s", view)
+	if !strings.Contains(view, "Unrelated local") || !strings.Contains(view, "Unrelated child") {
+		t.Fatalf("task-oriented view missing local open tasks:\n%s", view)
 	}
 }
 
@@ -343,7 +382,7 @@ func TestTaskSelectionUsesOffsetInSmallViewport(t *testing.T) {
 func TestTaskManagementViewResponsiveStates(t *testing.T) {
 	m := model{mode: tasksView, width: 120, height: 24, rows: []agentRow{{Name: "coder", Status: "online", CurrentTaskID: "task-1", CurrentTask: "Implement Tasks tab"}, {Name: "reviewer", Status: "idle"}}, tasksItems: []taskRecord{{TaskID: "task-1", Title: "Implement Tasks tab", Status: "working", AssignedAgent: "coder"}, {TaskID: "task-2", Title: "Follow-up", Status: "ready", AssignedAgent: "coder", DependsOn: []string{"task-1"}}, {TaskID: "task-3", Title: "Reviewed", Status: "done", AssignedAgent: "reviewer", DependsOn: []string{"task-1"}}}, tasksStates: []taskWorkingState{{TaskID: "task-1", Agent: "coder", Status: "working", TaskChainID: "chain-1", RootTaskID: "root"}}}
 	wide := m.taskManagementView(120, 20)
-	for _, want := range []string{"Tasks", "Task details", "Selected agent", "Agents", "Implement Tasks tab", "agent coder", "chain chain-1", "online", "2 tasks"} {
+	for _, want := range []string{"Tasks", "Task details", "Selected task", "Participants", "Agents", "Implement Tasks tab", "online"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("wide tasks view missing %q:\n%s", want, wide)
 		}
@@ -357,8 +396,8 @@ func TestTaskManagementViewResponsiveStates(t *testing.T) {
 			t.Fatalf("narrow line width=%d > 60 at line %d: %q\n%s", got, i, line, narrow)
 		}
 	}
-	if !strings.Contains(wide, "✓") {
-		t.Fatalf("completed history should render with lower-emphasis check marker:\n%s", wide)
+	if strings.Contains(wide, "Reviewed") || strings.Contains(wide, "✓") {
+		t.Fatalf("completed history should be hidden from default open-task view:\n%s", wide)
 	}
 	m.tasksLoading = true
 	if view := m.taskManagementView(80, 10); !strings.Contains(view, "Loading tasks") {
@@ -390,7 +429,7 @@ func TestTaskActionHintsAndConfirmation(t *testing.T) {
 		t.Fatalf("ctrl-k should open task command palette, palette=%+v cmd=%v", m.tasksPalette, cmd)
 	}
 	palette := m.taskManagementView(100, 20)
-	for _, want := range []string{"Task commands", "Open details", "Edit next step", "Edit title/description", "Mark complete", "Remove task (archive)", "Delete task", "not supported by task CLI", "Add task after selected", "Archive active chain"} {
+	for _, want := range []string{"Task commands", "Open details", "Edit next step", "Edit title/description", "Mark complete", "Add selected agent as reviewer", "Deactivate selected agent reviewer role", "Change selected agent reviewer to verifier", "Remove task (archive)", "Delete task", "not supported by task CLI", "Add task after selected"} {
 		if !strings.Contains(palette, want) {
 			t.Fatalf("palette missing %q:\n%s", want, palette)
 		}
@@ -401,7 +440,7 @@ func TestTaskActionHintsAndConfirmation(t *testing.T) {
 	if cmd != nil || m.tasksConfirm.Active() {
 		t.Fatalf("direct d shortcut should be inert outside palette, confirm=%+v cmd=%v", m.tasksConfirm, cmd)
 	}
-	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 7}
+	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 14}
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	if cmd != nil || !m.tasksConfirm.Active() || m.tasksConfirm.Action != "archive" {
@@ -415,7 +454,7 @@ func TestTaskActionHintsAndConfirmation(t *testing.T) {
 	if cmd != nil || m.tasksConfirm.Active() {
 		t.Fatalf("esc should cancel confirmation, confirm=%+v cmd=%v", m.tasksConfirm, cmd)
 	}
-	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 8}
+	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 15}
 	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	if cmd != nil || !m.directInputStatusErr || !strings.Contains(m.directInputStatus, "not supported by task CLI") {
@@ -432,7 +471,7 @@ func TestTaskArchiveConfirmationEnterExecutesDocumentedAction(t *testing.T) {
 		return []byte(`{}`), nil
 	}
 	m := model{mode: tasksView, tasksItems: []taskRecord{{TaskID: "task-1", Title: "One", Status: "ready"}}}
-	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 7}
+	m.tasksPalette = taskCommandPaletteState{Open: true, Selected: 14}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	if cmd != nil || !m.tasksConfirm.Active() || !strings.Contains(m.directInputStatus, "press enter again") {
@@ -446,6 +485,16 @@ func TestTaskArchiveConfirmationEnterExecutesDocumentedAction(t *testing.T) {
 	msg := cmd().(taskActionResult)
 	if msg.Err != nil || len(calls) != 1 || strings.Join(calls[0], " ") != "task update task-1 --json --status archived" {
 		t.Fatalf("archive confirmation msg=%+v calls=%v", msg, calls)
+	}
+}
+
+func TestTaskParticipantAgentNamePrefersCanonicalAgentName(t *testing.T) {
+	row := agentRow{Name: "host/coder", AgentName: "coder", TargetAddress: "host.example/coder"}
+	if got := taskParticipantAgentName(row); got != "coder" {
+		t.Fatalf("participant agent name = %q, want coder", got)
+	}
+	if got := taskParticipantAgentName(agentRow{Name: "local"}); got != "local" {
+		t.Fatalf("local participant agent name = %q", got)
 	}
 }
 
@@ -465,6 +514,21 @@ func TestTaskActionCommandsAndEditorOutcomes(t *testing.T) {
 	msg = taskActionCmd(taskRecord{TaskID: "task-1"}, "complete", "coder")().(taskActionResult)
 	if msg.Err != nil || msg.Status != "Task marked complete" || len(calls) != 1 || strings.Join(calls[0], " ") != "task update task-1 --json --status done" {
 		t.Fatalf("complete msg=%+v calls=%v", msg, calls)
+	}
+	calls = nil
+	msg = taskParticipantActionCmd(taskRecord{TaskID: "task-1"}, "reviewer", "reviewer-agent")().(taskActionResult)
+	if msg.Err != nil || len(calls) != 1 || strings.Join(calls[0], " ") != "task participant add task-1 --agent reviewer-agent --role reviewer --json" {
+		t.Fatalf("participant reviewer msg=%+v calls=%v", msg, calls)
+	}
+	calls = nil
+	msg = taskParticipantDeactivateCmd(taskRecord{TaskID: "task-1"}, taskParticipant{ParticipantID: "part-1", Agent: "reviewer-agent", Role: "reviewer"})().(taskActionResult)
+	if msg.Err != nil || len(calls) != 1 || strings.Join(calls[0], " ") != "task participant update part-1 --status inactive --json" {
+		t.Fatalf("participant deactivate msg=%+v calls=%v", msg, calls)
+	}
+	calls = nil
+	msg = taskParticipantChangeRoleCmd(taskRecord{TaskID: "task-1"}, taskParticipant{ParticipantID: "part-1", Agent: "reviewer-agent", Role: "reviewer"}, "verifier", "reviewer-agent")().(taskActionResult)
+	if msg.Err != nil || len(calls) != 2 || strings.Join(calls[0], " ") != "task participant update part-1 --status inactive --json" || strings.Join(calls[1], " ") != "task participant add task-1 --agent reviewer-agent --role verifier --json" {
+		t.Fatalf("participant change-role msg=%+v calls=%v", msg, calls)
 	}
 	calls = nil
 	edit := updateTaskField("task-1", "next_step", "Run tests")
@@ -530,7 +594,7 @@ func TestTaskChainFormAutocompleteAndSubmit(t *testing.T) {
 		t.Fatalf("enter should submit form, loading=%v form=%+v cmd=%v", m.tasksLoading, m.tasksForm, cmd)
 	}
 	msg := cmd().(taskActionResult)
-	if msg.Err != nil || len(calls) != 1 || strings.Join(calls[0], " ") != "task create --title Write docs --priority P2 --json --agent coder --depends-on task-1" {
+	if msg.Err != nil || len(calls) != 1 || strings.Join(calls[0], " ") != "task create --title Write docs --priority P2 --json --agent coder --depends-on task-1 --task-chain-id task-1 --root-task-id task-1" {
 		t.Fatalf("submit msg=%+v calls=%v", msg, calls)
 	}
 }
@@ -544,7 +608,7 @@ func TestTaskChainCommandsAndAutocomplete(t *testing.T) {
 		return []byte(`{}`), nil
 	}
 	msg := createTaskInChainCmd("New task after task-1", "coder", "P2", []string{"task-1"})().(taskActionResult)
-	if msg.Err != nil || strings.Join(calls[0], " ") != "task create --title New task after task-1 --priority P2 --json --agent coder --depends-on task-1" {
+	if msg.Err != nil || strings.Join(calls[0], " ") != "task create --title New task after task-1 --priority P2 --json --agent coder --depends-on task-1 --task-chain-id task-1 --root-task-id task-1" {
 		t.Fatalf("create-after msg=%+v calls=%v", msg, calls)
 	}
 	calls = nil
@@ -617,7 +681,7 @@ func TestLoadTasksCmdParsesTaskStateAndApprovalJSON(t *testing.T) {
 	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
 		calls = append(calls, append([]string{}, args...))
 		switch strings.Join(args, " ") {
-		case "task list --include-archived --json":
+		case "task list --include-archived --include-participants --json":
 			return json.Marshal([]taskRecord{{TaskID: "task-1", Title: "One"}})
 		case "state list --json":
 			return json.Marshal([]taskWorkingState{{TaskID: "task-1", Status: "working", TaskChainID: "chain-1"}})

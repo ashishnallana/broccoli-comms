@@ -39,7 +39,7 @@ func (m model) taskPrimaryPanel(width, height int, wide bool) string {
 	lines := []string{
 		padStyledLine(titleStyle.Render("Tasks"), innerW, bg),
 		padStyledLine(mutedStyle.Render(truncateCells(taskSummaryLine(data), innerW)), innerW, bg),
-		padStyledLine(mutedStyle.Render("ctrl-k commands · ctrl-n/ctrl-p agent · ↑/↓ task · j/k task · r refresh"), innerW, bg),
+		padStyledLine(mutedStyle.Render("ctrl-k commands · ↑/↓ task · j/k task · r refresh · ctrl-n/ctrl-p agent filter"), innerW, bg),
 		padStyledLine(mutedStyle.Render("forms use field-aware autocomplete: agent, priority, depends refs"), innerW, bg),
 		bgSpaces(innerW, bg),
 	}
@@ -54,7 +54,7 @@ func (m model) taskPrimaryPanel(width, height int, wide bool) string {
 	} else if m.tasksErr != nil {
 		lines = append(lines, padStyledLine(fgOnBg(colors.Error, bg).Render(truncateCells("Tasks load failed · r retry · "+m.tasksErr.Error(), innerW)), innerW, bg))
 	} else if len(data.Tasks) == 0 {
-		lines = append(lines, padStyledLine(fgOnBg(colors.Muted, bg).Render("No tasks found for the selected agent or active chain."), innerW, bg))
+		lines = append(lines, padStyledLine(fgOnBg(colors.Muted, bg).Render("No open tasks found."), innerW, bg))
 	} else {
 		lines = append(lines, taskBucketLines(data, innerW, max(1, height-len(lines)))...)
 	}
@@ -62,17 +62,7 @@ func (m model) taskPrimaryPanel(width, height int, wide bool) string {
 }
 
 func taskSummaryLine(data taskManagementData) string {
-	agent := "no agent"
-	if data.SelectedAgent.Name != "" {
-		agent = data.SelectedAgent.Name
-	}
-	chain := "all chains"
-	if data.ActiveChainID != "" {
-		chain = data.ActiveChainID
-	} else if data.RootTaskID != "" {
-		chain = data.RootTaskID
-	}
-	return fmt.Sprintf("agent %s · chain %s · total %d · current %d · next %d · blocked %d · review %d · done %d", agent, chain, data.Counts.Total, data.Counts.Working, data.Counts.Ready, data.Counts.Blocked, data.Counts.Review, data.Counts.Completed)
+	return fmt.Sprintf("open tasks · total %d · working %d · ready %d · queued %d · blocked %d · review %d", data.Counts.Total, data.Counts.Working, data.Counts.Ready, data.Counts.Queued, data.Counts.Blocked, data.Counts.Review)
 }
 
 func taskBucketLines(data taskManagementData, width, height int) []string {
@@ -172,7 +162,9 @@ func (m model) taskDetailsPanel(width, height int) string {
 		padStyledLine(mutedStyle.Render(truncateCells(taskSummaryLine(data), innerW)), innerW, bg),
 		bgSpaces(innerW, bg),
 	}
-	lines = append(lines, taskSelectedAgentLines(data, innerW)...)
+	lines = append(lines, taskSelectedTaskLines(data, innerW)...)
+	lines = append(lines, bgSpaces(innerW, bg), padStyledLine(sectionHeaderStyle.Render("Participants"), innerW, bg))
+	lines = append(lines, taskParticipantLines(data, innerW, max(1, height-len(lines)-8))...)
 	lines = append(lines, bgSpaces(innerW, bg), padStyledLine(sectionHeaderStyle.Render("Agents"), innerW, bg))
 	lines = append(lines, m.taskAgentSidebarLines(data, innerW, max(1, height-len(lines)-8))...)
 	if len(data.Blockers) > 0 {

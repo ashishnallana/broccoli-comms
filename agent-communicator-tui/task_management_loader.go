@@ -39,7 +39,7 @@ func loadTasksCmd() tea.Cmd {
 }
 
 func loadTaskRecords(ctx context.Context) ([]taskRecord, error) {
-	out, err := runApprovalCLI(ctx, "task", "list", "--include-archived", "--json")
+	out, err := runApprovalCLI(ctx, "task", "list", "--include-archived", "--include-participants", "--json")
 	if err != nil {
 		return nil, fmt.Errorf("task list failed: %w: %s", err, string(out))
 	}

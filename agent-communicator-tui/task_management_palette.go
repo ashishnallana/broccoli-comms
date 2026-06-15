@@ -15,10 +15,14 @@ type taskCommandEntry struct {
 }
 
 func (m model) taskCommandEntries() []taskCommandEntry {
-	_, hasTask := m.selectedTaskRecord()
+	task, hasTask := m.selectedTaskRecord()
 	data := m.taskData()
 	hasChain := len(data.Tasks) > 0
-	hasAgent := m.currentRow().Name != ""
+	selectedAgent := taskParticipantAgentName(m.currentRow())
+	hasAgent := selectedAgent != ""
+	_, hasReviewer := taskParticipantForAgentRole(task, m.currentRow(), "reviewer")
+	_, hasVerifier := taskParticipantForAgentRole(task, m.currentRow(), "verifier")
+	_, hasCoordinator := taskParticipantForAgentRole(task, m.currentRow(), "coordinator")
 	return []taskCommandEntry{
 		{Label: "Open details", Help: "show selected task details", Enabled: hasTask, Run: func(m model) (model, tea.Cmd) {
 			if task, ok := m.selectedTaskRecord(); ok {
@@ -49,6 +53,45 @@ func (m model) taskCommandEntries() []taskCommandEntry {
 		{Label: "Reassign task to selected agent", Help: "requires selected agent", Enabled: hasTask && hasAgent, Run: func(m model) (model, tea.Cmd) {
 			task, _ := m.selectedTaskRecord()
 			return m.confirmOrRunTaskAction(task, "assign")
+		}},
+		{Label: "Add selected agent as reviewer", Help: "participant role", Enabled: hasTask && hasAgent, Run: func(m model) (model, tea.Cmd) {
+			task, _ := m.selectedTaskRecord()
+			m.tasksLoading = true
+			return m, taskParticipantActionCmd(task, "reviewer", taskParticipantAgentName(m.currentRow()))
+		}},
+		{Label: "Add selected agent as verifier", Help: "participant role", Enabled: hasTask && hasAgent, Run: func(m model) (model, tea.Cmd) {
+			task, _ := m.selectedTaskRecord()
+			m.tasksLoading = true
+			return m, taskParticipantActionCmd(task, "verifier", taskParticipantAgentName(m.currentRow()))
+		}},
+		{Label: "Add selected agent as coordinator", Help: "participant role", Enabled: hasTask && hasAgent, Run: func(m model) (model, tea.Cmd) {
+			task, _ := m.selectedTaskRecord()
+			m.tasksLoading = true
+			return m, taskParticipantActionCmd(task, "coordinator", taskParticipantAgentName(m.currentRow()))
+		}},
+		{Label: "Deactivate selected agent reviewer role", Help: "safe participant remove", Enabled: hasTask && hasReviewer, Run: func(m model) (model, tea.Cmd) {
+			task, _ := m.selectedTaskRecord()
+			participant, _ := taskParticipantForAgentRole(task, m.currentRow(), "reviewer")
+			m.tasksLoading = true
+			return m, taskParticipantDeactivateCmd(task, participant)
+		}},
+		{Label: "Deactivate selected agent verifier role", Help: "safe participant remove", Enabled: hasTask && hasVerifier, Run: func(m model) (model, tea.Cmd) {
+			task, _ := m.selectedTaskRecord()
+			participant, _ := taskParticipantForAgentRole(task, m.currentRow(), "verifier")
+			m.tasksLoading = true
+			return m, taskParticipantDeactivateCmd(task, participant)
+		}},
+		{Label: "Deactivate selected agent coordinator role", Help: "safe participant remove", Enabled: hasTask && hasCoordinator, Run: func(m model) (model, tea.Cmd) {
+			task, _ := m.selectedTaskRecord()
+			participant, _ := taskParticipantForAgentRole(task, m.currentRow(), "coordinator")
+			m.tasksLoading = true
+			return m, taskParticipantDeactivateCmd(task, participant)
+		}},
+		{Label: "Change selected agent reviewer to verifier", Help: "deactivate old role then add new", Enabled: hasTask && hasReviewer, Run: func(m model) (model, tea.Cmd) {
+			task, _ := m.selectedTaskRecord()
+			participant, _ := taskParticipantForAgentRole(task, m.currentRow(), "reviewer")
+			m.tasksLoading = true
+			return m, taskParticipantChangeRoleCmd(task, participant, "verifier", taskParticipantAgentName(m.currentRow()))
 		}},
 		{Label: "Remove task (archive)", Help: "safe remove via archive; requires confirmation", Enabled: hasTask, Run: func(m model) (model, tea.Cmd) {
 			task, _ := m.selectedTaskRecord()

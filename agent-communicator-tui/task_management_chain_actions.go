@@ -54,7 +54,7 @@ func createTaskInChainCmd(title, agent, priority string, dependsOn []string) tea
 			args = append(args, "--agent", agent)
 		}
 		if len(dependsOn) > 0 {
-			args = append(args, "--depends-on", strings.Join(dependsOn, ","))
+			args = append(args, "--depends-on", strings.Join(dependsOn, ","), "--task-chain-id", dependsOn[0], "--root-task-id", dependsOn[0])
 		}
 		out, err := runApprovalCLI(ctx, args...)
 		if err != nil {

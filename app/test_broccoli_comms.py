@@ -862,6 +862,25 @@ agent_communicator_tui = "/config/agent-communicator"
         self.assertEqual(body, f"hello planner {workspace}")
         self.assertIn("/broccoli-agents/planner/", workspace)
 
+    def test_ephemeral_agent_workspace_uses_temp_root_when_agent_root_unset(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):
+            first = Path(broccoli_comms_app.ephemeral_agent_workspace("planner"))
+            second = Path(broccoli_comms_app.ephemeral_agent_workspace("planner"))
+        self.assertNotEqual(first, second)
+        self.assertIn("broccoli-agents", str(first))
+        self.assertEqual(first.parent.name, "planner")
+
+    def test_ephemeral_agent_workspace_uses_configured_agent_root_dir(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as root, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text(f'[paths]\nagent-root-dir = "{root}"\n[learning]\nagent_contract_template = "hello {{agent}} {{cwd}}"\n')
+            workspace = Path(broccoli_comms_app.ephemeral_agent_workspace("planner"))
+            again = Path(broccoli_comms_app.ephemeral_agent_workspace("planner"))
+            self.assertEqual(workspace, Path(root) / "planner")
+            self.assertEqual(again, workspace)
+            self.assertEqual((workspace / "AGENTS.md").read_text(), f"hello planner {workspace}")
+
 
 if __name__ == "__main__":
     unittest.main()

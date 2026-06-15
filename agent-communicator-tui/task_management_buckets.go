@@ -107,6 +107,35 @@ func taskArchivedByID(tasks []taskRecord, taskID string) bool {
 	return false
 }
 
+func openTaskRecords(tasks []taskRecord, states map[string]taskWorkingState, approvals map[string][]taskApprovalRecord) []taskRecord {
+	out := make([]taskRecord, 0, len(tasks))
+	for _, task := range tasks {
+		status := normalizedTaskStatus(task, states[task.TaskID])
+		if taskArchived(task) || status == "validated" || status == "completed" || (taskCompleted(task) && !taskReviewHandoff(task, approvals[task.TaskID])) {
+			continue
+		}
+		out = append(out, task)
+	}
+	return out
+}
+
+func taskFocusFromSelection(tasks []taskRecord, selected int) (string, string, string) {
+	return "", "", ""
+}
+
+func taskReviewHandoff(task taskRecord, approvals []taskApprovalRecord) bool {
+	if hasPendingApproval(approvals) {
+		return true
+	}
+	for _, participant := range task.Participants {
+		role := strings.ToLower(strings.TrimSpace(participant.Role))
+		if strings.EqualFold(participant.Status, "active") && (role == "reviewer" || role == "verifier") {
+			return true
+		}
+	}
+	return false
+}
+
 func tasksForChain(tasks []taskRecord, chainID, rootID, currentTaskID string) []taskRecord {
 	if chainID == "" && rootID == "" && currentTaskID == "" {
 		return append([]taskRecord{}, tasks...)
@@ -202,14 +231,14 @@ func bucketTasks(tasks []taskRecord, currentTaskID string, states map[string]tas
 		idx := 2
 		status := normalizedTaskStatus(task, states[task.TaskID])
 		switch {
-		case task.TaskID != "" && task.TaskID == currentTaskID:
+		case status == "working":
 			idx = 0
 		case status == "ready":
 			idx = 1
+		case hasPendingApproval(approvals[task.TaskID]) || status == "review" || status == "pending_review" || taskReviewHandoff(task, approvals[task.TaskID]):
+			idx = 3
 		case status == "completed" || status == "done" || status == "validated" || task.ResultStatus == "good":
 			idx = 4
-		case hasPendingApproval(approvals[task.TaskID]) || status == "review" || status == "pending_review":
-			idx = 3
 		default:
 			idx = 2
 		}

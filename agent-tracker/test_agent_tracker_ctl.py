@@ -41,6 +41,46 @@ class TestAgentTrackerCtl(unittest.TestCase):
         self.assertIn("#[align=right]#[range=user|agent-registries]#[fg=#db4b4b,bold]●#[norange]#[default]", bar)
 
     @mock.patch.dict(os.environ, {}, clear=True)
+    def test_format_status_bar_filters_invalid_panes_but_allows_agent_communicator_with_pane(self):
+        bar = ctl.format_status_bar(
+            {
+                "agent-communicator": {"tmux_pane": "%9", "status": "idle"},
+                "mailbox": {"status": "idle"},
+                "remote/agent": {"tmux_pane": "remote-pane", "status": "working"},
+                "local": {"tmux_pane": "%1", "status": "idle"},
+            },
+            "%9",
+            registry_connected=True,
+        )
+        self.assertIn("local", bar)
+        self.assertIn("agent-communicator", bar)
+        self.assertIn("#[fg=#e0af68,bold]agent-communicator", bar)
+        self.assertNotIn("mailbox", bar)
+        self.assertNotIn("remote/agent", bar)
+        self.assertIn("range=user|agent:%1", bar)
+        self.assertIn("range=user|agent:%9", bar)
+        self.assertNotIn("range=user|agent:remote-pane", bar)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_format_status_bar_does_not_highlight_invalid_current_pane(self):
+        bar = ctl.format_status_bar(
+            {"agent1": {"tmux_pane": "%1", "status": "idle"}},
+            "remote-pane",
+            registry_connected=True,
+        )
+        self.assertIn("#[fg=#9ece6a,bold]agent1", bar)
+        self.assertNotIn("#[fg=#e0af68,bold]agent1", bar)
+
+    @mock.patch.dict(os.environ, {}, clear=True)
+    def test_format_status_bar_returns_empty_when_no_valid_agent_panes(self):
+        bar = ctl.format_status_bar(
+            {"agent-communicator": {}, "remote": {"tmux_pane": "host/%1"}},
+            "%9",
+            registry_connected=True,
+        )
+        self.assertEqual(bar, "")
+
+    @mock.patch.dict(os.environ, {}, clear=True)
     def test_format_status_bar_shows_dot_for_each_registry(self):
         bar = ctl.format_status_bar(
             {"agent1": {"tmux_pane": "%1", "status": "idle"}},
