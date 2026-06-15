@@ -852,6 +852,19 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertIn(f"Launch/source cwd: {src}", agents)
             self.assertIn("For file/project queries not related to agent memory", agents)
 
+    def test_home_manager_provider_defaults_keep_safe_empty_launch_flags(self):
+        text = (Path(__file__).resolve().parents[1] / "modules" / "home-manager.nix").read_text()
+        for provider in ("pi", "codex", "claude"):
+            marker = f"[providers.{provider}]"
+            self.assertIn(marker, text)
+            start = text.index(marker)
+            next_provider = text.find("[providers.", start + 1)
+            block = text[start: next_provider if next_provider != -1 else len(text)]
+            self.assertIn(f'cmd = "{provider}"', block)
+            self.assertIn('auto-accept-flag = ""', block)
+            self.assertIn('prompt-flag-name = ""', block)
+            self.assertIn('initial-message = ""', block)
+
     def test_ephemeral_agent_workspace_writes_agents_md_from_config_template(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):
             cfg_dir = Path(tmp) / "broccoli-comms"

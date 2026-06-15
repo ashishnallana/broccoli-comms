@@ -282,6 +282,12 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertIn("task submit-completion <task_id>", contract)
             self.assertIn("task summarize-chain <task_chain_id>", contract)
             self.assertIn("Anything that requires investigation must be created and tracked as a task first", contract)
+            self.assertIn("ask the user/coordinator which collaborator agents should participate", contract)
+            self.assertIn("task chain-defaults set <chain> --agent <agent> --role <role>", contract)
+            self.assertIn("Do not prompt for every subtask when active chain defaults already capture", contract)
+            self.assertIn("Do not abandon current work for ad-hoc tasks", contract)
+            self.assertIn("queue/order it after the current task or at the end of the current chain", contract)
+            self.assertIn("Only switch immediately for priority/urgent work", contract)
             self.assertIn("clarification_count, correction_count, need_improvements_count", contract)
             self.assertIn("first_pass_success", contract)
             self.assertIn("derivable from `working_state_set` events", contract)
@@ -291,6 +297,12 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertIn("do not write state checkpoints", contract)
             self.assertIn("correction-assisted", contract)
             self.assertIn("Never store raw terminal transcripts", contract)
+            self.assertIn("When doing a memory audit, inspect bounded task logs/events", contract)
+            self.assertIn("working state, task results, task-chain summaries", contract)
+            self.assertIn("existing approved memories", contract)
+            self.assertIn("propose concise memory additions, edits, or removals only", contract)
+            self.assertIn("do not self-approve memory", contract)
+            self.assertIn("Active memory changes require trusted user/coordinator approval", contract)
 
     def test_task_chain_summary_creation_retrieval_and_lineage(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):

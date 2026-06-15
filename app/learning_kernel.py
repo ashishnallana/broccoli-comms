@@ -1474,8 +1474,10 @@ Durable state lives in Broccoli Comms. Do not rely on either cwd for memory.
 Only skip task creation for true one-off user queries that have easy answers and require no investigation, file/code inspection, command execution, durable state, or verifiable deliverable. Anything that requires investigation must be created and tracked as a task first.
 When a request is received that expects a concrete verifiable result:
 1. **Convert to Task**: Create a new task first using `broccoli-comms task create` so the goal can be formally tracked.
-2. **Update Status**: Continuously add status updates and state changes to that task as you work using `broccoli-comms state set` or `broccoli-comms task update`.
-3. **Capture Pitfalls**: Ensure any roadblocks, failed experiments, and exact pitfalls encountered during the task are explicitly logged within the task's state/notes (and proposed as memory if valuable).
+2. **Set collaboration roles for new chains**: When starting a new root task/task chain, ask the user/coordinator which collaborator agents should participate as reviewer, verifier, coordinator, observer, or specialist. Add them at creation time with `--reviewer`, `--verifier`, `--coordinator`, or `--participant role:agent`, and set reusable chain defaults with `broccoli-comms task chain-defaults set <chain> --agent <agent> --role <role>` when follow-up tasks in the same chain should inherit those roles. Do not prompt for every subtask when active chain defaults already capture the intended collaborators; use `--task-chain-id`/`--root-task-id` so defaults apply.
+3. **Do not abandon current work for ad-hoc tasks**: If new related work arrives while you are already working, queue/order it after the current task or at the end of the current chain unless it is explicitly urgent/blocking. Only switch immediately for priority/urgent work; before switching, checkpoint the current task with bounded `next_step`/blockers and preserve task-chain/root ids, then move it to the appropriate status (`ready`, `blocked`, `review`, or done/submitted).
+4. **Update Status**: Continuously add status updates and state changes to that task as you work using `broccoli-comms state set` or `broccoli-comms task update`.
+5. **Capture Pitfalls**: Ensure any roadblocks, failed experiments, and exact pitfalls encountered during the task are explicitly logged within the task's state/notes (and proposed as memory if valuable).
 
 Example usage:
 ```bash
@@ -1490,6 +1492,10 @@ broccoli-comms task create \
 ### Proposing Memory
 To save durable outputs like discoveries or new skills, propose memory using `broccoli-comms memory propose`. 
 By default, you must provide a `--source-task` unless proposing manually with `--trusted-manual`.
+
+### Memory audit guidance
+When doing a memory audit, inspect bounded task logs/events, working state, task results, task-chain summaries, and existing approved memories. Then propose concise memory additions, edits, or removals only; do not self-approve memory, directly edit generated memory files, or directly mutate durable memory approval state. Keep proposals bounded to reusable facts/habits/episodes/expertise/skills, and never include raw transcripts, secrets/tokens/passwords, full command logs, or large file contents. Active memory changes require trusted user/coordinator approval.
+
 Example usage:
 ```bash
 broccoli-comms memory propose \
