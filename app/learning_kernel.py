@@ -1568,6 +1568,11 @@ Durable state lives in Broccoli Comms. Do not rely on either cwd for memory.
 - When the user says a result is correct, ensure the task is marked `good`/`validated` with `broccoli-comms task mark-result <task_id> --result good --json` so the append-only event log captures: goal -> checkpoints/discoveries -> result summary -> user validation.
 - For partial or incorrect results, include a remediation next_step with `task mark-result --result bad|need_improvements --next-step ...`.
 
+## Role notification and handoff guidance
+- On ordinary task review/completion handoffs, notify active reviewer/verifier participants when moving work to `review` or `done`; notify the assignee on `bad`/`need_improvements`; notify verifier on `good` review results when present, otherwise coordinator/requester; and include assignee plus coordinator/requester for final `validated`/good outcomes.
+- For `blocked`, `archived`, `ready`, and `working` transitions, notify only role-relevant participants such as assignee, coordinator, requester, or blocker owner; avoid broad fan-out to reviewers/verifiers unless their role is directly relevant.
+- Avoid self-notifications and duplicate notifications. Treat local/remote aliases for the same agent as one recipient, and combine all applicable roles/reasons into one concise notification instead of sending multiple messages to the same recipient.
+
 ## Clarification and correction tracking
 - Record each user clarification or correction as bounded task/state/result metadata, not raw chat.
 - Use structured `state set` metadata flags for clarification_count, correction_count, need_improvements_count, and first_pass_success so these metrics are derivable from `working_state_set` events.

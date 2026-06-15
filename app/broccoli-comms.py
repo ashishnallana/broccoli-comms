@@ -2648,6 +2648,21 @@ def _task_update_attention_message(task: dict, actor: str, updates: dict) -> str
     return _single_line_message_part(message, 1000)
 
 
+def _task_notification_delivery(agent: str, message: str, metadata: dict, sender_name: str) -> dict:
+    if "/" in str(agent or ""):
+        result = tracker_rpc("send_message", {"agent_name": agent, "message": message, "metadata": {**metadata, "preferred_delivery": "send_input", "delivery_fallback_reason": "remote_or_qualified_target"}, "sender_name": sender_name})
+        return {"agent": agent, "sent": bool(result), "delivery": "send_message", "result": result}
+    try:
+        result = tracker_rpc("send_input", {"agent_name": agent, "mode": "text", "text": message, "submit": True, "sender_name": sender_name})
+        if not result:
+            raise RuntimeError("tracker RPC send_input failed")
+        return {"agent": agent, "sent": True, "delivery": "send_input", "result": result}
+    except Exception as e:
+        fallback_metadata = {**metadata, "delivery_fallback_reason": str(e), "preferred_delivery": "send_input"}
+        result = tracker_rpc("send_message", {"agent_name": agent, "message": message, "metadata": fallback_metadata, "sender_name": sender_name})
+        return {"agent": agent, "sent": bool(result), "delivery": "send_message_fallback", "error": str(e), "result": result}
+
+
 def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
     if not task or not updates:
         return {"sent": False, "skipped": True}
@@ -2683,10 +2698,10 @@ def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
             agent = recipient["agent"]
             participant_metadata = {**metadata, "recipient_agent": agent, "recipient_kind": "task_participant", "recipient_roles": recipient.get("roles") or [], "recipient_reasons": recipient.get("reasons") or []}
             try:
-                participant_result = tracker_rpc("send_message", {"agent_name": agent, "message": message, "metadata": participant_metadata, "sender_name": sender_name})
-                participant_results.append({"agent": agent, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or [], "sent": bool(participant_result), "result": participant_result})
+                delivery = _task_notification_delivery(agent, message, participant_metadata, sender_name)
+                participant_results.append({**delivery, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or []})
             except Exception as participant_error:
-                participant_results.append({"agent": agent, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or [], "sent": False, "error": str(participant_error)})
+                participant_results.append({"agent": agent, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or [], "sent": False, "delivery": "failed", "error": str(participant_error)})
     payload = {"sent": ui_sent, "result": ui_result, "participant_notifications": participant_results}
     if ui_error:
         payload["error"] = ui_error
@@ -2844,6 +2859,7 @@ def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list
         "- Use `broccoli-comms memory ...` commands to update durable skills/memory; do not edit generated SKILL.md, memory.md, or expertise.md files as the source of truth.",
         "- **Retained habits are mandatory operating instructions.** The active habits are embedded below; follow them across the whole session, especially at task completion, review handoff, validation, and queue-continuation transitions.",
         "- Before reporting a task complete or validated, re-check the embedded retained habits and perform any follow-on action they require, such as notifying a reviewer or starting the next ready task.",
+        "- For task handoff notifications, notify role-relevant participants only: reviewer/verifier for review handoff, assignee for bad/need_improvements, verifier for good review results when present otherwise coordinator/requester, assignee plus coordinator/requester for final validated/good, and coordinator/requester or assignee for blocked/archived/ready/working as relevant. Suppress self-notifications, dedupe local/remote aliases for the same agent, and combine all applicable roles/reasons into one notification per recipient.",
         "- Ordinary single-task completion uses task/status/result flow, not `task submit-completion`: set a bounded result summary and move it to `review` when reviewer/verifier participants are active (or `done` when no review role is configured), then reviewers/users validate with `task mark-result`. Reserve `task submit-completion` for task-chain or scoped-phase completion only. Before submitting chain/scoped completion, refresh the bounded summary with `broccoli-comms task summarize-chain <task_chain_id> --json`, then submit the root with explicit `--task-chain-id` and `--root-task-id`; after approval/validation, run `summarize-chain` again so future agents resume from a bounded post-validation summary.",
     ]
     if habits:

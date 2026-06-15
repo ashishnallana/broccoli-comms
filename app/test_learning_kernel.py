@@ -152,11 +152,13 @@ class TestLearningKernelCli(unittest.TestCase):
         self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "reviewer", "verifier"])
         for _method, payload in calls:
             self.assertEqual(payload["sender_name"], "coder")
-            self.assertNotIn("\n", payload["message"])
-            self.assertIn("Task task-1 moved to review by coder. Read inbox.", payload["message"])
-            self.assertEqual(payload["metadata"]["content_type"], "application/vnd.broccoli.task-update+json")
-            self.assertEqual(payload["metadata"]["task_id"], "task-1")
-            self.assertEqual(payload["metadata"]["task_status"], "review")
+            body = payload.get("message") or payload.get("text")
+            self.assertNotIn("\n", body)
+            self.assertIn("Task task-1 moved to review by coder. Read inbox.", body)
+            if "metadata" in payload:
+                self.assertEqual(payload["metadata"]["content_type"], "application/vnd.broccoli.task-update+json")
+                self.assertEqual(payload["metadata"]["task_id"], "task-1")
+                self.assertEqual(payload["metadata"]["task_status"], "review")
         def flaky_tracker(_method, payload, **_kw):
             if payload["agent_name"] == "reviewer":
                 raise RuntimeError("offline")
@@ -197,6 +199,52 @@ class TestLearningKernelCli(unittest.TestCase):
         self.assertEqual([r["agent"] for r in broccoli._task_update_notification_recipients(with_verifier, "reviewer", {"result_status": "good"})], ["verifier"])
         self.assertEqual([r["agent"] for r in broccoli._task_update_notification_recipients(no_verifier, "reviewer", {"result_status": "good"})], ["requester", "lead"])
         self.assertEqual([r["agent"] for r in broccoli._task_update_notification_recipients(with_verifier, "reviewer", {"result_status": "good", "status": "validated"})], ["verifier", "requester", "coder", "lead"])
+
+    def test_task_update_notifications_use_direct_input_for_live_pane_agents(self):
+        task = {"task_id": "task-1", "title": "Notify", "status": "review", "assigned_agent": "coder", "participants": [{"agent": "reviewer", "role": "reviewer", "status": "active"}]}
+        calls = []
+        with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+            notice = broccoli.notify_task_update(task, "coder", {"status": "review"})
+        self.assertEqual([method for method, _payload in calls], ["send_message", "send_input"])
+        self.assertEqual(calls[1][1]["agent_name"], "reviewer")
+        self.assertEqual(calls[1][1]["mode"], "text")
+        self.assertIn("Task task-1 moved to review by coder", calls[1][1]["text"])
+        self.assertEqual(notice["participant_notifications"][0]["delivery"], "send_input")
+
+    def test_task_update_notifications_fallback_to_inbox_for_mailbox_offline_and_remote(self):
+        metadata = {"kind": "task_update"}
+        cases = [
+            ("target", RuntimeError("Target is a Broccoli Comms UI/mailbox; direct pane input is disabled"), "send_message_fallback"),
+            ("host/target", None, "send_message"),
+            ("target", RuntimeError("Target agent has no registered tmux pane"), "send_message_fallback"),
+        ]
+        for agent, direct_error, expected_delivery in cases:
+            calls = []
+            def fake_rpc(method, payload, **_kw):
+                calls.append((method, payload))
+                if method == "send_input" and direct_error:
+                    raise direct_error
+                return {"ok": True}
+            with mock.patch.object(broccoli, "tracker_rpc", side_effect=fake_rpc):
+                result = broccoli._task_notification_delivery(agent, "Task update", metadata, "sender")
+            self.assertEqual(calls[-1][0], "send_message")
+            self.assertEqual(calls[-1][1]["metadata"]["kind"], "task_update")
+            self.assertIn("delivery_fallback_reason", calls[-1][1]["metadata"])
+            self.assertEqual(result["delivery"], expected_delivery)
+
+    def test_task_update_notifications_fallback_to_inbox_when_direct_input_fails(self):
+        calls = []
+        def fake_rpc(method, payload, **_kw):
+            calls.append((method, payload))
+            if method == "send_input":
+                raise RuntimeError("pane busy")
+            return {"ok": True}
+        with mock.patch.object(broccoli, "tracker_rpc", side_effect=fake_rpc):
+            result = broccoli._task_notification_delivery("reviewer", "Task update", {"kind": "task_update"}, "sender")
+        self.assertEqual([method for method, _payload in calls], ["send_input", "send_message"])
+        self.assertEqual(calls[1][1]["metadata"]["preferred_delivery"], "send_input")
+        self.assertIn("pane busy", calls[1][1]["metadata"]["delivery_fallback_reason"])
+        self.assertEqual(result["delivery"], "send_message_fallback")
 
     def test_submit_completion_cli_requires_chain_summary_guardrail(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
@@ -247,7 +295,7 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder", "next", "coord"])
             for _method, payload in calls:
                 self.assertEqual(payload["sender_name"], "reviewer")
-                self.assertIn("moved to validated by reviewer. Read inbox.", payload["message"])
+                self.assertIn("moved to validated by reviewer. Read inbox.", payload.get("message") or payload.get("text"))
 
     def test_ui_notification_failure_still_attempts_participant_notifications(self):
         task = {"task_id": "task-1", "title": "Notify", "status": "review", "participants": [{"agent": "reviewer", "role": "reviewer", "status": "active"}]}
@@ -351,6 +399,10 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertIn("do **not** use `task submit-completion`", contract)
             self.assertIn("move it to `review` when reviewer/verifier participants are active", contract)
             self.assertIn("Reserve `broccoli-comms task submit-completion` for task-chain", contract)
+            self.assertIn("Role notification and handoff guidance", contract)
+            self.assertIn("notify active reviewer/verifier participants", contract)
+            self.assertIn("Avoid self-notifications and duplicate notifications", contract)
+            self.assertIn("combine all applicable roles/reasons", contract)
             self.assertIn("task summarize-chain <task_chain_id>", contract)
             self.assertIn("Anything that requires investigation must be created and tracked as a task first", contract)
             self.assertIn("ask the user/coordinator which collaborator agents should participate", contract)
