@@ -60,7 +60,7 @@ func TestMessageHeaderUsesSenderMetadataWhenPresent(t *testing.T) {
 		Body:            "hello",
 	}}}
 	view := strings.Join(m.messageLinesForWidth(90), "\n")
-	for _, want := range []string{"Pi alice @ works", "hello"} {
+	for _, want := range []string{"Pi alice @ workstation-long", "hello"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("message view missing %q:\n%s", want, view)
 		}

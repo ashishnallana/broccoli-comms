@@ -21,7 +21,7 @@ func (m model) taskAgentSidebarLines(data taskManagementData, width, height int)
 	if len(m.rows) == 0 {
 		return []string{padStyledLine(mutedStyle.Render("No agents found."), width, bg)}
 	}
-	counts := taskCountsByAgent(m.tasksItems)
+	counts := taskCountsByAgent(m.tasksItems, m.rows)
 	lines := make([]string, 0, len(m.rows)*2)
 	for i, row := range m.rows {
 		selected := i == m.selected
@@ -39,7 +39,7 @@ func (m model) taskAgentSidebarLines(data taskManagementData, width, height int)
 			chain = "chain"
 		}
 		line1 := fmt.Sprintf("%s%s · %s · %s", prefix, firstNonEmpty(row.Name, "agent"), status, chain)
-		line2 := fmt.Sprintf("  %d tasks · %s", counts[row.Name], firstNonEmpty(row.CurrentTask, "No active task"))
+		line2 := fmt.Sprintf("  %d tasks · %s", countTasksForAgent(counts, row), firstNonEmpty(row.CurrentTask, "No active task"))
 		lines = append(lines,
 			padStyledLine(fgOnBg(fg, rowBg).Bold(selected).Render(truncateCells(line1, width)), width, rowBg),
 			padStyledLine(fgOnBg(colors.Muted, rowBg).Render(truncateCells(line2, width)), width, rowBg),
@@ -51,12 +51,28 @@ func (m model) taskAgentSidebarLines(data taskManagementData, width, height int)
 	return lines
 }
 
-func taskCountsByAgent(tasks []taskRecord) map[string]int {
+func taskCountsByAgent(tasks []taskRecord, rows []agentRow) map[string]int {
 	counts := map[string]int{}
 	for _, task := range tasks {
 		if task.AssignedAgent != "" {
 			counts[task.AssignedAgent]++
 		}
 	}
+	for _, row := range rows {
+		for _, name := range []string{row.Name, row.AgentName, row.TargetAddress} {
+			if name != "" && counts[name] == 0 {
+				counts[name] = countTasksForAgent(counts, row)
+			}
+		}
+	}
 	return counts
+}
+
+func countTasksForAgent(counts map[string]int, row agentRow) int {
+	for _, name := range []string{row.Name, row.AgentName, row.TargetAddress} {
+		if name != "" && counts[name] > 0 {
+			return counts[name]
+		}
+	}
+	return 0
 }

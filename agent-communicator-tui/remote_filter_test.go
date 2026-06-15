@@ -48,9 +48,9 @@ func TestLoadAgentsFromRPCIncludesRemoteAndCallerIdentity(t *testing.T) {
 	}
 }
 
-func TestRowFromTrackerAgentShortensRemoteDisplayAndKeepsTarget(t *testing.T) {
+func TestRowFromTrackerAgentUsesFullRemoteHostnameAndKeepsTarget(t *testing.T) {
 	row := rowFromTrackerAgent("local:tanmayvijay.c.googlers.com/remote-agent", tracker.Agent{Scope: "remote", Hostname: "tanmayvijay.c.googlers.com", TargetAddress: "local:tanmayvijay.c.googlers.com/remote-agent"})
-	if row.Name != "local:tanma/remote-agent" || row.TargetAddress != "local:tanmayvijay.c.googlers.com/remote-agent" {
+	if row.Name != "local:tanmayvijay.c.googlers.com/remote-agent" || row.TargetAddress != "local:tanmayvijay.c.googlers.com/remote-agent" {
 		t.Fatalf("row = %+v", row)
 	}
 }

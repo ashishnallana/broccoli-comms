@@ -123,7 +123,7 @@ func splitHost(target string) string {
 }
 
 func rowMachineLabel(row agentRow) string {
-	return shortHost(rowHostnameLabel(row))
+	return rowHostnameLabel(row)
 }
 
 func rowHostnameLabel(row agentRow) string {

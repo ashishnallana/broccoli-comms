@@ -80,7 +80,6 @@ type taskManagementData struct {
 func (m model) taskData() taskManagementData {
 	selected := m.currentRow()
 	stateByTask := latestStateByTask(m.tasksStates)
-	approvalByTask := approvalsByTask(m.tasksApprovals)
 	chainID, rootID, currentTaskID := m.activeTaskChainFor(selected, stateByTask)
 	items := tasksForChain(m.tasksItems, chainID, rootID, currentTaskID)
 	if chainID == "" && rootID == "" && currentTaskID == "" && selected.Name != "" {
@@ -91,6 +90,7 @@ func (m model) taskData() taskManagementData {
 	if chainID == "" && rootID == "" && selected.Name != "" {
 		approvals = approvalsForTasks(m.tasksApprovals, items)
 	}
+	approvalByTask := approvalsByTask(approvals)
 	buckets := bucketTasks(items, currentTaskID, stateByTask, approvalByTask)
 	rowCount := len(orderedTaskRows(buckets))
 	return taskManagementData{

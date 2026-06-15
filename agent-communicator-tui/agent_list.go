@@ -196,5 +196,5 @@ func remoteDisplayName(target, host, name string) string {
 	if strings.Contains(target, ":") {
 		prefix = strings.SplitN(target, ":", 2)[0] + ":"
 	}
-	return prefix + shortHost(host) + "/" + name
+	return prefix + host + "/" + name
 }

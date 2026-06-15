@@ -829,7 +829,7 @@ func loadConfigItemsFromBroccoliComms(ctx context.Context) ([]ConfigSelectionIte
 			description += " · no provider configured"
 		}
 		items = append(items, ConfigSelectionItem{
-			Name:        "Run new agent on " + shortHost(host),
+			Name:        "Run new agent on " + host,
 			Description: description,
 			IsRemote:    host != localHostname(),
 			IsNewAgent:  true,

@@ -173,6 +173,56 @@ func TestSelectedRemoteAgentMatchesAssignedAgentName(t *testing.T) {
 	}
 }
 
+func TestSelectedRemoteAgentUsesRegistryCurrentTaskWhenTaskListUnavailable(t *testing.T) {
+	m := model{
+		rows:     []agentRow{{Name: "host/coder", Scope: "remote", AgentName: "coder", TargetAddress: "host.example/coder", CurrentTaskID: "remote-task", CurrentTask: "Remote feature", CurrentTaskStatus: "working", CurrentTaskNextStep: "ship"}},
+		selected: 0,
+		tasksItems: []taskRecord{
+			{TaskID: "local-task", Title: "Local only", Status: "ready", AssignedAgent: "local"},
+		},
+	}
+	data := m.taskData()
+	if len(data.Tasks) != 1 || data.Tasks[0].TaskID != "remote-task" || data.Tasks[0].AssignedAgent != "coder" {
+		t.Fatalf("remote current task fallback = %+v", data.Tasks)
+	}
+	view := m.taskManagementView(120, 20)
+	if !strings.Contains(view, "Remote feature") || strings.Contains(view, "Local only") {
+		t.Fatalf("remote current task view missing fallback or leaked local task:\n%s", view)
+	}
+}
+
+func TestSelectedRemoteAgentDoesNotUseCollidingLocalCurrentTask(t *testing.T) {
+	m := model{
+		rows:     []agentRow{{Name: "host/coder", Scope: "remote", AgentName: "coder", TargetAddress: "host.example/coder", CurrentTaskID: "task-same", CurrentTask: "Remote task"}},
+		selected: 0,
+		tasksItems: []taskRecord{
+			{TaskID: "task-same", Title: "Unrelated local", Status: "working", AssignedAgent: "reviewer"},
+			{TaskID: "task-child", Title: "Unrelated child", Status: "ready", AssignedAgent: "reviewer", DependsOn: []string{"task-same"}},
+		},
+		tasksStates:    []taskWorkingState{{TaskID: "task-same", Agent: "reviewer", Status: "working", TaskChainID: "chain-local", RootTaskID: "task-same"}},
+		tasksApprovals: []taskApprovalRecord{{ApprovalID: "apr-local", TaskID: "task-same", TaskChainID: "chain-local", RootTaskID: "task-same", Status: "pending"}},
+	}
+	data := m.taskData()
+	if data.ActiveChainID != "" || len(data.Tasks) != 1 || data.Tasks[0].Title != "Remote task" || len(data.Approvals) != 0 {
+		t.Fatalf("remote collision handling = chain %q tasks %+v approvals %+v", data.ActiveChainID, data.Tasks, data.Approvals)
+	}
+	view := m.taskManagementView(120, 20)
+	if strings.Contains(view, "Unrelated local") || strings.Contains(view, "Unrelated child") || !strings.Contains(view, "Remote task") {
+		t.Fatalf("remote collision view leaked local tasks:\n%s", view)
+	}
+}
+
+func TestRemoteAgentSidebarCountsUseAgentName(t *testing.T) {
+	m := model{
+		rows:       []agentRow{{Name: "host/coder", Scope: "remote", AgentName: "coder", TargetAddress: "host.example/coder"}},
+		tasksItems: []taskRecord{{TaskID: "task-1", AssignedAgent: "coder"}, {TaskID: "task-2", AssignedAgent: "coder"}},
+	}
+	view := strings.Join(m.taskAgentSidebarLines(m.taskData(), 60, 4), "\n")
+	if !strings.Contains(view, "2 tasks") {
+		t.Fatalf("remote sidebar count should use agent name aliases:\n%s", view)
+	}
+}
+
 func TestTaskOrderingPrefersDependenciesForInsertions(t *testing.T) {
 	items := []taskRecord{
 		{TaskID: "task-z", Title: "Inserted", Status: "ready", DependsOn: []string{"task-m"}},

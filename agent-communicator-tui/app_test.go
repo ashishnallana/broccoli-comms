@@ -687,7 +687,7 @@ func TestRunNewAgentFlowUsesConfiguredProviderAndHost(t *testing.T) {
 	config.ResetForTest()
 	defer config.ResetForTest()
 
-	m := model{showingConfigMenu: true, configItems: []ConfigSelectionItem{{Name: "Run new agent on remot", IsNewAgent: true, IsRemote: true, Hostname: "remote-host", Launchable: true}}, local: &fakeLocal{}}
+	m := model{showingConfigMenu: true, configItems: []ConfigSelectionItem{{Name: "Run new agent on remote-host", IsNewAgent: true, IsRemote: true, Hostname: "remote-host", Launchable: true}}, local: &fakeLocal{}}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(model)
 	if cmd != nil || !m.showingRunAgentForm || m.runAgentHost != "remote-host" || m.runAgentProvider != "pi" {
@@ -726,7 +726,7 @@ func TestRunNewAgentFormAutocompleteProviderDropdownAndArgs(t *testing.T) {
 	m := model{configItems: []ConfigSelectionItem{
 		{Name: "coder-main", Running: true, Hostname: "remote-host"},
 		{Name: "local-only", Running: true, Hostname: localHostname()},
-		{Name: "Run new agent on remot", IsNewAgent: true, IsRemote: true, Hostname: "remote-host", Launchable: true},
+		{Name: "Run new agent on remote-host", IsNewAgent: true, IsRemote: true, Hostname: "remote-host", Launchable: true},
 	}, local: &fakeLocal{}}
 	m.openRunAgentForm(m.configItems[2])
 	if got := strings.Join(m.runAgentSuggestions, ","); got != "coder-main" {
@@ -758,6 +758,14 @@ func TestRunNewAgentFormAutocompleteProviderDropdownAndArgs(t *testing.T) {
 	want := []string{"run", "--host", "remote-host", "--json", "coder-main", "--", "pi", "--json", "--verbose"}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestConfigMenuShowsFullRemoteHostname(t *testing.T) {
+	m := model{showingConfigMenu: true, configItems: []ConfigSelectionItem{{Name: "Run new agent on tanmayvijay.c.googlers.com", Description: "provider pi", IsNewAgent: true, IsRemote: true, Hostname: "tanmayvijay.c.googlers.com", Launchable: true}}, local: &fakeLocal{}}
+	view := m.renderConfigMenu(140, 12)
+	if !strings.Contains(view, "tanmayvijay.c.googlers.com") || strings.Contains(view, "[tanma]") {
+		t.Fatalf("config menu should render full remote hostname without fixed shortening:\n%s", view)
 	}
 }
 

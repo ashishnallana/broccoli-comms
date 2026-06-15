@@ -355,15 +355,15 @@ func (m model) renderConfigMenu(width, height int) string {
 				prefix = "> "
 			}
 
-			scopePrefix := fmt.Sprintf("[%s] ", shortHost(localHostname()))
+			scopePrefix := fmt.Sprintf("[%s] ", localHostname())
 			if item.IsNewAgent {
-				scopePrefix = fmt.Sprintf("[%s] new ", shortHost(item.Hostname))
+				scopePrefix = fmt.Sprintf("[%s] new ", fallback(item.Hostname, localHostname()))
 			} else if item.IsRemote {
-				scopePrefix = fmt.Sprintf("[%s] remote ", shortHost(item.Hostname))
+				scopePrefix = fmt.Sprintf("[%s] remote ", fallback(item.Hostname, "remote"))
 			} else if item.Running {
-				scopePrefix = fmt.Sprintf("[%s] running ", shortHost(localHostname()))
+				scopePrefix = fmt.Sprintf("[%s] running ", localHostname())
 			} else if item.Configured {
-				scopePrefix = fmt.Sprintf("[%s] configured ", shortHost(localHostname()))
+				scopePrefix = fmt.Sprintf("[%s] configured ", localHostname())
 			}
 
 			scopeStyle := lipgloss.NewStyle().Foreground(colors.Muted)
@@ -382,7 +382,8 @@ func (m model) renderConfigMenu(width, height int) string {
 			} else if item.Copyable {
 				action = "Enter: run · c: copy"
 			}
-			listLines = append(listLines, prefix+scopeStyle.Render(scopePrefix)+style.Render(item.Name)+" - "+item.Description+mutedStyle.Render(" · "+action))
+			line := prefix + scopeStyle.Render(scopePrefix) + style.Render(item.Name) + " - " + item.Description + mutedStyle.Render(" · "+action)
+			listLines = append(listLines, truncateCells(line, panelInnerWidth(width)))
 		}
 		body = strings.Join(listLines, "\n")
 	}

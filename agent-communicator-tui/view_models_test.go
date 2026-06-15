@@ -48,6 +48,14 @@ func TestGroupAgentViewsByScope(t *testing.T) {
 	}
 }
 
+func TestRemoteAgentViewKeepsFullHostnameLabels(t *testing.T) {
+	row := agentRow{Name: "agent", Scope: "remote", Hostname: "tanmayvijay.c.googlers.com", TargetAddress: "tanmayvijay.c.googlers.com/agent"}
+	view := newAgentView(row, false, 0)
+	if view.MachineLabel != "tanmayvijay.c.googlers.com" || view.HostnameLabel != "tanmayvijay.c.googlers.com" {
+		t.Fatalf("hostname labels = machine %q host %q", view.MachineLabel, view.HostnameLabel)
+	}
+}
+
 func TestHiddenCountDerivation(t *testing.T) {
 	rows := []agentRow{{Name: "alpha"}, {Name: "beta"}, {Name: "gamma"}}
 	hidden := map[string]bool{"beta": true, "gamma": true}

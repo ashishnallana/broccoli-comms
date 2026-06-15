@@ -230,7 +230,7 @@ func messageSenderLabel(msg tracker.Message, fallbackSender string) string {
 	}
 	parts = append(parts, fallback(fallbackSender, "unknown"))
 	if host := strings.TrimSpace(msg.SenderHostname); host != "" {
-		parts = append(parts, "@ "+shortHost(host))
+		parts = append(parts, "@ "+host)
 	}
 	return strings.Join(parts, " ")
 }

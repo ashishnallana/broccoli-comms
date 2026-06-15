@@ -34,7 +34,7 @@ func (m model) activeTaskChainFor(selected agentRow, stateByTask map[string]task
 		return "", "", ""
 	}
 	if selected.CurrentTaskID != "" {
-		if state, ok := stateByTask[selected.CurrentTaskID]; ok {
+		if state, ok := stateByTask[selected.CurrentTaskID]; ok && selectedAgentMatchesName(selected, state.Agent) {
 			return state.TaskChainID, firstNonEmpty(state.RootTaskID, state.TaskChainID), selected.CurrentTaskID
 		}
 		return "", "", selected.CurrentTaskID
@@ -100,17 +100,38 @@ func mergeSelectedAgentTasks(items, all []taskRecord, selected agentRow) []taskR
 		return items
 	}
 	seen := map[string]bool{}
+	out := make([]taskRecord, 0, len(items)+1)
 	for _, task := range items {
+		if selected.Scope == "remote" && task.AssignedAgent != "" && !selectedAgentMatchesName(selected, task.AssignedAgent) {
+			continue
+		}
 		seen[task.TaskID] = true
+		out = append(out, task)
 	}
-	out := append([]taskRecord{}, items...)
 	for _, task := range all {
 		if !seen[task.TaskID] && selectedAgentMatchesName(selected, task.AssignedAgent) {
 			seen[task.TaskID] = true
 			out = append(out, task)
 		}
 	}
+	if current, ok := selectedAgentCurrentTaskRecord(selected); ok && !seen[current.TaskID] {
+		out = append(out, current)
+	}
 	return out
+}
+
+func selectedAgentCurrentTaskRecord(selected agentRow) (taskRecord, bool) {
+	if selected.CurrentTaskID == "" || selected.CurrentTask == "" {
+		return taskRecord{}, false
+	}
+	return taskRecord{
+		TaskID:        selected.CurrentTaskID,
+		Title:         selected.CurrentTask,
+		Status:        firstNonEmpty(selected.CurrentTaskStatus, "working"),
+		NextStep:      selected.CurrentTaskNextStep,
+		AssignedAgent: firstNonEmpty(selected.AgentName, selected.Name),
+		Scope:         "remote_current_task",
+	}, true
 }
 
 func selectedAgentMatchesName(selected agentRow, name string) bool {
@@ -276,7 +297,7 @@ func approvalsForChain(approvals []taskApprovalRecord, chainID, rootID string) [
 func approvalsForTasks(approvals []taskApprovalRecord, tasks []taskRecord) []taskApprovalRecord {
 	visible := map[string]bool{}
 	for _, task := range tasks {
-		if task.TaskID != "" {
+		if task.TaskID != "" && task.Scope != "remote_current_task" {
 			visible[task.TaskID] = true
 		}
 	}
