@@ -31,19 +31,29 @@ func TestSelectedAgentCardUsesSolidFill(t *testing.T) {
 	}
 }
 
-func TestAgentCardShowsNameProviderHostStatusOnly(t *testing.T) {
+func TestAgentCardShowsNameHostProviderStatusOnly(t *testing.T) {
 	m := model{}
-	card := m.agentCard(agentRow{Name: "alpha", Scope: "remote", Status: "idle", Hostname: "tanmayvijay-mac-ywd", RegistryName: "mundus", ModelType: "pi"}, false, 70)
-	for _, want := range []string{"alpha", "pi · tanmayvijay-mac-ywd", "idle"} {
+	card := m.agentCard(agentRow{Name: "tanmayvijay-mac-ywd/alpha", AgentName: "alpha", Scope: "remote", Status: "idle", Hostname: "tanmayvijay-mac-ywd", RegistryName: "mundus", ModelType: "pi"}, false, 70)
+	for _, want := range []string{"alpha", "tanmayvijay-mac-ywd · pi", "idle"} {
 		if !strings.Contains(card, want) {
 			t.Fatalf("agent card missing %q:\n%s", want, card)
 		}
+	}
+	if strings.Contains(strings.Split(card, "\n")[0], "tanmayvijay-mac-ywd") {
+		t.Fatalf("remote hostname should stay off primary name line:\n%s", card)
 	}
 	if strings.Contains(card, "mundus") || strings.Contains(card, "cwd") {
 		t.Fatalf("agent card contains unsupported metadata:\n%s", card)
 	}
 	if got := lineCount(card); got != agentCardHeight {
 		t.Fatalf("agent card height = %d, want %d:\n%s", got, agentCardHeight, card)
+	}
+}
+
+func TestRemoteAgentViewNameOmitsHostname(t *testing.T) {
+	view := newAgentView(agentRow{Name: "tanmayvijay.c.googlers.com/remote-agent", Scope: "remote", AgentName: "remote-agent", Hostname: "tanmayvijay.c.googlers.com"}, false, 0)
+	if view.Name != "remote-agent" || view.HostnameLabel != "tanmayvijay.c.googlers.com" {
+		t.Fatalf("remote display name/host = %q/%q", view.Name, view.HostnameLabel)
 	}
 }
 

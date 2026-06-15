@@ -200,16 +200,28 @@ func (m model) agentCard(row agentRow, selected bool, width int) string {
 
 	nameLine := dot + space + nameStr + unread
 
-	metaLeft := provider + " · " + fallback(view.HostnameLabel, localHostname())
-	metaRight := view.StatusLabel
-	gap := max(1, inner-lipgloss.Width(metaLeft)-lipgloss.Width(metaRight))
-	metaLine := fgOnBg(colors.Muted, bg).Render(truncateCells(metaLeft+strings.Repeat(" ", gap)+metaRight, inner))
+	metaLine := agentCardMetaLine(view, provider, bg, inner)
 
 	contentW := max(1, cardWidth-2)
 	return strings.Join([]string{
 		bgSpaces(1, bg) + padStyledLine(nameLine, contentW, bg) + bgSpaces(1, bg),
 		bgSpaces(1, bg) + padStyledLine(metaLine, contentW, bg) + bgSpaces(1, bg),
 	}, "\n")
+}
+
+func agentCardMetaLine(view AgentView, provider string, bg lipgloss.Color, width int) string {
+	host := fallback(view.HostnameLabel, localHostname())
+	status := view.StatusLabel
+	separator := fgOnBg(colors.Muted, bg).Render(" · ")
+	statusText := fgOnBg(colors.Muted, bg).Render(status)
+	available := max(1, width-lipgloss.Width(separator)-lipgloss.Width(statusText)-1)
+	hostBudget := max(1, available-lipgloss.Width(provider))
+	providerBudget := max(1, available-min(lipgloss.Width(host), hostBudget))
+	hostText := fgOnBg(colors.AccentStrong, bg).Render(truncateCells(host, hostBudget))
+	providerText := fgOnBg(colors.Accent, bg).Render(truncateCells(provider, providerBudget))
+	left := hostText + separator + providerText
+	gap := bgSpaces(max(1, width-lipgloss.Width(left)-lipgloss.Width(statusText)), bg)
+	return left + gap + statusText
 }
 
 func (m model) hiddenSeparator(width int) string {

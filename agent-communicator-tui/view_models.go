@@ -48,7 +48,7 @@ func newAgentView(row agentRow, hidden bool, unreadCount int) AgentView {
 	scope := strings.Title(fallback(row.Scope, "local"))
 	return AgentView{
 		Row:           row,
-		Name:          row.Name,
+		Name:          rowDisplayName(row),
 		Scope:         fallback(row.Scope, "local"),
 		Status:        row.Status,
 		StatusLabel:   statusLabel(row.Status),
@@ -120,6 +120,17 @@ func messageViewFromMessage(msg tracker.Message, saved bool) MessageView {
 func splitHost(target string) string {
 	host, _ := splitRemoteTarget(target)
 	return host
+}
+
+func rowDisplayName(row agentRow) string {
+	if row.Scope != "remote" {
+		return row.Name
+	}
+	if row.AgentName != "" {
+		return row.AgentName
+	}
+	_, name := splitRemoteTarget(fallback(row.TargetAddress, row.Name))
+	return fallback(name, row.Name)
 }
 
 func rowMachineLabel(row agentRow) string {
