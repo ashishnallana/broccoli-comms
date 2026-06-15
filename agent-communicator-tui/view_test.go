@@ -129,8 +129,12 @@ func TestCurrentAgentPanelShowsCurrentTaskAndNextOnSeparateLine(t *testing.T) {
 	if !strings.Contains(view, "Current") || !strings.Contains(view, "Implement selected-agent") || !strings.Contains(view, "Next") || !strings.Contains(view, "Run focused tests") {
 		t.Fatalf("current agent panel missing task details:\n%s", view)
 	}
+	currentLabelLine := renderedLineContaining(t, view, "Current")
 	currentLine := renderedLineContaining(t, view, "Implement selected-agent")
 	nextLine := renderedLineContaining(t, view, "Run focused tests")
+	if currentLabelLine == currentLine || strings.Contains(currentLabelLine, "Implement selected-agent") {
+		t.Fatalf("current label and task name should render on different lines:\n%s", view)
+	}
 	if currentLine == nextLine || strings.Contains(currentLine, "Run focused tests") {
 		t.Fatalf("next step should render on a separate line:\n%s", view)
 	}
@@ -138,6 +142,21 @@ func TestCurrentAgentPanelShowsCurrentTaskAndNextOnSeparateLine(t *testing.T) {
 		if got := lipgloss.Width(line); got > 58 {
 			t.Fatalf("line width=%d want <= 58 line=%q view=\n%s", got, line, view)
 		}
+	}
+}
+
+func TestCurrentTaskStatusColorUsesSemanticTokens(t *testing.T) {
+	if currentTaskStatusColor("working") != colors.Success {
+		t.Fatalf("working current task should use success token")
+	}
+	if currentTaskStatusColor("blocked") != colors.Error {
+		t.Fatalf("blocked current task should use error token")
+	}
+	if currentTaskStatusColor("review") != colors.Warning {
+		t.Fatalf("review current task should use warning token")
+	}
+	if currentTaskStatusColor("validated") != colors.Accent {
+		t.Fatalf("validated current task should use accent token")
 	}
 }
 

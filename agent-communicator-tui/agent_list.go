@@ -57,21 +57,35 @@ func loadAgents(local localClient) tea.Cmd {
 }
 
 func loadAgentsFromBroccoliComms(ctx context.Context, local localClient) ([]agentRow, error) {
-	cmd := broccoliCommsCommandContext(ctx, "agent", "list", "--include-remote", "--json")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		var payload broccoliAgentListPayload
-		if err := json.Unmarshal(out, &payload); err == nil {
-			rows := make([]agentRow, 0, len(payload.Agents))
-			for key, row := range payload.Agents {
-				rows = append(rows, rowFromBroccoliAgent(key, row))
-			}
-			rows = dedupeLocalRegistryRows(rows)
-			sortRows(rows)
+	// The primary agent list is the live agent switcher. Prefer the tracker RPC
+	// list, which only returns agents currently known to the live tracker, before
+	// falling back to the broader configured-agent CLI inventory.
+	if local != nil {
+		rows, err := loadAgentsFromRPC(ctx, local)
+		if err == nil {
 			return rows, nil
 		}
 	}
-	return loadAgentsFromRPC(ctx, local)
+
+	cmd := broccoliCommsCommandContext(ctx, "agent", "list", "--include-remote", "--json")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	var payload broccoliAgentListPayload
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return nil, err
+	}
+	rows := make([]agentRow, 0, len(payload.Agents))
+	for key, row := range payload.Agents {
+		if !row.Running {
+			continue
+		}
+		rows = append(rows, rowFromBroccoliAgent(key, row))
+	}
+	rows = dedupeLocalRegistryRows(rows)
+	sortRows(rows)
+	return rows, nil
 }
 
 func loadAgentsFromRPC(ctx context.Context, local localClient) ([]agentRow, error) {

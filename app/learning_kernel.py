@@ -11,7 +11,7 @@ from typing import Any
 from contextlib import closing
 
 SCHEMA_VERSION = 1
-TASK_STATUSES = {"queued", "ready", "working", "blocked", "review", "done", "validated", "archived"}
+TASK_STATUSES = {"planning", "queued", "ready", "working", "blocked", "review", "done", "validated", "archived"}
 STATE_STATUSES = {"working", "blocked", "waiting", "review", "done"}
 RESULT_STATUSES = {"good", "bad", "need_improvements"}
 APPROVAL_STATUSES = {"pending", "decided", "superseded"}
@@ -352,7 +352,7 @@ class LearningKernel:
         return cleaned
 
     def task_create(self, **kw: Any) -> dict[str, Any]:
-        status = kw.get("status") or "ready"
+        status = kw.get("status") or "planning"
         if status not in TASK_STATUSES:
             raise ValueError("invalid task status")
         deps = kw.get("depends_on") or []
@@ -818,10 +818,13 @@ class LearningKernel:
         return [by_id[task_id] for task_id in sorted(ids) if task_id in by_id]
 
     def _assert_chain_completion_allowed(self, conn: sqlite3.Connection, task_id: str, task_chain_id: str, root_task_id: str) -> None:
-        if not root_task_id or task_id != root_task_id:
-            return
+        if not task_chain_id or not root_task_id or task_id != root_task_id:
+            raise ValueError("approval requests are supported only for task-chain completion; submit the root task with explicit --task-chain-id and --root-task-id")
+        chain_tasks = self._tasks_for_completion_chain(conn, task_chain_id, root_task_id)
+        if len(chain_tasks) <= 1:
+            raise ValueError("approval requests are supported only for task-chain completion; single-task approval requests are not supported")
         blockers = []
-        for task in self._tasks_for_completion_chain(conn, task_chain_id, root_task_id):
+        for task in chain_tasks:
             if task["task_id"] == task_id:
                 continue
             if task.get("status") not in DONE_STATUSES:

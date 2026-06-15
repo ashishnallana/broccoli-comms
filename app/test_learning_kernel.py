@@ -22,12 +22,20 @@ class TestLearningKernelCli(unittest.TestCase):
         with self.env(tmp):
             return broccoli.learning_kernel()
 
+    def approvable_chain_root(self, k, assigned_agent="a", title="approval", child_status="done"):
+        root = k.task_create(title=title, assigned_agent=assigned_agent, status="ready")
+        k.task_create(title=f"{title} child", assigned_agent=assigned_agent, depends_on=[root["task_id"]], status=child_status)
+        return root
+
     def test_task_state_profile_events_json_flow(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
             task = k.task_create(title="Implement x", description="objective", assigned_agent="offline-agent", acceptance_criteria=["tests pass"], next_step="inspect")
             self.assertEqual(task["assigned_agent"], "offline-agent")
+            self.assertEqual(task["status"], "planning")
             self.assertIn(task, k.task_list(agent="offline-agent"))
+            self.assertIsNone(k.task_next(agent="offline-agent")["task"])
+            task = k.task_update(task["task_id"], status="ready")
 
             nxt = k.task_next(agent="offline-agent", include_profile=True)
             self.assertEqual(nxt["task"]["task_id"], task["task_id"])
@@ -48,8 +56,8 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_dependencies_gate_next_until_done(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            dep = k.task_create(title="dep", assigned_agent="a")
-            child = k.task_create(title="child", assigned_agent="a", depends_on=[dep["task_id"]])
+            dep = k.task_create(title="dep", assigned_agent="a", status="ready")
+            child = k.task_create(title="child", assigned_agent="a", depends_on=[dep["task_id"]], status="ready")
             self.assertEqual(k.task_next(agent="a")["task"]["task_id"], dep["task_id"])
             k.task_update(dep["task_id"], status="done")
             self.assertEqual(k.task_next(agent="a")["task"]["task_id"], child["task_id"])
@@ -57,7 +65,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_legacy_assigned_agent_appears_as_assignee_participant(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="legacy", assigned_agent="coder")
+            task = k.task_create(title="legacy", assigned_agent="coder", status="ready")
             participants = k.task_participant_list(task["task_id"])
             self.assertEqual([(p["agent"], p["role"]) for p in participants], [("coder", "assignee")])
             shown = k.task_show(task["task_id"], include_participants=True)
@@ -159,9 +167,10 @@ class TestLearningKernelCli(unittest.TestCase):
         self.assertFalse(notice["participant_notifications"][0]["sent"])
         self.assertTrue(notice["participant_notifications"][1]["sent"])
 
-    def test_task_result_notifications_route_bad_to_assignee_and_good_to_ready_dependents(self):
+    def test_task_result_notifications_route_bad_ready_and_good_recipients(self):
         task = {"task_id": "task-1", "title": "Notify", "status": "working", "assigned_agent": "coder", "participants": [{"agent": "coder", "role": "assignee", "status": "active"}]}
         self.assertEqual(broccoli._task_update_notification_recipients(task, "reviewer", {"result_status": "need_improvements"}), ["coder"])
+        self.assertEqual(broccoli._task_update_notification_recipients(task, "planner", {"status": "ready"}), ["coder"])
         task["ready_dependents"] = [{"task_id": "task-2", "assigned_agent": "next", "participants": [{"agent": "coord", "role": "coordinator", "status": "active"}]}]
         self.assertEqual(broccoli._task_update_notification_recipients(task, "reviewer", {"result_status": "good", "status": "validated"}), ["next", "coord"])
 
@@ -218,7 +227,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_assigned_agent_update_upserts_assignee_participant(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="reassign", assigned_agent="old")
+            task = k.task_create(title="reassign", assigned_agent="old", status="ready")
             updated = k.task_update(task["task_id"], assigned_agent="new")
             self.assertEqual(updated["assigned_agent"], "new")
             participants = k.task_participant_list(task["task_id"])
@@ -228,7 +237,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_role_aware_task_list_and_next_preserve_legacy_default(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            assignee_task = k.task_create(title="assignee", assigned_agent="coder")
+            assignee_task = k.task_create(title="assignee", assigned_agent="coder", status="ready")
             review_task = k.task_create(title="review", assigned_agent="other", status="review")
             k.task_participant_add(review_task["task_id"], "coder", "reviewer")
 
@@ -321,6 +330,7 @@ class TestLearningKernelCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
             root = k.task_create(title="root", assigned_agent="a")
+            k.task_create(title="child", assigned_agent="a", depends_on=[root["task_id"]], status="done")
             k.state_set(root["task_id"], "a", instance_id="a@s1", task_chain_id="chain-1", root_task_id=root["task_id"], status="working", current_activity="coding", next_step="validate")
             approval = k.submit_completion(root["task_id"], agent="a", task_chain_id="chain-1", root_task_id=root["task_id"], result_summary="implemented feature")
             k.review_completion(approval["approval"]["approval_id"], "good", task_version_at_submission=approval["approval"]["task_version_at_submission"])
@@ -476,7 +486,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_submit_completion_creates_pending_approval_and_ordered_events(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="approval", assigned_agent="a")
+            task = self.approvable_chain_root(k, assigned_agent="a", title="approval")
             payload = k.submit_completion(
                 task["task_id"],
                 agent="a",
@@ -500,25 +510,32 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertEqual([e["event_type"] for e in relevant], ["task_completion_submitted", "task_approval_requested"])
             self.assertLess(relevant[0]["event_seq"], relevant[1]["event_seq"])
 
+    def test_submit_completion_rejects_single_task_approval_request(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="single", assigned_agent="a", status="ready")
+            with self.assertRaisesRegex(ValueError, "single-task approval requests are not supported"):
+                k.submit_completion(task["task_id"], agent="a", result_summary="done")
+
     def test_submit_completion_idempotency_and_duplicate_pending_conflicts(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="approval", assigned_agent="a")
-            first = k.submit_completion(task["task_id"], agent="a", task_chain_id="chain", result_summary="done", idempotency_key="same")
-            retry = k.submit_completion(task["task_id"], agent="a", task_chain_id="chain", result_summary="done", idempotency_key="same")
+            task = self.approvable_chain_root(k, assigned_agent="a", title="approval")
+            first = k.submit_completion(task["task_id"], agent="a", task_chain_id="chain", root_task_id=task["task_id"], result_summary="done", idempotency_key="same")
+            retry = k.submit_completion(task["task_id"], agent="a", task_chain_id="chain", root_task_id=task["task_id"], result_summary="done", idempotency_key="same")
             self.assertTrue(retry["idempotent"])
             self.assertEqual(retry["approval"]["approval_id"], first["approval"]["approval_id"])
             events = [e for e in k.events(task_id=task["task_id"]) if e["event_type"] == "task_approval_requested"]
             self.assertEqual(len(events), 1)
             with self.assertRaisesRegex(ValueError, "different completion payload"):
-                k.submit_completion(task["task_id"], agent="a", task_chain_id="chain", result_summary="changed", idempotency_key="same")
+                k.submit_completion(task["task_id"], agent="a", task_chain_id="chain", root_task_id=task["task_id"], result_summary="changed", idempotency_key="same")
             with self.assertRaisesRegex(ValueError, "pending approval already exists"):
-                k.submit_completion(task["task_id"], agent="b", task_chain_id="chain", result_summary="other")
+                k.submit_completion(task["task_id"], agent="b", task_chain_id="chain", root_task_id=task["task_id"], result_summary="other")
 
     def test_review_completion_decides_once_and_reuses_mark_result_validation(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="approval", assigned_agent="a")
+            task = self.approvable_chain_root(k, assigned_agent="a", title="approval")
             approval = k.submit_completion(task["task_id"], agent="a", result_summary="done")["approval"]
             decided = k.review_completion(approval["approval_id"], "good", task_version_at_submission=approval["task_version_at_submission"])
             self.assertEqual(decided["approval"]["status"], "decided")
@@ -533,7 +550,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_review_completion_requires_remediation_and_detects_stale_cards(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="approval", assigned_agent="a")
+            task = self.approvable_chain_root(k, assigned_agent="a", title="approval")
             approval = k.submit_completion(task["task_id"], agent="a", result_summary="done")["approval"]
             with self.assertRaises(ValueError):
                 k.review_completion(approval["approval_id"], "need_improvements")
@@ -544,18 +561,18 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_non_learning_and_unsafe_payloads_cannot_submit_completion(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="approval", assigned_agent="a")
+            task = self.approvable_chain_root(k, assigned_agent="a", title="approval")
             with self.assertRaisesRegex(ValueError, "non-learning"):
                 k.submit_completion(task["task_id"], agent="a", result_summary="done", non_learning=True)
             with self.assertRaisesRegex(ValueError, "exceeds"):
                 k.submit_completion(task["task_id"], agent="a", result_summary="x" * 2001)
-            redacted = k.submit_completion(task["task_id"], agent="a", task_chain_id="safe", result_summary="token=abc123")
+            redacted = k.submit_completion(task["task_id"], agent="a", task_chain_id="safe", root_task_id=task["task_id"], result_summary="token=abc123")
             self.assertIn("[REDACTED]", redacted["approval"]["result_summary"])
 
     def test_approval_notification_metadata_and_offline_store(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp), mock.patch.object(broccoli, "tracker_rpc", side_effect=RuntimeError("offline")):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="approval", assigned_agent="a")
+            task = self.approvable_chain_root(k, assigned_agent="a", title="approval")
             approval = k.submit_completion(task["task_id"], agent="a", result_summary="done")["approval"]
             notice = broccoli.notify_approval_request(k, approval)
             self.assertFalse(notice["sent"])
@@ -574,7 +591,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_approval_notification_falsy_rpc_is_failure(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp), mock.patch.object(broccoli, "tracker_rpc", return_value=None):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="approval", assigned_agent="a")
+            task = self.approvable_chain_root(k, assigned_agent="a", title="approval")
             approval = k.submit_completion(task["task_id"], agent="a", result_summary="done")["approval"]
             notice = broccoli.notify_approval_request(k, approval)
             self.assertFalse(notice["sent"])
@@ -586,7 +603,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_approval_notification_uses_structured_metadata_and_submitter_sender(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp), mock.patch.object(broccoli, "tracker_rpc", return_value=True) as tracker_rpc:
             k = broccoli.learning_kernel()
-            task = k.task_create(title="approval", assigned_agent="a")
+            task = self.approvable_chain_root(k, assigned_agent="a", title="approval")
             approval = k.submit_completion(task["task_id"], agent="a", result_summary="done")["approval"]
             notice = broccoli.notify_approval_request(k, approval)
             self.assertTrue(notice["sent"])
@@ -762,7 +779,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_direct_completion_is_blocked_when_review_roles_are_active(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="needs review", assigned_agent="coder")
+            task = self.approvable_chain_root(k, assigned_agent="coder", title="needs review")
             k.task_participant_add(task["task_id"], "reviewer", "reviewer")
             with self.assertRaisesRegex(ValueError, "submit completion for review"):
                 k.task_update(task["task_id"], status="done", actor="coder")
@@ -775,7 +792,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_approval_review_requires_active_reviewer_or_verifier(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="needs reviewer", assigned_agent="coder")
+            task = self.approvable_chain_root(k, assigned_agent="coder", title="needs reviewer")
             k.task_participant_add(task["task_id"], "reviewer", "reviewer")
             approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
             with self.assertRaisesRegex(ValueError, "active reviewer/verifier"):
@@ -790,18 +807,16 @@ class TestLearningKernelCli(unittest.TestCase):
             child = k.task_create(title="child", assigned_agent="coder", depends_on=[root["task_id"]], status="ready")
             with self.assertRaisesRegex(ValueError, "cannot complete task chain"):
                 k.submit_completion(root["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="chain done")
+            with self.assertRaisesRegex(ValueError, "task-chain completion"):
+                k.submit_completion(child["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="child done")
             k.task_update(child["task_id"], status="done")
-            approval = k.submit_completion(child["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="child done")["approval"]
-            with self.assertRaisesRegex(ValueError, "pending approval"):
-                k.submit_completion(root["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="chain done")
-            k.review_completion(approval["approval_id"], "good", task_version_at_submission=approval["task_version_at_submission"])
             payload = k.submit_completion(root["task_id"], agent="coder", task_chain_id="chain", root_task_id=root["task_id"], result_summary="chain done")
             self.assertEqual(payload["task"]["status"], "review")
 
     def test_submit_completion_notifies_review_participants_and_records_results(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="notify", assigned_agent="coder")
+            task = self.approvable_chain_root(k, assigned_agent="coder", title="notify")
             k.task_participant_add(task["task_id"], "reviewer", "reviewer")
             k.task_participant_add(task["task_id"], "verifier", "verifier")
             approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
@@ -825,7 +840,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_approval_review_cli_actor_allows_tui_without_agent_env(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="review", assigned_agent="coder")
+            task = self.approvable_chain_root(k, assigned_agent="coder", title="review")
             k.task_participant_add(task["task_id"], "reviewer", "reviewer")
             approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
             args = argparse.Namespace(approval_id=approval["approval_id"], result="good", next_step=None, notes=None, status=None, task_version_at_submission=approval["task_version_at_submission"], actor="reviewer", json=True)
@@ -836,7 +851,7 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_approval_review_cli_notifies_assignee_on_need_improvements(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
-            task = k.task_create(title="review", assigned_agent="coder")
+            task = self.approvable_chain_root(k, assigned_agent="coder", title="review")
             k.task_participant_add(task["task_id"], "reviewer", "reviewer")
             approval = k.submit_completion(task["task_id"], agent="coder", result_summary="done")["approval"]
             args = argparse.Namespace(approval_id=approval["approval_id"], result="need_improvements", next_step="fix", notes=None, status=None, task_version_at_submission=approval["task_version_at_submission"], json=True)

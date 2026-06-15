@@ -113,6 +113,46 @@ func TestApprovalReviewPassesRecipientAgentAsActor(t *testing.T) {
 	}
 }
 
+func TestApprovalReviewRejectsSingleTaskDurableRecord(t *testing.T) {
+	old := runApprovalCLI
+	defer func() { runApprovalCLI = old }()
+	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
+		if args[2] == "show" {
+			return json.Marshal(approvalRecord{ApprovalID: "ap-1", TaskID: "task-1", TaskChainID: "task-1", RootTaskID: "task-1", TaskVersionAtSubmission: 7, Status: "pending"})
+		}
+		t.Fatalf("single-task approval should not review, args=%+v", args)
+		return nil, nil
+	}
+	msg := trustedApprovalMessage()
+	msg.TaskChainID = "task-1"
+	msg.RootTaskID = "task-1"
+	res := approvalReviewCmd(msg, "good")().(approvalReviewResult)
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "single-task") {
+		t.Fatalf("single-task error = %v", res.Err)
+	}
+}
+
+func TestApprovalSlashCommandUsesSelectedTaskUpdateApprovalID(t *testing.T) {
+	old := runApprovalCLI
+	defer func() { runApprovalCLI = old }()
+	runApprovalCLI = func(_ context.Context, args ...string) ([]byte, error) {
+		if args[2] == "show" {
+			return json.Marshal(approvalRecord{ApprovalID: "ap-2", TaskID: "task-2", TaskChainID: "chain-2", RootTaskID: "root-2", TaskVersionAtSubmission: 4, Status: "pending"})
+		}
+		return []byte(`{"ok":true}`), nil
+	}
+	msg := tracker.Message{ContentType: taskUpdateContentType, Kind: "task_update", ApprovalID: "ap-2", TaskID: "task-2", TaskChainID: "chain-2", RootTaskID: "root-2", TaskVersionAtSubmission: 4}
+	m := model{messages: []tracker.Message{msg}, messageSelected: 0, composer: []rune("/approval good")}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("/approval should use selected task-update approval id")
+	}
+	res := cmd().(approvalReviewResult)
+	if res.Err != nil || res.ApprovalID != "ap-2" {
+		t.Fatalf("approval result = %+v", res)
+	}
+}
+
 func TestApprovalReviewRejectsStaleDurableRecord(t *testing.T) {
 	old := runApprovalCLI
 	defer func() { runApprovalCLI = old }()

@@ -38,7 +38,7 @@ func (m model) taskAutocompleteOptions(query string) []taskAutocompleteOption {
 		add(&options, "root", state.RootTaskID)
 		add(&options, "task", state.TaskID)
 	}
-	for _, value := range []string{"ready", "working", "blocked", "review", "done", "validated", "archived"} {
+	for _, value := range []string{"planning", "ready", "working", "blocked", "review", "done", "validated", "archived"} {
 		add(&options, "status", value)
 	}
 	for _, value := range []string{"P0", "P1", "P2", "P3"} {

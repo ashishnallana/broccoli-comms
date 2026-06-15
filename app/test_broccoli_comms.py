@@ -920,7 +920,7 @@ agent_communicator_tui = "/config/agent-communicator"
     def test_bootstrap_does_not_fall_back_to_unrelated_latest_chain_summary(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}, clear=False), mock.patch.object(broccoli_comms_app, "duplicate_profile_instances", return_value=[]):
             k = broccoli_comms_app.learning_kernel()
-            active = k.task_create(title="active", assigned_agent="a")
+            active = k.task_create(title="active", assigned_agent="a", status="ready")
             other = k.task_create(title="other", assigned_agent="b")
             k.state_set(other["task_id"], "b", task_chain_id="other-chain", root_task_id=other["task_id"], status="working")
             k.summarize_chain("other-chain", actor="b")

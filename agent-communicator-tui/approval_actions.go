@@ -69,7 +69,11 @@ func selectedApprovalMessage(m model) (tracker.Message, bool) {
 		return tracker.Message{}, false
 	}
 	msg := messages[m.messageSelected]
-	return msg, isApprovalRequestMessage(msg)
+	return msg, approvalMessageHasContext(msg)
+}
+
+func approvalMessageHasContext(msg tracker.Message) bool {
+	return msg.ApprovalID != "" && (isApprovalRequestMessage(msg) || isTaskUpdateMessage(msg))
 }
 
 func approvalMessageForReview(approvalID string, selected tracker.Message) tracker.Message {
@@ -152,6 +156,12 @@ func validateApprovalRecordForMessage(rec approvalRecord, msg tracker.Message) e
 	}
 	if msg.EventSeqAtSubmission != 0 && rec.EventSeqAtSubmission != msg.EventSeqAtSubmission {
 		return errors.New("approval card submission event mismatch")
+	}
+	if rec.TaskChainID == "" || rec.RootTaskID == "" {
+		return errors.New("approval must target a task chain")
+	}
+	if rec.TaskChainID == rec.TaskID && rec.RootTaskID == rec.TaskID {
+		return errors.New("single-task approval requests are not supported")
 	}
 	if rec.Status != "pending" {
 		return errors.New("approval is no longer pending")

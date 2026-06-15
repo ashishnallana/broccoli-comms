@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/config"
+	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
 func TestBroccoliAgentTrackerCommandPrefersBroccoliWrapperEnv(t *testing.T) {
@@ -53,6 +55,52 @@ func TestBroccoliAgentTrackerCommandDefaultsToWrapperStyle(t *testing.T) {
 	want := []string{"broccoli-comms", "agent-tracker", "list"}
 	if !equalStrings(cmd.Args, want) {
 		t.Fatalf("cmd.Args = %#v, want %#v", cmd.Args, want)
+	}
+}
+
+func TestLoadAgentsPrefersLiveTrackerList(t *testing.T) {
+	local := &fakeLocal{agents: map[string]tracker.Agent{
+		"live-coder": {Status: "idle", Scope: "local", TargetAddress: "live-coder"},
+	}}
+	rows, err := loadAgentsFromBroccoliComms(context.Background(), local)
+	if err != nil {
+		t.Fatalf("loadAgentsFromBroccoliComms returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Name != "live-coder" {
+		t.Fatalf("rows = %#v, want only live tracker row", rows)
+	}
+	if !local.listOptions.IncludeRemote {
+		t.Fatalf("ListWithOptions IncludeRemote = false, want true")
+	}
+}
+
+func TestLoadAgentsFallbackFiltersConfiguredOfflineRows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script test")
+	}
+	dir := t.TempDir()
+	cli := filepath.Join(dir, "broccoli-comms")
+	script := `#!/bin/sh
+cat <<'JSON'
+{"agents":{"live":{"name":"live","running":true,"status":"idle","cwd":"/repo"},"configured-offline":{"name":"configured-offline","is_configured":true,"running":false,"launchable":true,"status":"stopped"},"remote-live":{"name":"remote-live","scope_kind":"remote","running":true,"target_address":"host/remote-live","hostname":"host"}}}
+JSON
+`
+	if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BROCCOLI_COMMS_CLI", cli)
+
+	rows, err := loadAgentsFromBroccoliComms(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("loadAgentsFromBroccoliComms returned error: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %#v, want only two running rows", rows)
+	}
+	for _, row := range rows {
+		if row.Name == "configured-offline" || boolPtrFalse(row.Running) {
+			t.Fatalf("offline row was included: %#v", rows)
+		}
 	}
 }
 

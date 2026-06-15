@@ -3459,7 +3459,7 @@ def main() -> None:
     task_next_parser.set_defaults(func=task_next)
     task_update_parser = task_sub.add_parser("update")
     task_update_parser.add_argument("task_id")
-    task_update_parser.add_argument("--status", choices=sorted({"queued", "ready", "working", "blocked", "review", "done", "validated", "archived"}))
+    task_update_parser.add_argument("--status", choices=sorted({"planning", "queued", "ready", "working", "blocked", "review", "done", "validated", "archived"}))
     task_update_parser.add_argument("--next-step")
     task_update_parser.add_argument("--blocked-reason")
     task_update_parser.add_argument("--result-summary")

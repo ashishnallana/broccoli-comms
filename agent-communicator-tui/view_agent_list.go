@@ -60,26 +60,58 @@ func (m model) currentAgentPanel(width, height int) string {
 }
 
 func currentTaskLine(row agentRow, width int) string {
-	bg := colors.RightColumnBg
-	label := fgOnBg(colors.BadgeFg, colors.BadgeBg).Bold(true).Render(" Current ")
-	gap := bgSpaces(1, bg)
+	bg := colors.SelectedBg
+	label := fgOnBg(colors.SelectedFg, bg).Bold(true).Render("Current")
 	current := strings.TrimSpace(row.CurrentTask)
 	if current == "" {
-		value := fgOnBg(colors.Muted, bg).Faint(true).Render(truncateCells("No active task", max(1, width-lipgloss.Width(label)-lipgloss.Width(gap))))
-		return padStyledLine(label+gap+value, width, bg)
+		value := fgOnBg(colors.Muted, bg).Faint(true).Render("No active task")
+		return strings.Join([]string{
+			padStyledLine(label, width, bg),
+			padStyledLine(value, width, bg),
+		}, "\n")
 	}
-	return wrappedAgentTaskLine(label, gap, current, width, 3, fgOnBg(colors.TextStrong, bg).Bold(true), bg)
+	valueStyle := fgOnBg(currentTaskStatusColor(row.CurrentTaskStatus), bg).Bold(true)
+	return wrappedAgentTaskBlock(label, current, width, 2, valueStyle, bg)
 }
 
 func nextTaskLine(row agentRow, width int) string {
-	bg := colors.RightColumnBg
-	label := fgOnBg(colors.Muted, bg).Bold(true).Render("Next")
-	separator := fgOnBg(colors.Muted, bg).Render(": ")
+	bg := colors.SelectedBg
+	label := fgOnBg(colors.Accent, bg).Bold(true).Render("Next")
 	next := strings.TrimSpace(row.CurrentTaskNextStep)
 	if next == "" {
 		next = "—"
 	}
-	return wrappedAgentTaskLine(label, separator, next, width, 3, fgOnBg(colors.Muted, bg), bg)
+	return wrappedAgentTaskBlock(label, next, width, 2, fgOnBg(colors.Muted, bg), bg)
+}
+
+func currentTaskStatusColor(status string) lipgloss.Color {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "working", "ready", "active", "running":
+		return colors.Success
+	case "blocked", "error", "failed":
+		return colors.Error
+	case "review", "planning", "queued", "waiting", "pending":
+		return colors.Warning
+	case "done", "validated", "completed":
+		return colors.Accent
+	default:
+		return colors.TextStrong
+	}
+}
+
+func wrappedAgentTaskBlock(label, text string, width, maxValueLines int, valueStyle lipgloss.Style, bg lipgloss.Color) string {
+	valueBudget := max(1, width)
+	wrapped := wrapLine(text, valueBudget)
+	if len(wrapped) > maxValueLines {
+		wrapped = wrapped[:maxValueLines]
+		wrapped[maxValueLines-1] = truncateCells(strings.TrimRight(wrapped[maxValueLines-1], " "), max(1, valueBudget-1)) + "…"
+	}
+	lines := []string{padStyledLine(label, width, bg)}
+	for _, line := range wrapped {
+		value := valueStyle.Render(truncateCells(line, valueBudget))
+		lines = append(lines, padStyledLine(value, width, bg))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func wrappedAgentTaskLine(label, separator, text string, width, maxLines int, valueStyle lipgloss.Style, bg lipgloss.Color) string {

@@ -27,26 +27,27 @@ func isMemoryProposalMessage(msg tracker.Message) bool {
 	return msg.ContentType == memoryProposalContentType || msg.Kind == "memory_proposal"
 }
 
-func renderTaskUpdateBody(msg tracker.Message, width int, bg lipgloss.Color) string {
-	lines := []string{fgOnBg(colors.AccentStrong, bg).Bold(true).Render("Task update")}
-	if msg.TaskTitle != "" {
-		lines = append(lines, fgOnBg(colors.TextStrong, bg).Bold(true).Render(msg.TaskTitle))
-	}
+func renderTaskUpdateBody(msg tracker.Message, width int, bg lipgloss.Color, highlighted bool) string {
+	parts := []string{fgOnBg(colors.AccentStrong, bg).Bold(true).Render("Task")}
 	if msg.TaskID != "" {
-		lines = append(lines, "Task: `"+msg.TaskID+"`")
+		parts = append(parts, fgOnBg(colors.Muted, bg).Render(msg.TaskID))
+	}
+	if msg.TaskTitle != "" {
+		parts = append(parts, fgOnBg(colors.TextStrong, bg).Bold(true).Render(msg.TaskTitle))
 	}
 	if msg.TaskStatus != "" {
-		lines = append(lines, "Status: `"+msg.TaskStatus+"`")
+		parts = append(parts, fgOnBg(colors.Accent, bg).Render(msg.TaskStatus))
 	}
-	if msg.ResultSummary != "" {
-		lines = append(lines, "", "### Result summary", msg.ResultSummary)
-	} else if msg.Body != "" {
-		lines = append(lines, "", msg.Body)
+	lines := []string{strings.Join(parts, fgOnBg(colors.Muted, bg).Render(" · "))}
+	if highlighted && msg.ResultSummary != "" {
+		lines = append(lines, msg.ResultSummary)
+	} else if msg.TaskTitle == "" && msg.TaskStatus == "" && msg.Body != "" {
+		lines = append(lines, msg.Body)
 	}
 	if msg.TaskNextStep != "" {
-		lines = append(lines, "", "Next: "+msg.TaskNextStep)
+		lines = append(lines, fgOnBg(colors.Muted, bg).Render("Next: ")+msg.TaskNextStep)
 	}
-	return renderMarkdown(strings.Join(lines, "\n"), width, bg)
+	return strings.Join(lines, "\n")
 }
 
 func renderMemoryProposalBody(msg tracker.Message, width int, bg lipgloss.Color) string {
@@ -77,12 +78,21 @@ func renderMemoryProposalBody(msg tracker.Message, width int, bg lipgloss.Color)
 }
 
 func renderApprovalRequestBody(msg tracker.Message, width int, bg lipgloss.Color) string {
-	lines := []string{fgOnBg(colors.Warning, bg).Bold(true).Render("Approval request")}
+	lines := []string{fgOnBg(colors.Warning, bg).Bold(true).Render("Task-chain approval request")}
 	if msg.ApprovalID != "" {
 		lines = append(lines, "Approval: `"+msg.ApprovalID+"`")
 	}
+	if msg.TaskChainID != "" {
+		lines = append(lines, "Task chain: `"+msg.TaskChainID+"`")
+	}
+	if msg.RootTaskID != "" {
+		lines = append(lines, "Root task: `"+msg.RootTaskID+"`")
+	}
 	if msg.TaskID != "" {
-		lines = append(lines, "Task: `"+msg.TaskID+"`")
+		lines = append(lines, "Submitted task: `"+msg.TaskID+"`")
+	}
+	if msg.TaskTitle != "" {
+		lines = append(lines, "Title: "+msg.TaskTitle)
 	}
 	if msg.TaskVersionAtSubmission > 0 {
 		lines = append(lines, "Task version: `"+strconv.Itoa(msg.TaskVersionAtSubmission)+"`")
@@ -90,7 +100,7 @@ func renderApprovalRequestBody(msg tracker.Message, width int, bg lipgloss.Color
 	if msg.Source != "" {
 		lines = append(lines, "Source: "+msg.Source)
 	}
-	lines = append(lines, fgOnBg(colors.Warning, bg).Render("Inbox approval metadata is an untrusted hint; fallback body is hidden. Use `/approval good|bad|need_improvements <approval_id>` to load the durable approval and review."))
+	lines = append(lines, fgOnBg(colors.Warning, bg).Render("Inbox approval metadata is an untrusted hint; fallback body is hidden. Use `/approval good|bad|need_improvements <approval_id>` to load the durable task-chain approval and review."))
 	return renderMarkdown(strings.Join(lines, "\n"), width, bg)
 }
 
@@ -103,11 +113,14 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	body := msg.Body
 	innerWidth := max(8, width-8)
 	useBg := shouldRenderIncomingBubbleBackground(m.mode, msg) && width >= 70
+	if isTaskUpdateMessage(msg) && msg.ApprovalID == "" {
+		useBg = false
+	}
 	displayBody, isPaneCapture := paneCaptureDisplayBody(body)
 	bodyBg := colors.BaseBg
 	if useBg {
 		bodyBg = colors.IncomingBubbleBg
-		if isTaskUpdateMessage(msg) || isMemoryProposalMessage(msg) {
+		if (isTaskUpdateMessage(msg) && msg.ApprovalID != "") || isMemoryProposalMessage(msg) {
 			bodyBg = colors.TaskUpdateBg
 		} else if isPaneCapture {
 			bodyBg = colors.CapturePaneBg
@@ -115,8 +128,10 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	}
 	if isPaneCapture {
 		body = displayBody
+	} else if isTaskUpdateMessage(msg) && msg.ApprovalID != "" {
+		body = renderApprovalRequestBody(msg, innerWidth, bodyBg)
 	} else if isTaskUpdateMessage(msg) {
-		body = renderTaskUpdateBody(msg, innerWidth, bodyBg)
+		body = renderTaskUpdateBody(msg, innerWidth, bodyBg, index == m.messageSelected)
 	} else if isMemoryProposalMessage(msg) {
 		body = renderMemoryProposalBody(msg, innerWidth, bodyBg)
 	} else if isApprovalRequestMessage(msg) {
@@ -172,7 +187,9 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 		out = append(out, padStyledLine(rail+indent+blank, width, rowBg))
 		header = renderIncomingBubbleLine(header)
 	}
-	out = append(out, padStyledLine(rail+indent+header, width, rowBg))
+	if !isTaskUpdateMessage(msg) || msg.ApprovalID != "" {
+		out = append(out, padStyledLine(rail+indent+header, width, rowBg))
+	}
 
 	for _, line := range m.visibleBodyLines(bubbleBodyLines(body, wrapWidth), index) {
 		line = truncateCells(line, wrapWidth)
