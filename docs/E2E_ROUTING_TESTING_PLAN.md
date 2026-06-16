@@ -17,6 +17,7 @@ The testing agent (`pi-1`) owns execution of the test matrix. The validating age
 5. Create deterministic test agents, not LLM agents, for reproducible inbox/pane evidence.
 6. Capture evidence for every journey, including negative evidence from non-target inboxes.
 7. Document bugs only; do not implement fixes.
+8. For task-update fanout journeys, record the logical `message_id`, each recipient `delivery_id`, and the output of `broccoli-comms registry agents --logical-identity agent-communicator --service-kind shared_service --json`.
 
 ## Topology
 
@@ -121,6 +122,9 @@ For each journey, capture:
 | D3 | VM `remote-alpha` replies to host `agent-communicator` | Reply lands only in host `agent-communicator`. |
 | D4 | VM `agent-communicator` sends to `e2e-host/local-alpha` | Only host `local-alpha` receives; VM communicator does not self-receive. |
 | D5 | Host and VM both have `agent-communicator`; send to fully-qualified communicator target | Only the qualified communicator receives. |
+| D6 | Host task update is moved to a visible status while host and VM both run `agent-communicator` shared services | Both host and VM communicator inboxes receive exactly one typed task-update message with the same logical `message_id` and distinct per-recipient `delivery_id` values. |
+| D7 | Run `broccoli-comms registry agents --logical-identity agent-communicator --service-kind shared_service --json` with host and VM registered | Registry returns one active shared-service row per communicator with `logical_identity`, `service_kind`, and `capabilities`; stale/gone communicator rows are absent from fanout targets. |
+| D8 | Bare CLI send to `agent-communicator` while both communicators are registered | Bare send remains local-only; remote communicator receives nothing. |
 
 ### E. TUI visibility and identity
 

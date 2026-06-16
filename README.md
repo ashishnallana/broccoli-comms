@@ -822,7 +822,7 @@ broccoli-comms status --json
 broccoli-comms agent list --json
 ```
 
-For complete install, dependency, and multi-device registry setup instructions, see `docs/SETUP_AND_MULTI_DEVICE.md`.
+For complete install, dependency, and multi-device registry setup instructions, see `docs/SETUP_AND_MULTI_DEVICE.md`. Delivery routing diagnostics for multi-instance `agent-communicator` fanout are documented in `docs/DELIVERY_ROUTING_DIAGNOSTICS.md`.
 
 ## Smoke test
 

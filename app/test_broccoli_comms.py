@@ -16,6 +16,13 @@ _spec.loader.exec_module(broccoli_comms_app)
 
 
 class TestBroccoliCommsApp(unittest.TestCase):
+    def test_registry_agents_filters_shared_service_query(self):
+        args = argparse.Namespace(json=True, name=None, hostname=None, status=None, logical_identity="agent-communicator", service_kind="shared_service")
+        with mock.patch.object(broccoli_comms_app, "_registry_request", return_value=(200, {"agents": []}, None)) as request, mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            broccoli_comms_app.registry_agents(args)
+        request.assert_called_once_with("/agents?logical_identity=agent-communicator&service_kind=shared_service")
+        self.assertEqual(json.loads(stdout.getvalue()), {"agents": []})
+
     def test_trusted_memory_actor_rejects_spoofed_agent_name(self):
         with mock.patch.dict(os.environ, {"AGENT_NAME": "user"}, clear=False), mock.patch.object(broccoli_comms_app, "get_toml_config", return_value=[]), mock.patch.object(broccoli_comms_app, "tracker_rpc", return_value={"name": "evil"}):
             with self.assertRaises(SystemExit):
@@ -1057,7 +1064,7 @@ agent_communicator_tui = "/config/agent-communicator"
             '"initial-message" = provider.initialMessage',
             '"tmux-submit-key" = provider.tmuxSubmitKey',
             'cmd = "/google/bin/releases/jetski-devs/tools/cli"',
-            'agentsDir = "_agents"',
+            'agentsDir = ".agents"',
             'autoAcceptFlag = "--dangerously-skip-permissions"',
             'promptFlagName = "--prompt-interactive"',
             'cmd = "pi"',

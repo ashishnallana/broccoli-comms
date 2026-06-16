@@ -2435,7 +2435,15 @@ def registry_health(_args: argparse.Namespace) -> None:
 
 
 def registry_agents(args: argparse.Namespace) -> None:
-    status, body, error = _registry_request("/agents")
+    query = {k: v for k, v in {
+        "name": getattr(args, "name", None),
+        "hostname": getattr(args, "hostname", None),
+        "status": getattr(args, "status", None),
+        "logical_identity": getattr(args, "logical_identity", None),
+        "service_kind": getattr(args, "service_kind", None),
+    }.items() if v}
+    path = "/agents" + (("?" + urllib.parse.urlencode(query)) if query else "")
+    status, body, error = _registry_request(path)
     if status != 200:
         raise SystemExit(error or json.dumps(body or {"status": status}))
     agents = (body or {}).get("agents") or []
@@ -2443,7 +2451,10 @@ def registry_agents(args: argparse.Namespace) -> None:
         print(json.dumps(body, indent=2, sort_keys=True))
     else:
         for agent in agents:
-            print(f"{agent.get('hostname', '?')}/{agent.get('name', '?')} {agent.get('status', 'unknown')} {agent.get('agent_id', '')}")
+            service = ""
+            if agent.get("logical_identity") or agent.get("service_kind"):
+                service = f" {agent.get('logical_identity', '')}/{agent.get('service_kind', '')}".rstrip("/")
+            print(f"{agent.get('hostname', '?')}/{agent.get('name', '?')} {agent.get('status', 'unknown')} {agent.get('agent_id', '')}{service}")
         if not agents:
             print("no agents")
 
@@ -4046,6 +4057,11 @@ def main() -> None:
     registry_status_parser.set_defaults(func=registry_status)
     registry_sub.add_parser("health", help="GET /healthz").set_defaults(func=registry_health)
     registry_agents_parser = registry_sub.add_parser("agents", help="GET /agents")
+    registry_agents_parser.add_argument("--name", help="Filter by agent name")
+    registry_agents_parser.add_argument("--hostname", help="Filter by tracker hostname")
+    registry_agents_parser.add_argument("--status", help="Filter by agent/tracker status")
+    registry_agents_parser.add_argument("--logical-identity", help="Filter by logical identity, e.g. agent-communicator")
+    registry_agents_parser.add_argument("--service-kind", help="Filter by service kind, e.g. shared_service")
     registry_agents_parser.add_argument("--json", action="store_true", help="Emit raw JSON")
     registry_agents_parser.set_defaults(func=registry_agents)
     registry_trackers_parser = registry_sub.add_parser("trackers", help="GET /trackers")
