@@ -23,6 +23,22 @@ class TestBroccoliCommsApp(unittest.TestCase):
         request.assert_called_once_with("/agents?logical_identity=agent-communicator&service_kind=shared_service")
         self.assertEqual(json.loads(stdout.getvalue()), {"agents": []})
 
+    def test_status_and_doctor_include_build_revision(self):
+        with mock.patch.dict(os.environ, {"BROCCOLI_COMMS_VERSION": "0.1.0", "BROCCOLI_COMMS_REVISION": "abc1234"}, clear=False), \
+             mock.patch.object(broccoli_comms_app, "VERSION", "0.1.0"), \
+             mock.patch.object(broccoli_comms_app, "REVISION", "abc1234"), \
+             mock.patch.object(broccoli_comms_app, "paths", return_value={"runtime": Path("/tmp/r"), "cache": Path("/tmp/c"), "config": Path("/tmp/cfg"), "tracker_socket": Path("/tmp/sock"), "config_json": Path("/tmp/config.json")}), \
+             mock.patch.object(broccoli_comms_app, "can_connect", return_value=True), \
+             mock.patch.object(broccoli_comms_app, "tmux_up", return_value=True), \
+             mock.patch.object(broccoli_comms_app, "tmux_socket_label", return_value=None), \
+             mock.patch.object(broccoli_comms_app, "load_config", return_value={"agents": {}}), \
+             mock.patch.object(broccoli_comms_app, "managed_windows", return_value=[]), \
+             mock.patch.object(broccoli_comms_app, "_resolve_executable", return_value="/bin/true"), \
+             mock.patch.object(broccoli_comms_app, "_command_version", return_value="ok"), \
+             mock.patch.object(broccoli_comms_app, "_check_writable_dir", return_value=(True, "writable")):
+            self.assertEqual(broccoli_comms_app.status_payload()["build"]["display"], "0.1.0+abc1234")
+            self.assertEqual(broccoli_comms_app.doctor_payload()["build"]["revision"], "abc1234")
+
     def test_trusted_memory_actor_rejects_spoofed_agent_name(self):
         with mock.patch.dict(os.environ, {"AGENT_NAME": "user"}, clear=False), mock.patch.object(broccoli_comms_app, "get_toml_config", return_value=[]), mock.patch.object(broccoli_comms_app, "tracker_rpc", return_value={"name": "evil"}):
             with self.assertRaises(SystemExit):

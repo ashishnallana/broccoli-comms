@@ -743,6 +743,12 @@ def _read_registry_status() -> dict:
         return {}
 
 
+def _build_info() -> dict:
+    version = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
+    revision = os.environ.get("BROCCOLI_COMMS_REVISION", "unknown")
+    return {"version": version, "revision": revision, "display": f"{version}+{revision}" if revision and revision != "unknown" else version}
+
+
 def handle_tracker_info(params: dict) -> dict:
     """Returns this tracker's registry identity and UI-friendly health snapshot."""
     agents = state.get_all_agents()
@@ -768,6 +774,9 @@ def handle_tracker_info(params: dict) -> dict:
         "tracker_id": registry_client.TRACKER_ID,
         "http_port": registry_client.HTTP_PORT,
         "status": status,
+        "version": os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0"),
+        "revision": os.environ.get("BROCCOLI_COMMS_REVISION", "unknown"),
+        "build": _build_info(),
         "agent_count": len(agents),
         "online_agent_count": online_agents,
         "registry_connected": registry_status.get("connected"),

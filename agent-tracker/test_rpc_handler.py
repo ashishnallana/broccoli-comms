@@ -988,7 +988,8 @@ class TestRpcHandler(unittest.TestCase):
     def test_tracker_info_includes_health_snapshot(self):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle"})
         state.set_agent("agent2", {"agent_id": "id-2", "status": "offline"})
-        with mock.patch.object(rpc_handler, "_read_registry_status", return_value={"connected": False, "registries": {"local": {"connected": False}}}), \
+        with mock.patch.dict(os.environ, {"BROCCOLI_COMMS_VERSION": "0.1.0", "BROCCOLI_COMMS_REVISION": "abc1234"}, clear=False), \
+             mock.patch.object(rpc_handler, "_read_registry_status", return_value={"connected": False, "registries": {"local": {"connected": False}}}), \
              mock.patch.object(registry_client, "fetch_trackers", return_value=(200, {"trackers": [{"tracker_id": registry_client.TRACKER_ID, "status": "active"}, {"tracker_id": "remote-1", "status": "active"}, {"tracker_id": "remote-2", "status": "gone"}]})):
             result = rpc_handler.handle_tracker_info({})
         self.assertEqual(result["status"], "degraded")
@@ -998,6 +999,8 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual(result["registries"][0]["name"], "local")
         self.assertEqual(result["remote_tracker_count"], 2)
         self.assertEqual(result["online_remote_tracker_count"], 1)
+        self.assertEqual(result["build"]["display"], "0.1.0+abc1234")
+        self.assertEqual(result["revision"], "abc1234")
 
     def test_get_unread_counts_counts_stable_sender_keys_without_marking_read(self):
         inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")

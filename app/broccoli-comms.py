@@ -108,6 +108,11 @@ def get_toml_config_any(section: str, keys: list[str], default=None):
 
 APP = "broccoli-comms"
 VERSION = os.environ.get("BROCCOLI_COMMS_VERSION", "0.1.0")
+REVISION = os.environ.get("BROCCOLI_COMMS_REVISION", "unknown")
+
+
+def build_info() -> dict:
+    return {"version": VERSION, "revision": REVISION, "display": f"{VERSION}+{REVISION}" if REVISION and REVISION != "unknown" else VERSION}
 SESSION = "broccoli-comms-agents"
 MANAGED_AGENT_OPTION = "@broccoli_managed_agent"
 SHELL_WINDOW_OPTION = "@broccoli_shell_window"
@@ -1239,6 +1244,7 @@ def agent_list_payload(args: argparse.Namespace | None = None) -> dict:
     return {
         "app": APP,
         "version": VERSION,
+        "build": build_info(),
         "config": str(paths()["config_json"]),
         "runtime": {
             "tracker_up": tracker_up,
@@ -1261,6 +1267,7 @@ def status_payload() -> dict:
     return {
         "app": APP,
         "version": VERSION,
+        "build": build_info(),
         "paths": {
             "runtime_dir": str(p["runtime"]),
             "cache_dir": str(p["cache"]),
@@ -1986,6 +1993,7 @@ def doctor_payload() -> dict:
     return {
         "app": APP,
         "version": VERSION,
+        "build": build_info(),
         "ok": not any(check["status"] == "error" for check in checks),
         "paths": {"runtime_dir": str(p["runtime"]), "cache_dir": str(p["cache"]), "config_dir": str(p["config"])},
         "runtime": {"tracker_up": tracker_reachable, "tmux_up": tmux_reachable, "tmux_session": SESSION, "tmux_mode": tmux_mode(), "tmux_socket": tmux_socket_label()},

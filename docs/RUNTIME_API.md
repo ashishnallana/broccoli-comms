@@ -23,6 +23,7 @@ Example:
 {
   "app": "broccoli-comms",
   "version": "0.1.0",
+  "build": { "version": "0.1.0", "revision": "abc1234", "display": "0.1.0+abc1234" },
   "paths": {
     "runtime_dir": "/run/user/1000/broccoli-comms",
     "cache_dir": "/home/user/.cache/broccoli-comms",
@@ -64,7 +65,7 @@ Compatibility aliases currently included at top level:
 - `tmux_socket`
 - `tmux_up`
 
-Prefer the nested `tracker` and `tmux` objects for new clients.
+Prefer the nested `tracker` and `tmux` objects for new clients. The `build` object is intended for cross-host version-skew diagnosis; packaged builds inject a git revision when available.
 
 ## `broccoli-comms agent list --json`
 
@@ -76,6 +77,7 @@ Example:
 {
   "app": "broccoli-comms",
   "version": "0.1.0",
+  "build": { "version": "0.1.0", "revision": "abc1234", "display": "0.1.0+abc1234" },
   "config": "/home/user/.config/broccoli-comms/config.json",
   "runtime": {
     "tracker_up": true,

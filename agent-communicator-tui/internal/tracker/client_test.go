@@ -144,10 +144,10 @@ func TestTrackerInfo(t *testing.T) {
 			t.Fatalf("method = %s, want tracker_info", req.Method)
 		}
 		connected := true
-		return TrackerInfo{Status: "ok", AgentCount: 3, OnlineAgentCount: 2, RegistryConnected: &connected, RemoteTrackerCount: 4, OnlineRemoteTrackerCount: 3}
+		return TrackerInfo{Status: "ok", Version: "0.1.0", Revision: "abc1234", Build: BuildInfo{Display: "0.1.0+abc1234"}, AgentCount: 3, OnlineAgentCount: 2, RegistryConnected: &connected, RemoteTrackerCount: 4, OnlineRemoteTrackerCount: 3}
 	})
 	info, err := client.TrackerInfo(context.Background())
-	if err != nil || info.AgentCount != 3 || info.OnlineAgentCount != 2 || info.RegistryConnected == nil || !*info.RegistryConnected || info.OnlineRemoteTrackerCount != 3 {
+	if err != nil || info.AgentCount != 3 || info.OnlineAgentCount != 2 || info.RegistryConnected == nil || !*info.RegistryConnected || info.OnlineRemoteTrackerCount != 3 || info.Build.Display != "0.1.0+abc1234" {
 		t.Fatalf("TrackerInfo = %+v, %v", info, err)
 	}
 }

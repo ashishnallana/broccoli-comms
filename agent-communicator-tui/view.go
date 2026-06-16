@@ -105,6 +105,21 @@ func (m model) footer(width int) string {
 	return mutedStyle.Render(strings.Join(lines, "\n"))
 }
 
+func (m model) versionStatusLine() string {
+	trackerVersion := firstNonEmpty(m.health.Build.Display, buildDisplay(m.health.Version, m.health.Revision), "?")
+	return "ui " + version + " · tracker " + trackerVersion
+}
+
+func buildDisplay(v, rev string) string {
+	if v == "" {
+		return ""
+	}
+	if rev != "" && rev != "unknown" {
+		return v + "+" + rev
+	}
+	return v
+}
+
 func (m model) errorStatusLine() string {
 	text := "error · " + m.err.Error()
 	if rpcErr, ok := m.err.(*tracker.RPCError); ok && rpcErr.Data != nil {

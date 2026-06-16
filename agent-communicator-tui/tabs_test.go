@@ -10,8 +10,14 @@ import (
 )
 
 func TestTabBarRendersActiveMode(t *testing.T) {
-	m := model{width: 120, mode: swarmView}
+	m := model{width: 160, mode: swarmView, health: tracker.TrackerInfo{Build: tracker.BuildInfo{Display: "0.1.0+abc1234"}}}
+	oldVersion := version
+	version = "0.1.0+ui"
+	defer func() { version = oldVersion }()
 	bar := m.bottomTabBar(m.width)
+	if !strings.Contains(bar, "ui 0.1.0+ui") || !strings.Contains(bar, "tracker 0.1.0+abc12") {
+		t.Fatalf("tab bar missing version diagnostics: %q", bar)
+	}
 	for _, want := range []string{"Simple Chat", "Swarm Mode", "Saved Messages", "Memory Management", "Tasks"} {
 		if !strings.Contains(bar, want) {
 			t.Fatalf("tab bar missing %q: %q", want, bar)
@@ -107,7 +113,7 @@ func TestTabsAreDataDriven(t *testing.T) {
 	defer func() { registeredAppTabs = oldTabs }()
 	fakeMode := viewMode(99)
 	registeredAppTabs = append(append([]appTab(nil), registeredAppTabs...), appTab{ID: "fake", Mode: fakeMode, Label: "Fake Tab", ShortLabel: "Fake"})
-	m := model{mode: tasksView, width: 120}
+	m := model{mode: tasksView, width: 160}
 	m.selectTab(1)
 	if m.mode != fakeMode {
 		t.Fatalf("data-driven tab cycle mode=%v want fake", m.mode)

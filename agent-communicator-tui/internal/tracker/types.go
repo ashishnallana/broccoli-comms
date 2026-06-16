@@ -221,11 +221,20 @@ type AgentConfig struct {
 	Description string `json:"description"`
 }
 
+type BuildInfo struct {
+	Version  string `json:"version"`
+	Revision string `json:"revision"`
+	Display  string `json:"display"`
+}
+
 type TrackerInfo struct {
 	Hostname                 string           `json:"hostname"`
 	TrackerID                string           `json:"tracker_id"`
 	HTTPPort                 int              `json:"http_port"`
 	Status                   string           `json:"status"`
+	Version                  string           `json:"version,omitempty"`
+	Revision                 string           `json:"revision,omitempty"`
+	Build                    BuildInfo        `json:"build,omitempty"`
 	AgentCount               int              `json:"agent_count"`
 	OnlineAgentCount         int              `json:"online_agent_count"`
 	RegistryConnected        *bool            `json:"registry_connected,omitempty"`
