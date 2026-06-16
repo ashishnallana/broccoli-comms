@@ -27,6 +27,18 @@ class TestLearningKernelCli(unittest.TestCase):
         k.task_create(title=f"{title} child", assigned_agent=assigned_agent, depends_on=[root["task_id"]], status=child_status)
         return root
 
+    def test_task_service_api_and_compatibility_wrappers_preserve_workflow(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.tasks.create(title="service task", assigned_agent="coder", status="ready")
+            self.assertEqual(k.task_show(task["task_id"])["task_id"], task["task_id"])
+            self.assertEqual(k.tasks.next(agent="coder")["task"]["task_id"], task["task_id"])
+            state = k.tasks.state_set(task["task_id"], "coder", status="working", current_activity="service")
+            self.assertEqual(k.state_show(task["task_id"], "coder")["state_id"], state["state_id"])
+            marked = k.tasks.mark_result(task["task_id"], "good")
+            self.assertEqual(marked["status"], "validated")
+            self.assertEqual(k.task_list(agent="coder")[0]["task_id"], task["task_id"])
+
     def test_task_state_profile_events_json_flow(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
@@ -720,6 +732,18 @@ class TestLearningKernelCli(unittest.TestCase):
             self.assertEqual(params["metadata"]["created_event_seq"], approval["created_event_seq"])
             self.assertEqual(params["metadata"]["event_seq_at_submission"], approval["event_seq_at_submission"])
             self.assertEqual(params["metadata"]["source"], "system/task-kernel")
+
+    def test_memory_service_api_and_compatibility_wrappers_preserve_lifecycle(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="memory service", assigned_agent="a", scope="project:x")
+            k.mark_result(task["task_id"], "good")
+            proposed = k.memory.propose(type="fact", scope="project:x", subject_agent="a", title="Endpoint", body="Use /latest", source_task_id=task["task_id"], proposed_by="a")
+            active = k.memory.approve(proposed["memory"]["memory_id"], expected_version=proposed["memory"]["version"])
+            self.assertEqual(active["memory"]["status"], "active")
+            self.assertEqual(k.memory.show(active["memory"]["memory_id"])["memory_id"], active["memory"]["memory_id"])
+            self.assertEqual(k.memory_list(status="active")[0]["memory_id"], active["memory"]["memory_id"])
+            self.assertEqual(k.memory.for_bootstrap(agent="a", scope="project:x")["records"][0]["memory_id"], active["memory"]["memory_id"])
 
     def test_memory_edit_proposal_applies_to_target_on_approval(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):

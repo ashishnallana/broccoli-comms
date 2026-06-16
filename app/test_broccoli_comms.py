@@ -47,27 +47,27 @@ class TestBroccoliCommsApp(unittest.TestCase):
     def test_memory_propose_allows_unverified_agent_proposals(self):
         args = argparse.Namespace(type="fact", scope="global", subject_agent=None, title="T", body="B", source_task="task-1", trusted_manual=False, tag=None, idempotency_key=None, agent=None, instance=None, metadata_json=None, json=True)
         fake_kernel = mock.Mock()
-        fake_kernel.memory_propose.return_value = {"memory": {"memory_id": "mem-1"}}
+        fake_kernel.memory.propose.return_value = {"memory": {"memory_id": "mem-1"}}
         with mock.patch.dict(os.environ, {"AGENT_NAME": "unverified-agent", "AGENT_ID": "agent-id"}, clear=True), mock.patch.object(broccoli_comms_app, "tracker_rpc", return_value=None), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel), mock.patch.object(broccoli_comms_app, "notify_memory_proposal", return_value={"sent": False}):
             broccoli_comms_app.memory_propose(args)
-        self.assertEqual(fake_kernel.memory_propose.call_args.kwargs["proposed_by"], "unverified-agent")
-        self.assertEqual(fake_kernel.memory_propose.call_args.kwargs["proposed_by_instance"], "agent-id")
+        self.assertEqual(fake_kernel.memory.propose.call_args.kwargs["proposed_by"], "unverified-agent")
+        self.assertEqual(fake_kernel.memory.propose.call_args.kwargs["proposed_by_instance"], "agent-id")
 
     def test_memory_propose_uses_unverified_identity_for_immutable_check(self):
         args = argparse.Namespace(type="fact", scope="global", subject_agent=None, title="T", body="B", source_task="task-1", trusted_manual=False, tag=None, idempotency_key=None, agent=None, instance=None, metadata_json=None, json=True)
         fake_kernel = mock.Mock()
-        fake_kernel.memory_propose.side_effect = ValueError("immutable/non-learning instance cannot propose memory")
+        fake_kernel.memory.propose.side_effect = ValueError("immutable/non-learning instance cannot propose memory")
         with mock.patch.dict(os.environ, {"AGENT_NAME": "immutable-agent", "AGENT_ID": "immutable-id"}, clear=True), mock.patch.object(broccoli_comms_app, "get_toml_config", return_value=["immutable-id"]), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel):
             with self.assertRaises(SystemExit):
                 broccoli_comms_app.memory_propose(args)
-        self.assertTrue(fake_kernel.memory_propose.call_args.kwargs["non_learning"])
-        self.assertEqual(fake_kernel.memory_propose.call_args.kwargs["proposed_by"], "immutable-agent")
+        self.assertTrue(fake_kernel.memory.propose.call_args.kwargs["non_learning"])
+        self.assertEqual(fake_kernel.memory.propose.call_args.kwargs["proposed_by"], "immutable-agent")
 
     def test_trusted_manual_memory_provenance_uses_verified_actor(self):
         args = argparse.Namespace(type="habit", scope="global", subject_agent=None, title="T", body="B", source_task=None, trusted_manual=True, tag=None, idempotency_key=None, agent="spoofed", instance=None, metadata_json=None, json=True)
         captured = {}
         fake_kernel = mock.Mock()
-        fake_kernel.memory_propose.side_effect = lambda **kw: captured.update(kw) or {"memory": {"memory_id": "mem-1"}}
+        fake_kernel.memory.propose.side_effect = lambda **kw: captured.update(kw) or {"memory": {"memory_id": "mem-1"}}
         def fake_config(_section, key, default=None):
             return ["coordinator"] if key == "trusted_memory_actors" else []
         with mock.patch.object(broccoli_comms_app, "tracker_rpc", return_value={"name": "coordinator", "agent_id": "coord-id"}), mock.patch.object(broccoli_comms_app, "get_toml_config", side_effect=fake_config), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel):
@@ -79,10 +79,10 @@ class TestBroccoliCommsApp(unittest.TestCase):
     def test_memory_propose_edit_allows_unverified_agent_proposals(self):
         args = argparse.Namespace(memory_id="mem-active", type=None, scope=None, subject_agent=None, title=None, description=None, body="updated", source_task="task-1", trusted_manual=False, tag=["audit"], expected_version=2, metadata_json=None, agent=None, instance=None, json=True)
         fake_kernel = mock.Mock()
-        fake_kernel.memory_propose_edit.return_value = {"memory": {"memory_id": "mem-proposal"}}
+        fake_kernel.memory.propose_edit.return_value = {"memory": {"memory_id": "mem-proposal"}}
         with mock.patch.dict(os.environ, {"AGENT_NAME": "agent-a", "AGENT_ID": "id-a"}, clear=True), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel), mock.patch.object(broccoli_comms_app, "notify_memory_proposal", return_value={"sent": True}):
             broccoli_comms_app.memory_propose_edit(args)
-        kwargs = fake_kernel.memory_propose_edit.call_args.kwargs
+        kwargs = fake_kernel.memory.propose_edit.call_args.kwargs
         self.assertEqual(kwargs["proposed_by"], "agent-a")
         self.assertEqual(kwargs["proposed_by_instance"], "id-a")
         self.assertEqual(kwargs["body"], "updated")
@@ -91,11 +91,11 @@ class TestBroccoliCommsApp(unittest.TestCase):
     def test_memory_propose_with_memory_id_routes_to_edit_proposal(self):
         args = argparse.Namespace(memory_id="mem-active", archive=False, reason=None, type=None, scope=None, subject_agent=None, title="New", description=None, body="updated", source_task="task-1", trusted_manual=False, tag=["audit"], idempotency_key=None, expected_version=2, metadata_json=None, agent=None, instance=None, json=True)
         fake_kernel = mock.Mock()
-        fake_kernel.memory_propose_edit.return_value = {"memory": {"memory_id": "mem-proposal"}}
+        fake_kernel.memory.propose_edit.return_value = {"memory": {"memory_id": "mem-proposal"}}
         with mock.patch.dict(os.environ, {"AGENT_NAME": "agent-a", "AGENT_ID": "id-a"}, clear=True), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel), mock.patch.object(broccoli_comms_app, "notify_memory_proposal", return_value={"sent": True}):
             broccoli_comms_app.memory_propose(args)
-        kwargs = fake_kernel.memory_propose_edit.call_args.kwargs
-        self.assertEqual(fake_kernel.memory_propose_edit.call_args.args, ("mem-active",))
+        kwargs = fake_kernel.memory.propose_edit.call_args.kwargs
+        self.assertEqual(fake_kernel.memory.propose_edit.call_args.args, ("mem-active",))
         self.assertEqual(kwargs["title"], "New")
         self.assertEqual(kwargs["body"], "updated")
         self.assertEqual(kwargs["expected_version"], 2)
@@ -104,24 +104,24 @@ class TestBroccoliCommsApp(unittest.TestCase):
     def test_memory_propose_with_archive_routes_to_archive_proposal(self):
         args = argparse.Namespace(memory_id="mem-active", archive=True, reason="obsolete", type=None, scope=None, subject_agent=None, title=None, description=None, body=None, source_task="task-1", trusted_manual=False, tag=None, idempotency_key=None, expected_version=3, metadata_json=None, agent=None, instance=None, json=True)
         fake_kernel = mock.Mock()
-        fake_kernel.memory_propose_archive.return_value = {"memory": {"memory_id": "mem-archive-proposal"}}
+        fake_kernel.memory.propose_archive.return_value = {"memory": {"memory_id": "mem-archive-proposal"}}
         with mock.patch.dict(os.environ, {"AGENT_NAME": "agent-a", "AGENT_ID": "id-a"}, clear=True), mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel), mock.patch.object(broccoli_comms_app, "notify_memory_proposal", return_value={"sent": True}):
             broccoli_comms_app.memory_propose(args)
-        kwargs = fake_kernel.memory_propose_archive.call_args.kwargs
-        self.assertEqual(fake_kernel.memory_propose_archive.call_args.args, ("mem-active",))
+        kwargs = fake_kernel.memory.propose_archive.call_args.kwargs
+        self.assertEqual(fake_kernel.memory.propose_archive.call_args.args, ("mem-active",))
         self.assertEqual(kwargs["reason"], "obsolete")
         self.assertEqual(kwargs["expected_version"], 3)
         self.assertEqual(kwargs["proposed_by"], "agent-a")
 
     def test_memory_decide_approve_and_reject_use_trusted_actor(self):
         fake_kernel = mock.Mock()
-        fake_kernel.memory_approve.return_value = {"memory": {"memory_id": "mem-1"}}
-        fake_kernel.memory_reject.return_value = {"memory": {"memory_id": "mem-2"}}
+        fake_kernel.memory.approve.return_value = {"memory": {"memory_id": "mem-1"}}
+        fake_kernel.memory.reject.return_value = {"memory": {"memory_id": "mem-2"}}
         with mock.patch.object(broccoli_comms_app, "learning_kernel", return_value=fake_kernel), mock.patch.object(broccoli_comms_app, "trusted_memory_actor_from_runtime", return_value="user"):
             broccoli_comms_app.memory_decide(argparse.Namespace(memory_id="mem-1", decision="approve", reason=None, expected_version=1, json=True))
             broccoli_comms_app.memory_decide(argparse.Namespace(memory_id="mem-2", decision="reject", reason="bad", expected_version=2, json=True))
-        fake_kernel.memory_approve.assert_called_once_with("mem-1", expected_version=1, actor="user")
-        fake_kernel.memory_reject.assert_called_once_with("mem-2", reason="bad", expected_version=2, actor="user")
+        fake_kernel.memory.approve.assert_called_once_with("mem-1", expected_version=1, actor="user")
+        fake_kernel.memory.reject.assert_called_once_with("mem-2", reason="bad", expected_version=2, actor="user")
 
     def test_base_env_strips_agent_identity_by_default(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
@@ -742,7 +742,7 @@ agent_communicator_tui = "/config/agent-communicator"
 
     def test_agent_list_exposes_current_task_from_durable_state_and_remote_tracker(self):
         fake_kernel = mock.Mock()
-        fake_kernel.state_list.return_value = [{
+        fake_kernel.tasks.state_list.return_value = [{
             "task_id": "task-1",
             "agent": "configured-only",
             "instance_id": "configured-only@manual",
@@ -750,7 +750,7 @@ agent_communicator_tui = "/config/agent-communicator"
             "current_activity": "coding",
             "next_step": "run focused tests",
         }]
-        fake_kernel.task_show.return_value = {"task_id": "task-1", "title": "Implement current task card", "status": "working", "next_step": "fallback next"}
+        fake_kernel.tasks.show.return_value = {"task_id": "task-1", "title": "Implement current task card", "status": "working", "next_step": "fallback next"}
         with tempfile.TemporaryDirectory() as tmp:
             cfg_dir = Path(tmp) / "broccoli-comms"
             cfg_dir.mkdir(parents=True)

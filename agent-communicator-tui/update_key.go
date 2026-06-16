@@ -353,9 +353,9 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 			m.scrollSelectedMessageIntoView()
 		}
 	case tea.KeyPgUp, tea.KeyCtrlU:
-		m.messageOffset = clampMessageOffset(m.messageOffset-messagePageSize(m.height), len(m.messageLinesForWidth(m.messageContentWidth())), m.messageVisibleLines())
+		m.scrollMessageViewport(-messagePageSize(m.height))
 	case tea.KeyPgDown, tea.KeyCtrlD:
-		m.messageOffset = clampMessageOffset(m.messageOffset+messagePageSize(m.height), len(m.messageLinesForWidth(m.messageContentWidth())), m.messageVisibleLines())
+		m.scrollMessageViewport(messagePageSize(m.height))
 	case tea.KeyF1:
 		if m.activeTabCanCompose() {
 			m.inputMode = inputModeMessage

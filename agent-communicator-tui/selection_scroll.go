@@ -1,5 +1,10 @@
 package main
 
+func (m *model) scrollMessageViewport(delta int) {
+	panel := m.messageViewportPanel(m.messageContentWidth(), m.messageVisibleLines())
+	m.messageOffset = clampViewportOffset(m.messageOffset+delta, len(panel.Lines), panel.Height)
+}
+
 func (m *model) scrollSelectedMessageIntoView() {
 	visible := m.messageVisibleLines()
 	if visible <= 0 {

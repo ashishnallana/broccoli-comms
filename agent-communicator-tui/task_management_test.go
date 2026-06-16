@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -409,6 +410,33 @@ func TestTaskManagementViewResponsiveStates(t *testing.T) {
 	if view := m.taskManagementView(80, 10); !strings.Contains(view, "Tasks load failed") {
 		t.Fatalf("error view missing state:\n%s", view)
 	}
+}
+
+func TestTaskManagementWideLayoutPreservesPrimaryPaddingBelow100Columns(t *testing.T) {
+	m := model{mode: tasksView, width: 80, height: 16, tasksItems: []taskRecord{{TaskID: "task-1", Title: "One", Status: "ready"}}}
+	contentW, _ := taskLayoutWidths(80)
+	if contentW >= 70 {
+		t.Fatalf("test requires split content width below 70, got %d", contentW)
+	}
+	panel := m.taskPrimaryPanel(contentW, 10, true)
+	firstLine := stripANSIForTest(strings.Split(panel, "\n")[0])
+	if got := strings.Index(firstLine, "Chain Investigation"); got != 3 {
+		t.Fatalf("wide task primary panel title padding index=%d want 3, line=%q", got, firstLine)
+	}
+	view := m.taskManagementView(80, 10)
+	firstViewLine := stripANSIForTest(strings.Split(view, "\n")[0])
+	if got := strings.Index(firstViewLine, "Chain Investigation"); got != 3 {
+		t.Fatalf("wide task management view title padding index=%d want 3, line=%q\n%s", got, firstViewLine, view)
+	}
+	for i, line := range strings.Split(view, "\n") {
+		if got := lipgloss.Width(line); got > 80 {
+			t.Fatalf("task view line width=%d > 80 at line %d: %q\n%s", got, i, line, view)
+		}
+	}
+}
+
+func stripANSIForTest(s string) string {
+	return regexp.MustCompile(`\x1b\[[0-9;:]*[A-Za-z]`).ReplaceAllString(s, "")
 }
 
 func TestTaskActionHintsAndConfirmation(t *testing.T) {

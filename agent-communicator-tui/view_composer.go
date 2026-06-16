@@ -16,18 +16,9 @@ func (m model) composerBox(width int) string {
 }
 
 func (m model) composerInputBox(width int) string {
-	padX := 2
-	if m.width < 70 {
-		padX = 1
-	}
+	padX := responsiveInputPadding(m.width)
 	inner := max(1, width-(padX*2))
-	blank := bgSpaces(width, colors.InputBg)
-	lines := []string{blank}
-	for _, line := range m.composerLines(inner) {
-		lines = append(lines, bgSpaces(padX, colors.InputBg)+padStyledLine(line, inner, colors.InputBg)+bgSpaces(padX, colors.InputBg))
-	}
-	lines = append(lines, blank)
-	return strings.Join(lines, "\n")
+	return ComposerInputSurface{Width: width, TerminalWidth: m.width, Lines: m.composerLines(inner)}.View()
 }
 func (m model) composerView(width int) string {
 	return lipgloss.NewStyle().Width(max(1, width)).Render(strings.Join(m.composerLines(width), "\n"))

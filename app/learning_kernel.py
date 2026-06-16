@@ -134,11 +134,152 @@ def safe_payload(value: Any) -> Any:
     return clean_text(str(value), "event_text")
 
 
+class TaskService:
+    def __init__(self, kernel: "LearningKernel"):
+        self.kernel = kernel
+
+    def create(self, **kw: Any) -> dict[str, Any]:
+        return self.kernel._task_create(**kw)
+
+    def chain_default_participant_set(self, task_chain_id: str, agent: str, role: str, *, root_task_id: str | None = None, status: str | None = None, actor: str = "user") -> dict[str, Any]:
+        return self.kernel._task_chain_default_participant_set(task_chain_id, agent, role, root_task_id=root_task_id, status=status, actor=actor)
+
+    def chain_default_participant_list(self, task_chain_id: str) -> list[dict[str, Any]]:
+        return self.kernel._task_chain_default_participant_list(task_chain_id)
+
+    def show(self, task_id: str, include_participants: bool = False) -> dict[str, Any]:
+        return self.kernel._task_show(task_id, include_participants=include_participants)
+
+    def participant_list(self, task_id: str) -> list[dict[str, Any]]:
+        return self.kernel._task_participant_list(task_id)
+
+    def participant_add(self, task_id: str, agent: str, role: str, *, actor: str = "user", task_chain_id: str | None = None, root_task_id: str | None = None, instance_id: str | None = None, status: str | None = None) -> dict[str, Any]:
+        return self.kernel._task_participant_add(task_id, agent, role, actor=actor, task_chain_id=task_chain_id, root_task_id=root_task_id, instance_id=instance_id, status=status)
+
+    def participant_update(self, participant_id: str, *, status: str | None = None, actor: str = "user") -> dict[str, Any]:
+        return self.kernel._task_participant_update(participant_id, status=status, actor=actor)
+
+    def participant_remove(self, participant_id: str, *, actor: str = "user") -> dict[str, Any]:
+        return self.kernel._task_participant_remove(participant_id, actor=actor)
+
+    def list(self, agent: str | None = None, statuses: list[str] | None = None, include_archived: bool = False, scope: str | None = None, include_participants: bool = False, participant_roles: list[str] | None = None) -> list[dict[str, Any]]:
+        return self.kernel._task_list(agent=agent, statuses=statuses, include_archived=include_archived, scope=scope, include_participants=include_participants, participant_roles=participant_roles)
+
+    def next(self, agent: str | None = None, scope: str | None = None, include_profile: bool = False, participant_roles: list[str] | None = None) -> dict[str, Any]:
+        return self.kernel._task_next(agent=agent, scope=scope, include_profile=include_profile, participant_roles=participant_roles)
+
+    def ready_dependents(self, task_id: str, include_participants: bool = False) -> list[dict[str, Any]]:
+        return self.kernel._task_ready_dependents(task_id, include_participants=include_participants)
+
+    def update(self, task_id: str, **kw: Any) -> dict[str, Any]:
+        return self.kernel._task_update(task_id, **kw)
+
+    def mark_result(self, task_id: str, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None, approval_id: str | None = None) -> dict[str, Any]:
+        return self.kernel._mark_result(task_id, result, notes, actor, next_step, status, approval_id)
+
+    def state_set(self, task_id: str, agent: str, **kw: Any) -> dict[str, Any]:
+        return self.kernel._state_set(task_id, agent, **kw)
+
+    def state_show(self, task_id: str, agent: str | None = None) -> dict[str, Any] | list[dict[str, Any]] | None:
+        return self.kernel._state_show(task_id, agent)
+
+    def state_list(self, agent: str | None = None, task_id: str | None = None, stale_after: int | None = None) -> list[dict[str, Any]]:
+        return self.kernel._state_list(agent=agent, task_id=task_id, stale_after=stale_after)
+
+    def state_clear(self, task_id: str, agent: str | None = None, actor: str = "user") -> dict[str, Any]:
+        return self.kernel._state_clear(task_id, agent=agent, actor=actor)
+
+    def submit_completion(self, task_id: str, **kw: Any) -> dict[str, Any]:
+        return self.kernel._submit_completion(task_id, **kw)
+
+    def record_approval_notification(self, approval_id: str, sent: bool, detail: str | None = None) -> dict[str, Any]:
+        return self.kernel._record_approval_notification(approval_id, sent, detail)
+
+    def review_completion(self, approval_id: str, result: str, **kw: Any) -> dict[str, Any]:
+        return self.kernel._review_completion(approval_id, result, **kw)
+
+    def list_approvals(self, status: str | None = None) -> list[dict[str, Any]]:
+        return self.kernel._list_approvals(status=status)
+
+    def show_approval(self, approval_id: str) -> dict[str, Any]:
+        return self.kernel._show_approval(approval_id)
+
+    def summarize_chain(self, task_chain_id: str, **kw: Any) -> dict[str, Any]:
+        return self.kernel._summarize_chain(task_chain_id, **kw)
+
+    def latest_chain_summary(self, root_task_id: str | None = None) -> dict[str, Any] | None:
+        return self.kernel._latest_chain_summary(root_task_id)
+
+class MemoryService:
+    def __init__(self, kernel: "LearningKernel"):
+        self.kernel = kernel
+
+    def propose(self, **kw: Any) -> dict[str, Any]:
+        return self.kernel._memory_propose(**kw)
+
+    def approve(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+        return self.kernel._memory_approve(memory_id, expected_version=expected_version, actor=actor)
+
+    def propose_edit(self, memory_id: str, *, expected_version: int | None = None, **kw: Any) -> dict[str, Any]:
+        return self.kernel._memory_propose_edit(memory_id, expected_version=expected_version, **kw)
+
+    def propose_archive(self, memory_id: str, *, expected_version: int | None = None, reason: str | None = None, **kw: Any) -> dict[str, Any]:
+        return self.kernel._memory_propose_archive(memory_id, expected_version=expected_version, reason=reason, **kw)
+
+    def edit(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user", **kw: Any) -> dict[str, Any]:
+        return self.kernel._memory_edit(memory_id, expected_version=expected_version, actor=actor, **kw)
+
+    def rollback(self, memory_id: str, *, target_version: int, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+        return self.kernel._memory_rollback(memory_id, target_version=target_version, expected_version=expected_version, actor=actor)
+
+    def reject(self, memory_id: str, *, reason: str | None = None, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+        return self.kernel._memory_reject(memory_id, reason=reason, expected_version=expected_version, actor=actor)
+
+    def revoke(self, memory_id: str, *, reason: str | None = None, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+        return self.kernel._memory_revoke(memory_id, reason=reason, expected_version=expected_version, actor=actor)
+
+    def show(self, memory_id: str) -> dict[str, Any]:
+        return self.kernel._memory_show(memory_id)
+
+    def history(self, memory_id: str) -> dict[str, Any]:
+        return self.kernel._memory_history(memory_id)
+
+    def list(self, *, scope: str | None = None, type: str | None = None, status: str | None = None, agent: str | None = None) -> list[dict[str, Any]]:
+        return self.kernel._memory_list(scope=scope, type=type, status=status, agent=agent)
+
+    def search(self, query: str, *, scope: str | None = None) -> list[dict[str, Any]]:
+        return self.kernel._memory_search(query, scope=scope)
+
+    def budget(self, *, agent: str, scope: str | None = None) -> dict[str, Any]:
+        return self.kernel._memory_budget(agent=agent, scope=scope)
+
+    def for_bootstrap(self, *, agent: str, scope: str | None = None) -> dict[str, Any]:
+        return self.kernel._memory_for_bootstrap(agent=agent, scope=scope)
+
 class LearningKernel:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.memory = MemoryService(self)
+        self.tasks = TaskService(self)
         self._init()
+
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("memory_"):
+            service_name = name[len("memory_"):]
+            if hasattr(self.memory, service_name):
+                return getattr(self.memory, service_name)
+        if name.startswith("task_"):
+            service_name = name[len("task_"):]
+            if hasattr(self.tasks, service_name):
+                return getattr(self.tasks, service_name)
+        if name.startswith("state_") and hasattr(self.tasks, name):
+            return getattr(self.tasks, name)
+        if name in {"mark_result", "submit_completion", "record_approval_notification", "review_completion", "list_approvals", "show_approval", "summarize_chain", "latest_chain_summary"}:
+            if hasattr(self.tasks, name):
+                return getattr(self.tasks, name)
+        raise AttributeError(name)
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=30.0, isolation_level=None)
@@ -351,7 +492,7 @@ class LearningKernel:
             })
         return cleaned
 
-    def task_create(self, **kw: Any) -> dict[str, Any]:
+    def _task_create(self, **kw: Any) -> dict[str, Any]:
         status = kw.get("status") or "planning"
         if status not in TASK_STATUSES:
             raise ValueError("invalid task status")
@@ -397,7 +538,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
 
-    def task_chain_default_participant_set(self, task_chain_id: str, agent: str, role: str, *, root_task_id: str | None = None, status: str | None = None, actor: str = "user") -> dict[str, Any]:
+    def _task_chain_default_participant_set(self, task_chain_id: str, agent: str, role: str, *, root_task_id: str | None = None, status: str | None = None, actor: str = "user") -> dict[str, Any]:
         task_chain_id = clean_text(task_chain_id, "list_item", required=True) or ""
         agent = clean_text(agent, "agent", required=True) or ""
         role = clean_text(role, "list_item", required=True) or ""
@@ -424,7 +565,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return participant
 
-    def task_chain_default_participant_list(self, task_chain_id: str) -> list[dict[str, Any]]:
+    def _task_chain_default_participant_list(self, task_chain_id: str) -> list[dict[str, Any]]:
         task_chain_id = clean_text(task_chain_id, "list_item", required=True) or ""
         with closing(self.connect()) as conn:
             return [self.row_chain_default_participant(r) for r in conn.execute("SELECT * FROM task_chain_default_participants WHERE task_chain_id=? ORDER BY role, agent", (task_chain_id,)).fetchall()]
@@ -448,7 +589,7 @@ class LearningKernel:
             if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (dep,)).fetchone():
                 raise ValueError(f"missing dependency: {dep}")
 
-    def task_show(self, task_id: str, include_participants: bool = False) -> dict[str, Any]:
+    def _task_show(self, task_id: str, include_participants: bool = False) -> dict[str, Any]:
         with closing(self.connect()) as conn:
             task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
             if not task:
@@ -513,14 +654,14 @@ class LearningKernel:
             })
         return participants
 
-    def task_participant_list(self, task_id: str) -> list[dict[str, Any]]:
+    def _task_participant_list(self, task_id: str) -> list[dict[str, Any]]:
         with closing(self.connect()) as conn:
             task = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
             if not task:
                 raise KeyError(task_id)
             return self._task_participants_for_task(conn, task)
 
-    def task_participant_add(self, task_id: str, agent: str, role: str, *, actor: str = "user", task_chain_id: str | None = None, root_task_id: str | None = None, instance_id: str | None = None, status: str | None = None) -> dict[str, Any]:
+    def _task_participant_add(self, task_id: str, agent: str, role: str, *, actor: str = "user", task_chain_id: str | None = None, root_task_id: str | None = None, instance_id: str | None = None, status: str | None = None) -> dict[str, Any]:
         actor = clean_text(actor or "user", "agent") or "user"
         with closing(self.connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -528,7 +669,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return participant
 
-    def task_participant_update(self, participant_id: str, *, status: str | None = None, actor: str = "user") -> dict[str, Any]:
+    def _task_participant_update(self, participant_id: str, *, status: str | None = None, actor: str = "user") -> dict[str, Any]:
         participant_id = clean_text(participant_id, "list_item", required=True) or participant_id
         actor = clean_text(actor or "user", "agent") or "user"
         if status is not None:
@@ -547,7 +688,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return participant
 
-    def task_participant_remove(self, participant_id: str, *, actor: str = "user") -> dict[str, Any]:
+    def _task_participant_remove(self, participant_id: str, *, actor: str = "user") -> dict[str, Any]:
         participant_id = clean_text(participant_id, "list_item", required=True) or participant_id
         actor = clean_text(actor or "user", "agent") or "user"
         with closing(self.connect()) as conn:
@@ -560,7 +701,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return participant
 
-    def task_list(self, agent: str | None = None, statuses: list[str] | None = None, include_archived: bool = False, scope: str | None = None, include_participants: bool = False, participant_roles: list[str] | None = None) -> list[dict[str, Any]]:
+    def _task_list(self, agent: str | None = None, statuses: list[str] | None = None, include_archived: bool = False, scope: str | None = None, include_participants: bool = False, participant_roles: list[str] | None = None) -> list[dict[str, Any]]:
         clauses, args = [], []
         roles = participant_roles or []
         for role in roles:
@@ -596,8 +737,8 @@ class LearningKernel:
             return ["review", "done"]
         return ["ready"]
 
-    def task_next(self, agent: str | None = None, scope: str | None = None, include_profile: bool = False, participant_roles: list[str] | None = None) -> dict[str, Any]:
-        candidates = self.task_list(agent=agent, statuses=self._task_next_statuses(participant_roles), include_archived=False, scope=scope, participant_roles=participant_roles)
+    def _task_next(self, agent: str | None = None, scope: str | None = None, include_profile: bool = False, participant_roles: list[str] | None = None) -> dict[str, Any]:
+        candidates = self._task_list(agent=agent, statuses=self._task_next_statuses(participant_roles), include_archived=False, scope=scope, participant_roles=participant_roles)
         with closing(self.connect()) as conn:
             for task in candidates:
                 deps = task.get("depends_on") or []
@@ -611,7 +752,7 @@ class LearningKernel:
             payload["user_profile"] = self.user_profile(raw=True)
         return payload
 
-    def task_ready_dependents(self, task_id: str, include_participants: bool = False) -> list[dict[str, Any]]:
+    def _task_ready_dependents(self, task_id: str, include_participants: bool = False) -> list[dict[str, Any]]:
         with closing(self.connect()) as conn:
             rows = [self.row_task(r) for r in conn.execute("SELECT * FROM tasks WHERE status IN ('ready','queued') ORDER BY created_at").fetchall()]
             ready = []
@@ -625,7 +766,7 @@ class LearningKernel:
                     ready.append(task)
             return ready
 
-    def task_update(self, task_id: str, **kw: Any) -> dict[str, Any]:
+    def _task_update(self, task_id: str, **kw: Any) -> dict[str, Any]:
         allowed = {"status", "next_step", "blocked_reason", "result_summary", "assigned_agent"}
         updates = {k: v for k, v in kw.items() if k in allowed and v is not None}
         for key in list(updates):
@@ -635,7 +776,7 @@ class LearningKernel:
         if "status" in updates and updates["status"] not in TASK_STATUSES:
             raise ValueError("invalid task status")
         if not updates:
-            return self.task_show(task_id)
+            return self._task_show(task_id)
         with closing(self.connect()) as conn:
             old = self.row_task(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
             if not old:
@@ -652,7 +793,7 @@ class LearningKernel:
                     self._upsert_task_participant_in_tx(conn, task_id=task_id, agent=updates["assigned_agent"], role="assignee", actor=actor, emit_event=False)
                 self.event(conn, "task_assigned", "user", actor, "task", task_id, {"assigned_agent": updates["assigned_agent"]}, task_id, old.get("scope"))
             conn.execute("COMMIT")
-            return self.task_show(task_id)
+            return self._task_show(task_id)
 
     def _validated_result_fields(self, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None) -> tuple[str | None, str, str, str]:
         if result not in RESULT_STATUSES:
@@ -704,7 +845,7 @@ class LearningKernel:
             agents = ", ".join(sorted({p.get("agent") or "" for p in reviewers if p.get("agent")}))
             raise ValueError(f"task has active reviewer/verifier participants ({agents}); move the task to review with a result summary instead of marking {status} directly")
 
-    def mark_result(self, task_id: str, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None, approval_id: str | None = None) -> dict[str, Any]:
+    def _mark_result(self, task_id: str, result: str, notes: str | None = None, actor: str = "user", next_step: str | None = None, status: str | None = None, approval_id: str | None = None) -> dict[str, Any]:
         notes, next_step, actor, status = self._validated_result_fields(result, notes, actor, next_step, status)
         with closing(self.connect()) as conn:
             if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone():
@@ -715,7 +856,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return task
 
-    def state_set(self, task_id: str, agent: str, **kw: Any) -> dict[str, Any]:
+    def _state_set(self, task_id: str, agent: str, **kw: Any) -> dict[str, Any]:
         status = kw.get("status") or "working"
         if status not in STATE_STATUSES:
             raise ValueError("invalid state status")
@@ -761,7 +902,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return self.row_state(conn.execute("SELECT * FROM working_states WHERE state_id=?", (state_id,)).fetchone())
 
-    def state_show(self, task_id: str, agent: str | None = None) -> dict[str, Any] | list[dict[str, Any]] | None:
+    def _state_show(self, task_id: str, agent: str | None = None) -> dict[str, Any] | list[dict[str, Any]] | None:
         with closing(self.connect()) as conn:
             if agent:
                 rows = [self.row_state(r) for r in conn.execute("SELECT * FROM working_states WHERE task_id=? AND agent=? ORDER BY task_chain_id, updated_at DESC", (task_id, agent)).fetchall()]
@@ -770,7 +911,7 @@ class LearningKernel:
                 return rows[0] if len(rows) == 1 else rows
             return [self.row_state(r) for r in conn.execute("SELECT * FROM working_states WHERE task_id=? ORDER BY task_chain_id, updated_at DESC", (task_id,)).fetchall()]
 
-    def state_list(self, agent: str | None = None, task_id: str | None = None, stale_after: int | None = None) -> list[dict[str, Any]]:
+    def _state_list(self, agent: str | None = None, task_id: str | None = None, stale_after: int | None = None) -> list[dict[str, Any]]:
         clauses, args = [], []
         if agent:
             clauses.append("agent=?"); args.append(agent)
@@ -783,7 +924,7 @@ class LearningKernel:
             rows = [r for r in rows if _iso_to_epoch(r["updated_at"]) < cutoff]
         return rows
 
-    def state_clear(self, task_id: str, agent: str | None = None, actor: str = "user") -> dict[str, Any]:
+    def _state_clear(self, task_id: str, agent: str | None = None, actor: str = "user") -> dict[str, Any]:
         actor = clean_text(actor, "agent") or "user"
         agent = clean_text(agent, "agent") if agent else None
         with closing(self.connect()) as conn:
@@ -839,7 +980,7 @@ class LearningKernel:
         if blockers:
             raise ValueError("cannot complete task chain while tasks remain open or pending approval: " + ", ".join(blockers[:10]))
 
-    def submit_completion(self, task_id: str, **kw: Any) -> dict[str, Any]:
+    def _submit_completion(self, task_id: str, **kw: Any) -> dict[str, Any]:
         if kw.get("non_learning"):
             raise ValueError("immutable/non-learning instances cannot submit learning approvals")
         agent = clean_text(kw.get("agent"), "agent", required=True) or "agent"
@@ -895,10 +1036,10 @@ class LearningKernel:
             """, (approval_id, idempotency_key, task_id, task_chain_id, root_task_id, "pending", requested["event_seq"], task.get("version"), submitted["event_seq"], agent, instance_id, result_summary, acceptance_summary, json.dumps(discoveries), clarification_count, correction_count, need_improvements_count, None if first_pass_success is None else int(first_pass_success), ts))
             conn.execute("COMMIT")
             approval = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())
-            updated_task = self.task_show(task_id)
+            updated_task = self._task_show(task_id)
             return {"approval": approval, "task": updated_task, "idempotent": False, "notification": None}
 
-    def record_approval_notification(self, approval_id: str, sent: bool, detail: str | None = None) -> dict[str, Any]:
+    def _record_approval_notification(self, approval_id: str, sent: bool, detail: str | None = None) -> dict[str, Any]:
         with closing(self.connect()) as conn:
             approval = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())
             if not approval:
@@ -908,7 +1049,7 @@ class LearningKernel:
             conn.execute("COMMIT")
             return ev
 
-    def review_completion(self, approval_id: str, result: str, **kw: Any) -> dict[str, Any]:
+    def _review_completion(self, approval_id: str, result: str, **kw: Any) -> dict[str, Any]:
         if result not in RESULT_STATUSES:
             raise ValueError("invalid result")
         next_step = clean_text(kw.get("next_step"), "next_step")
@@ -945,9 +1086,9 @@ class LearningKernel:
             updated_task, ev = self._mark_result_in_tx(conn, approval["task_id"], result, notes, actor, next_step, status, approval_id)
             conn.execute("UPDATE task_approvals SET status='decided', result=?, decided_event_seq=?, decided_at=?, version=version+1 WHERE approval_id=?", (result, ev["event_seq"], now_iso(), approval_id))
             conn.execute("COMMIT")
-        return {"approval": self.show_approval(approval_id), "task": updated_task, "idempotent": False}
+        return {"approval": self._show_approval(approval_id), "task": updated_task, "idempotent": False}
 
-    def list_approvals(self, status: str | None = None) -> list[dict[str, Any]]:
+    def _list_approvals(self, status: str | None = None) -> list[dict[str, Any]]:
         clauses, args = [], []
         if status:
             clauses.append("status=?"); args.append(status)
@@ -955,7 +1096,7 @@ class LearningKernel:
             rows = conn.execute("SELECT * FROM task_approvals" + (" WHERE " + " AND ".join(clauses) if clauses else "") + " ORDER BY created_at, approval_id", args).fetchall()
         return [self.row_approval(r) for r in rows]
 
-    def show_approval(self, approval_id: str) -> dict[str, Any]:
+    def _show_approval(self, approval_id: str) -> dict[str, Any]:
         with closing(self.connect()) as conn:
             approval = self.row_approval(conn.execute("SELECT * FROM task_approvals WHERE approval_id=?", (approval_id,)).fetchone())
         if not approval:
@@ -1055,7 +1196,7 @@ class LearningKernel:
                 d = dict(row); d["payload"] = payload; return d
         return None
 
-    def memory_propose(self, **kw: Any) -> dict[str, Any]:
+    def _memory_propose(self, **kw: Any) -> dict[str, Any]:
         proposer = clean_text(kw.get("proposed_by") or kw.get("agent") or "user", "agent", required=True) or "user"
         instance = clean_text(kw.get("proposed_by_instance") or kw.get("instance"), "agent")
         if kw.get("non_learning"):
@@ -1097,7 +1238,7 @@ class LearningKernel:
                 return {"limit_exceeded": True, "kind": kind, "current_count": count, "limit": limit, "memory_type": mem["type"], "agent": subject, "scope": mem["scope"], "stale_candidates": [dict(r) for r in rows]}
         return None
 
-    def memory_approve(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+    def _memory_approve(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
         actor = self._require_trusted_memory_actor(actor)
         with closing(self.connect()) as conn:
             mem = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
@@ -1165,7 +1306,7 @@ class LearningKernel:
         conn.execute("COMMIT")
         return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (target_id,)).fetchone()), "proposal": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (proposal["memory_id"],)).fetchone()), "event": approve_ev, "idempotent": False}
 
-    def memory_propose_edit(self, memory_id: str, *, expected_version: int | None = None, **kw: Any) -> dict[str, Any]:
+    def _memory_propose_edit(self, memory_id: str, *, expected_version: int | None = None, **kw: Any) -> dict[str, Any]:
         if kw.get("non_learning"):
             raise ValueError("immutable/non-learning instance cannot propose memory")
         proposer = clean_text(kw.get("proposed_by") or kw.get("agent") or "user", "agent", required=True) or "user"
@@ -1184,9 +1325,9 @@ class LearningKernel:
             metadata.update({"proposal_kind": "edit", "target_memory_id": memory_id, "target_expected_version": int(target["version"])})
             merged["metadata"] = metadata
             merged["trusted_manual"] = False
-            return self.memory_propose(**merged, proposed_by=proposer, proposed_by_instance=instance, non_learning=False)
+            return self._memory_propose(**merged, proposed_by=proposer, proposed_by_instance=instance, non_learning=False)
 
-    def memory_propose_archive(self, memory_id: str, *, expected_version: int | None = None, reason: str | None = None, **kw: Any) -> dict[str, Any]:
+    def _memory_propose_archive(self, memory_id: str, *, expected_version: int | None = None, reason: str | None = None, **kw: Any) -> dict[str, Any]:
         if kw.get("non_learning"):
             raise ValueError("immutable/non-learning instance cannot propose memory")
         proposer = clean_text(kw.get("proposed_by") or kw.get("agent") or "user", "agent", required=True) or "user"
@@ -1204,7 +1345,7 @@ class LearningKernel:
             metadata.update({"proposal_kind": "archive", "target_memory_id": memory_id, "target_expected_version": int(target["version"])})
             if reason:
                 metadata["archive_reason"] = reason
-            return self.memory_propose(
+            return self._memory_propose(
                 type=target.get("type"), scope=target.get("scope"), subject_agent=target.get("subject_agent"),
                 title=f"Archive: {target.get('title') or memory_id}", body=reason or f"Archive memory {memory_id}.",
                 source_task_id=kw.get("source_task_id") or target.get("source_task_id"), trusted_manual=False,
@@ -1243,7 +1384,7 @@ class LearningKernel:
         conn.execute("COMMIT")
         return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (target_id,)).fetchone()), "proposal": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (proposal["memory_id"],)).fetchone()), "event": approve_ev, "idempotent": False}
 
-    def memory_edit(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user", **kw: Any) -> dict[str, Any]:
+    def _memory_edit(self, memory_id: str, *, expected_version: int | None = None, actor: str = "user", **kw: Any) -> dict[str, Any]:
         actor = self._require_trusted_memory_actor(actor)
         with closing(self.connect()) as conn:
             mem = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
@@ -1284,7 +1425,7 @@ class LearningKernel:
                 snapshots[version + 1] = {**mem, "status": "active", "version": version + 1}
         return snapshots.get(target_version)
 
-    def memory_rollback(self, memory_id: str, *, target_version: int, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+    def _memory_rollback(self, memory_id: str, *, target_version: int, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
         actor = self._require_trusted_memory_actor(actor)
         target_version = int(target_version)
         with closing(self.connect()) as conn:
@@ -1311,10 +1452,10 @@ class LearningKernel:
             conn.execute("COMMIT")
             return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
 
-    def memory_reject(self, memory_id: str, *, reason: str | None = None, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+    def _memory_reject(self, memory_id: str, *, reason: str | None = None, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
         return self._memory_transition(memory_id, "rejected", "memory_rejected", reason=reason, expected_version=expected_version, actor=actor, allowed={"pending"})
 
-    def memory_revoke(self, memory_id: str, *, reason: str | None = None, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
+    def _memory_revoke(self, memory_id: str, *, reason: str | None = None, expected_version: int | None = None, actor: str = "user") -> dict[str, Any]:
         return self._memory_transition(memory_id, "revoked", "memory_revoked", reason=reason, expected_version=expected_version, actor=actor, allowed={"active"})
 
     def _memory_transition(self, memory_id: str, new_status: str, event_type: str, *, reason: str | None, expected_version: int | None, actor: str, allowed: set[str]) -> dict[str, Any]:
@@ -1343,14 +1484,14 @@ class LearningKernel:
             conn.execute("COMMIT")
             return {"memory": self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone()), "event": ev, "idempotent": False}
 
-    def memory_show(self, memory_id: str) -> dict[str, Any]:
+    def _memory_show(self, memory_id: str) -> dict[str, Any]:
         with closing(self.connect()) as conn:
             mem = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
         if not mem:
             raise KeyError(memory_id)
         return mem
 
-    def memory_history(self, memory_id: str) -> dict[str, Any]:
+    def _memory_history(self, memory_id: str) -> dict[str, Any]:
         with closing(self.connect()) as conn:
             mem = self.row_memory(conn.execute("SELECT * FROM memory_records WHERE memory_id=?", (memory_id,)).fetchone())
             if not mem:
@@ -1373,7 +1514,7 @@ class LearningKernel:
             })
         return {"memory": mem, "events": events}
 
-    def memory_list(self, *, scope: str | None = None, type: str | None = None, status: str | None = None, agent: str | None = None) -> list[dict[str, Any]]:
+    def _memory_list(self, *, scope: str | None = None, type: str | None = None, status: str | None = None, agent: str | None = None) -> list[dict[str, Any]]:
         clauses, args = [], []
         if scope: clauses.append("scope=?"); args.append(scope)
         if type: clauses.append("type=?"); args.append(type)
@@ -1385,7 +1526,7 @@ class LearningKernel:
             rows = conn.execute("SELECT * FROM memory_records" + (" WHERE " + " AND ".join(clauses) if clauses else "") + " ORDER BY created_at, memory_id", args).fetchall()
         return [self.row_memory(r) for r in rows]
 
-    def memory_search(self, query: str, *, scope: str | None = None) -> list[dict[str, Any]]:
+    def _memory_search(self, query: str, *, scope: str | None = None) -> list[dict[str, Any]]:
         q = f"%{(clean_text(query, 'event_text') or '').lower()}%"
         clauses, args = ["status='active'", "(lower(title) LIKE ? OR lower(body) LIKE ? OR lower(tags) LIKE ?)"], [q, q, q]
         if scope: clauses.append("scope=?"); args.append(scope)
@@ -1393,14 +1534,14 @@ class LearningKernel:
             rows = conn.execute("SELECT * FROM memory_records WHERE " + " AND ".join(clauses) + " ORDER BY validated_at DESC, title, memory_id", args).fetchall()
         return [self.row_memory(r) for r in rows]
 
-    def memory_budget(self, *, agent: str, scope: str | None = None) -> dict[str, Any]:
+    def _memory_budget(self, *, agent: str, scope: str | None = None) -> dict[str, Any]:
         with closing(self.connect()) as conn:
             out = {"agent": agent, "limits": MEMORY_LIMITS, "active": {}, "pending": int(conn.execute("SELECT COUNT(*) FROM memory_records WHERE status='pending' AND COALESCE(subject_agent, proposed_by)=?", (agent,)).fetchone()[0])}
             for typ in MEMORY_TYPES:
                 out["active"][typ] = int(conn.execute("SELECT COUNT(*) FROM memory_records WHERE status='active' AND COALESCE(subject_agent, proposed_by)=? AND type=?" + (" AND scope=?" if scope else ""), (agent, typ, *([scope] if scope else []))).fetchone()[0])
         return out
 
-    def memory_for_bootstrap(self, *, agent: str, scope: str | None = None) -> dict[str, Any]:
+    def _memory_for_bootstrap(self, *, agent: str, scope: str | None = None) -> dict[str, Any]:
         scopes = ["global", f"agent:{agent}"] + ([scope] if scope else [])
         with closing(self.connect()) as conn:
             rows = [self.row_memory(r) for r in conn.execute("SELECT * FROM memory_records WHERE status='active' AND (scope IN (%s) OR subject_agent=?) ORDER BY CASE WHEN scope=? THEN 0 WHEN subject_agent=? THEN 1 WHEN scope=? THEN 2 ELSE 3 END, validated_at DESC, title, memory_id" % ",".join("?" for _ in scopes), (*scopes, agent, scope or "", agent, "global")).fetchall()]
@@ -1437,7 +1578,7 @@ class LearningKernel:
                 d = dict(row); d["payload"] = json.loads(row["payload"] or "{}"); d["refs"] = json.loads(row["refs"] or "{}"); out.append(d)
         return out
 
-    def summarize_chain(self, task_chain_id: str, **kw: Any) -> dict[str, Any]:
+    def _summarize_chain(self, task_chain_id: str, **kw: Any) -> dict[str, Any]:
         task_chain_id = clean_text(task_chain_id, "list_item", required=True) or ""
         next_task_chain_id = clean_text(kw.get("next_task_chain_id"), "list_item")
         actor = clean_text(kw.get("actor") or "user", "agent") or "user"
@@ -1493,7 +1634,7 @@ class LearningKernel:
             result["event"] = ev
             return result
 
-    def latest_chain_summary(self, root_task_id: str | None = None) -> dict[str, Any] | None:
+    def _latest_chain_summary(self, root_task_id: str | None = None) -> dict[str, Any] | None:
         with closing(self.connect()) as conn:
             if root_task_id:
                 row = conn.execute("SELECT * FROM task_chain_summaries WHERE root_task_id=? ORDER BY event_seq_end DESC LIMIT 1", (root_task_id,)).fetchone()

@@ -1061,7 +1061,7 @@ def _durable_current_tasks_by_agent() -> dict[str, dict]:
     """Best-effort active task metadata keyed by durable agent/profile names."""
     try:
         kernel = learning_kernel()
-        states = kernel.state_list()
+        states = kernel.tasks.state_list()
     except Exception:
         return {}
     task_cache: dict[str, dict | None] = {}
@@ -1074,7 +1074,7 @@ def _durable_current_tasks_by_agent() -> dict[str, dict]:
             continue
         if task_id not in task_cache:
             try:
-                task_cache[task_id] = kernel.task_show(task_id)
+                task_cache[task_id] = kernel.tasks.show(task_id)
             except Exception:
                 task_cache[task_id] = None
         task = task_cache.get(task_id) or {}
@@ -2429,7 +2429,7 @@ def _default_task_participants(args: argparse.Namespace) -> list[dict]:
 
 def task_create(args: argparse.Namespace) -> None:
     try:
-        task = learning_kernel().task_create(
+        task = learning_kernel().tasks.create(
             title=args.title,
             description=args.description or "",
             assigned_agent=args.agent,
@@ -2450,7 +2450,7 @@ def task_create(args: argparse.Namespace) -> None:
 
 def task_show(args: argparse.Namespace) -> None:
     try:
-        _print_payload(learning_kernel().task_show(args.task_id, include_participants=getattr(args, "include_participants", False)), args.json)
+        _print_payload(learning_kernel().tasks.show(args.task_id, include_participants=getattr(args, "include_participants", False)), args.json)
     except KeyError:
         raise SystemExit(f"task not found: {args.task_id}")
 
@@ -2459,7 +2459,7 @@ def task_list(args: argparse.Namespace) -> None:
     statuses = parse_csv(args.status)
     roles = parse_csv(getattr(args, "participant_role", None))
     try:
-        payload = learning_kernel().task_list(agent=args.agent, statuses=statuses or None, include_archived=args.include_archived, scope=args.scope, include_participants=getattr(args, "include_participants", False), participant_roles=roles or None)
+        payload = learning_kernel().tasks.list(agent=args.agent, statuses=statuses or None, include_archived=args.include_archived, scope=args.scope, include_participants=getattr(args, "include_participants", False), participant_roles=roles or None)
     except ValueError as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
@@ -2467,7 +2467,7 @@ def task_list(args: argparse.Namespace) -> None:
 
 def task_chain_default_participant_set(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().task_chain_default_participant_set(args.task_chain_id, args.agent, args.role, root_task_id=args.root_task_id, status=args.status, actor=os.environ.get("AGENT_NAME") or "user")
+        payload = learning_kernel().tasks.chain_default_participant_set(args.task_chain_id, args.agent, args.role, root_task_id=args.root_task_id, status=args.status, actor=os.environ.get("AGENT_NAME") or "user")
     except ValueError as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
@@ -2475,7 +2475,7 @@ def task_chain_default_participant_set(args: argparse.Namespace) -> None:
 
 def task_chain_default_participant_list(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().task_chain_default_participant_list(args.task_chain_id)
+        payload = learning_kernel().tasks.chain_default_participant_list(args.task_chain_id)
     except ValueError as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
@@ -2483,14 +2483,14 @@ def task_chain_default_participant_list(args: argparse.Namespace) -> None:
 
 def task_participant_list(args: argparse.Namespace) -> None:
     try:
-        _print_payload(learning_kernel().task_participant_list(args.task_id), args.json)
+        _print_payload(learning_kernel().tasks.participant_list(args.task_id), args.json)
     except KeyError:
         raise SystemExit(f"task not found: {args.task_id}")
 
 
 def task_participant_add(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().task_participant_add(args.task_id, args.agent, args.role, actor=os.environ.get("AGENT_NAME") or "user", task_chain_id=args.task_chain_id, root_task_id=args.root_task_id, instance_id=args.instance, status=args.status)
+        payload = learning_kernel().tasks.participant_add(args.task_id, args.agent, args.role, actor=os.environ.get("AGENT_NAME") or "user", task_chain_id=args.task_chain_id, root_task_id=args.root_task_id, instance_id=args.instance, status=args.status)
     except KeyError:
         raise SystemExit(f"task not found: {args.task_id}")
     except ValueError as e:
@@ -2500,7 +2500,7 @@ def task_participant_add(args: argparse.Namespace) -> None:
 
 def task_participant_update(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().task_participant_update(args.participant_id, status=args.status, actor=os.environ.get("AGENT_NAME") or "user")
+        payload = learning_kernel().tasks.participant_update(args.participant_id, status=args.status, actor=os.environ.get("AGENT_NAME") or "user")
     except KeyError:
         raise SystemExit(f"participant not found: {args.participant_id}")
     except ValueError as e:
@@ -2510,7 +2510,7 @@ def task_participant_update(args: argparse.Namespace) -> None:
 
 def task_participant_remove(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().task_participant_remove(args.participant_id, actor=os.environ.get("AGENT_NAME") or "user")
+        payload = learning_kernel().tasks.participant_remove(args.participant_id, actor=os.environ.get("AGENT_NAME") or "user")
     except KeyError:
         raise SystemExit(f"participant not found: {args.participant_id}")
     _print_payload(payload, args.json)
@@ -2533,7 +2533,7 @@ def task_next(args: argparse.Namespace) -> None:
     agent = args.agent or os.environ.get("AGENT_NAME")
     roles = parse_csv(getattr(args, "participant_role", None))
     try:
-        payload = learning_kernel().task_next(agent=agent, scope=args.scope, include_profile=args.include_profile, participant_roles=roles or None)
+        payload = learning_kernel().tasks.next(agent=agent, scope=args.scope, include_profile=args.include_profile, participant_roles=roles or None)
     except ValueError as e:
         raise SystemExit(str(e))
     conflicts = duplicate_profile_instances(agent)
@@ -2718,7 +2718,7 @@ def task_update(args: argparse.Namespace) -> None:
         "assigned_agent": args.assign_agent,
     }.items() if v is not None}
     try:
-        payload = learning_kernel().task_update(
+        payload = learning_kernel().tasks.update(
             args.task_id,
             status=args.status,
             next_step=args.next_step,
@@ -2733,9 +2733,9 @@ def task_update(args: argparse.Namespace) -> None:
         raise SystemExit(str(e))
     if updates:
         kernel = learning_kernel()
-        notify_payload = kernel.task_show(args.task_id, include_participants=True)
+        notify_payload = kernel.tasks.show(args.task_id, include_participants=True)
         if updates.get("status") == "validated":
-            notify_payload["ready_dependents"] = kernel.task_ready_dependents(args.task_id, include_participants=True)
+            notify_payload["ready_dependents"] = kernel.tasks.ready_dependents(args.task_id, include_participants=True)
         payload["notification"] = notify_task_update(notify_payload, actor, updates)
     _print_payload(payload, args.json)
 
@@ -2744,13 +2744,13 @@ def task_mark_result(args: argparse.Namespace) -> None:
     actor = os.environ.get("AGENT_NAME") or "user"
     kernel = learning_kernel()
     try:
-        payload = kernel.mark_result(args.task_id, args.result, args.notes, actor=actor, next_step=args.next_step, status=args.status)
+        payload = kernel.tasks.mark_result(args.task_id, args.result, args.notes, actor=actor, next_step=args.next_step, status=args.status)
     except KeyError:
         raise SystemExit(f"task not found: {args.task_id}")
     except ValueError as e:
         raise SystemExit(str(e))
-    notify_payload = kernel.task_show(args.task_id, include_participants=True)
-    notify_payload["ready_dependents"] = kernel.task_ready_dependents(args.task_id, include_participants=True)
+    notify_payload = kernel.tasks.show(args.task_id, include_participants=True)
+    notify_payload["ready_dependents"] = kernel.tasks.ready_dependents(args.task_id, include_participants=True)
     payload["notification"] = notify_task_update(notify_payload, actor, {"status": payload.get("status"), "result_status": args.result})
     _print_payload(payload, args.json)
 
@@ -2783,7 +2783,7 @@ def notify_chain_summary(kernel: LearningKernel, summary: dict, actor: str) -> d
     participant_results = []
     recipients: list[dict] = []
     try:
-        root_task = kernel.task_show(root_task_id, include_participants=True)
+        root_task = kernel.tasks.show(root_task_id, include_participants=True)
         _append_task_role_recipients(recipients, root_task, {"assignee", "reviewer", "verifier", "coordinator", "requester"}, actor, "chain_summary")
     except Exception as e:
         participant_results.append({"agent": None, "sent": False, "error": str(e)})
@@ -2806,7 +2806,7 @@ def task_summarize_chain(args: argparse.Namespace) -> None:
     actor = os.environ.get("AGENT_NAME") or "user"
     kernel = learning_kernel()
     try:
-        payload = kernel.summarize_chain(args.task_chain_id, root_task_id=args.root_task_id, next_task_chain_id=args.next_task_chain_id, actor=actor)
+        payload = kernel.tasks.summarize_chain(args.task_chain_id, root_task_id=args.root_task_id, next_task_chain_id=args.next_task_chain_id, actor=actor)
     except KeyError:
         raise SystemExit(f"task chain not found: {args.task_chain_id}")
     except ValueError as e:
@@ -2940,12 +2940,12 @@ def task_bootstrap(args: argparse.Namespace) -> None:
     agent = args.agent or os.environ.get("AGENT_NAME") or "agent"
     source_cwd = Path(args.cwd or os.environ.get("BROCCOLI_COMMS_SOURCE_CWD") or os.getcwd())
     ephemeral_cwd = Path(getattr(args, "write_context_dir", None) or os.environ.get("BROCCOLI_COMMS_EPHEMERAL_CWD") or os.getcwd())
-    payload = learning_kernel().task_next(agent=agent, scope=args.scope, include_profile=True)
+    payload = learning_kernel().tasks.next(agent=agent, scope=args.scope, include_profile=True)
     task = payload.get("task") if isinstance(payload, dict) else None
-    state = learning_kernel().state_show(task["task_id"], agent) if task else None
-    mem = learning_kernel().memory_for_bootstrap(agent=agent, scope=(task or {}).get("scope") or args.scope)
+    state = learning_kernel().tasks.state_show(task["task_id"], agent) if task else None
+    mem = learning_kernel().memory.for_bootstrap(agent=agent, scope=(task or {}).get("scope") or args.scope)
     root_for_summary = (state or {}).get("root_task_id") if isinstance(state, dict) else (task or {}).get("task_id")
-    chain_summary = learning_kernel().latest_chain_summary(root_for_summary) if root_for_summary else None
+    chain_summary = learning_kernel().tasks.latest_chain_summary(root_for_summary) if root_for_summary else None
     payload.update({"state": state, "chain_summary": chain_summary, "memory": mem["records"], "memory_meta": {"truncated": mem["truncated"], "omitted_count": mem["omitted_count"]}, "agents_md": agent_contract(agent, args.instance, ephemeral_cwd, agent_contract_template(), source_cwd=source_cwd)})
     conflicts = duplicate_profile_instances(agent)
     if conflicts:
@@ -2960,7 +2960,7 @@ def state_set(args: argparse.Namespace) -> None:
     if not agent:
         raise SystemExit("state set requires --agent when AGENT_NAME is unavailable")
     try:
-        payload = learning_kernel().state_set(
+        payload = learning_kernel().tasks.state_set(
             args.task_id,
             agent,
             status=args.status,
@@ -2985,7 +2985,7 @@ def state_set(args: argparse.Namespace) -> None:
 
 
 def state_show(args: argparse.Namespace) -> None:
-    payload = learning_kernel().state_show(args.task_id, args.agent or os.environ.get("AGENT_NAME"))
+    payload = learning_kernel().tasks.state_show(args.task_id, args.agent or os.environ.get("AGENT_NAME"))
     _print_payload(payload, args.json)
 
 
@@ -2994,11 +2994,11 @@ def state_list(args: argparse.Namespace) -> None:
         stale_after = parse_duration_seconds(args.stale_after) if args.stale_after else None
     except ValueError as e:
         raise SystemExit(str(e))
-    _print_payload(learning_kernel().state_list(agent=args.agent, task_id=args.task_id, stale_after=stale_after), args.json)
+    _print_payload(learning_kernel().tasks.state_list(agent=args.agent, task_id=args.task_id, stale_after=stale_after), args.json)
 
 
 def state_clear(args: argparse.Namespace) -> None:
-    _print_payload(learning_kernel().state_clear(args.task_id, args.agent or os.environ.get("AGENT_NAME"), actor=os.environ.get("AGENT_NAME") or "user"), args.json)
+    _print_payload(learning_kernel().tasks.state_clear(args.task_id, args.agent or os.environ.get("AGENT_NAME"), actor=os.environ.get("AGENT_NAME") or "user"), args.json)
 
 
 def user_profile_show(args: argparse.Namespace) -> None:
@@ -3099,7 +3099,7 @@ def memory_propose(args: argparse.Namespace) -> None:
         memory_id = getattr(args, "memory_id", None)
         metadata = json.loads(args.metadata_json) if args.metadata_json else {}
         if memory_id and getattr(args, "archive", False):
-            payload = learning_kernel().memory_propose_archive(
+            payload = learning_kernel().memory.propose_archive(
                 memory_id,
                 expected_version=args.expected_version,
                 reason=getattr(args, "reason", None),
@@ -3109,7 +3109,7 @@ def memory_propose(args: argparse.Namespace) -> None:
                 non_learning=immutable_learning_instance(agent, instance),
             )
         elif memory_id:
-            payload = learning_kernel().memory_propose_edit(
+            payload = learning_kernel().memory.propose_edit(
                 memory_id,
                 expected_version=args.expected_version,
                 proposed_by=agent,
@@ -3131,7 +3131,7 @@ def memory_propose(args: argparse.Namespace) -> None:
                 ident = verified_memory_runtime_identity()
                 agent = trusted_actor
                 instance = ident["instance"] if ident["registered"] else None
-            payload = learning_kernel().memory_propose(
+            payload = learning_kernel().memory.propose(
                 type=args.type, scope=args.scope, subject_agent=args.subject_agent, title=args.title,
                 description=getattr(args, "description", None), body=args.body,
                 source_task_id=args.source_task, trusted_manual=args.trusted_manual, tags=args.tag, metadata=metadata,
@@ -3149,7 +3149,7 @@ def memory_propose_edit(args: argparse.Namespace) -> None:
     try:
         agent, instance = unverified_memory_proposer(args)
         metadata = json.loads(args.metadata_json) if args.metadata_json else {}
-        payload = learning_kernel().memory_propose_edit(
+        payload = learning_kernel().memory.propose_edit(
             args.memory_id,
             expected_version=args.expected_version,
             proposed_by=agent,
@@ -3174,7 +3174,7 @@ def memory_propose_edit(args: argparse.Namespace) -> None:
 
 def memory_approve(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().memory_approve(args.memory_id, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+        payload = learning_kernel().memory.approve(args.memory_id, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
     except (KeyError, ValueError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
@@ -3184,9 +3184,9 @@ def memory_decide(args: argparse.Namespace) -> None:
     try:
         actor = trusted_memory_actor_from_runtime()
         if args.decision == "approve":
-            payload = learning_kernel().memory_approve(args.memory_id, expected_version=args.expected_version, actor=actor)
+            payload = learning_kernel().memory.approve(args.memory_id, expected_version=args.expected_version, actor=actor)
         elif args.decision == "reject":
-            payload = learning_kernel().memory_reject(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=actor)
+            payload = learning_kernel().memory.reject(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=actor)
         else:
             raise ValueError("decision must be approve or reject")
     except (KeyError, ValueError) as e:
@@ -3197,7 +3197,7 @@ def memory_decide(args: argparse.Namespace) -> None:
 def memory_edit(args: argparse.Namespace) -> None:
     try:
         metadata = json.loads(args.metadata_json) if args.metadata_json else None
-        payload = learning_kernel().memory_edit(
+        payload = learning_kernel().memory.edit(
             args.memory_id,
             expected_version=args.expected_version,
             actor=trusted_memory_actor_from_runtime(),
@@ -3219,7 +3219,7 @@ def memory_edit(args: argparse.Namespace) -> None:
 
 def memory_rollback(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().memory_rollback(args.memory_id, target_version=args.to_version, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+        payload = learning_kernel().memory.rollback(args.memory_id, target_version=args.to_version, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
     except (KeyError, ValueError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
@@ -3227,7 +3227,7 @@ def memory_rollback(args: argparse.Namespace) -> None:
 
 def memory_reject(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().memory_reject(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+        payload = learning_kernel().memory.reject(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
     except (KeyError, ValueError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
@@ -3235,30 +3235,30 @@ def memory_reject(args: argparse.Namespace) -> None:
 
 def memory_revoke(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().memory_revoke(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
+        payload = learning_kernel().memory.revoke(args.memory_id, reason=args.reason, expected_version=args.expected_version, actor=trusted_memory_actor_from_runtime())
     except (KeyError, ValueError) as e:
         raise SystemExit(str(e))
     _print_payload(payload, args.json)
 
 
 def memory_list(args: argparse.Namespace) -> None:
-    _print_payload(learning_kernel().memory_list(scope=args.scope, type=args.type, status=args.status, agent=args.agent), True)
+    _print_payload(learning_kernel().memory.list(scope=args.scope, type=args.type, status=args.status, agent=args.agent), True)
 
 
 def memory_approvals(args: argparse.Namespace) -> None:
-    kernel = learning_kernel()
-    pending = kernel.memory_list(scope=args.scope, type=args.type, status="pending", agent=args.agent)
-    approved = kernel.memory_list(scope=args.scope, type=args.type, status="active", agent=args.agent)
+    memory = learning_kernel().memory
+    pending = memory.list(scope=args.scope, type=args.type, status="pending", agent=args.agent)
+    approved = memory.list(scope=args.scope, type=args.type, status="active", agent=args.agent)
     _print_payload({"pending": pending, "approved": approved}, True)
 
 
 def memory_search(args: argparse.Namespace) -> None:
-    _print_payload(learning_kernel().memory_search(args.query, scope=args.scope), True)
+    _print_payload(learning_kernel().memory.search(args.query, scope=args.scope), True)
 
 
 def memory_show(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().memory_show(args.memory_id)
+        payload = learning_kernel().memory.show(args.memory_id)
     except KeyError:
         raise SystemExit(f"memory not found: {args.memory_id}")
     _print_payload(payload, True)
@@ -3266,7 +3266,7 @@ def memory_show(args: argparse.Namespace) -> None:
 
 def memory_history(args: argparse.Namespace) -> None:
     try:
-        payload = learning_kernel().memory_history(args.memory_id)
+        payload = learning_kernel().memory.history(args.memory_id)
     except KeyError:
         raise SystemExit(f"memory not found: {args.memory_id}")
     _print_payload(payload, True)
@@ -3274,7 +3274,7 @@ def memory_history(args: argparse.Namespace) -> None:
 
 def memory_budget(args: argparse.Namespace) -> None:
     agent = args.agent or os.environ.get("AGENT_NAME") or "user"
-    _print_payload(learning_kernel().memory_budget(agent=agent, scope=args.scope), True)
+    _print_payload(learning_kernel().memory.budget(agent=agent, scope=args.scope), True)
 
 
 def _parse_discoveries(values: list[str] | None) -> list[dict[str, str]]:
@@ -3354,14 +3354,14 @@ def notify_approval_request(kernel: LearningKernel, approval: dict) -> dict:
         ui_result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": sender_name})
         if not ui_result:
             raise RuntimeError("tracker RPC send_message failed")
-        kernel.record_approval_notification(approval["approval_id"], True, "agent-communicator")
+        kernel.tasks.record_approval_notification(approval["approval_id"], True, "agent-communicator")
         ui_sent = True
     except Exception as e:
         ui_error = str(e)
-        kernel.record_approval_notification(approval["approval_id"], False, str(e))
+        kernel.tasks.record_approval_notification(approval["approval_id"], False, str(e))
     participant_results = []
     try:
-        task = kernel.task_show(approval["task_id"], include_participants=True)
+        task = kernel.tasks.show(approval["task_id"], include_participants=True)
         recipients = []
         def append_approval_recipient(agent: str | None) -> None:
             if agent and agent != UI_AGENT_NAME and agent not in recipients:
@@ -3377,10 +3377,10 @@ def notify_approval_request(kernel: LearningKernel, approval: dict) -> dict:
                 participant_result = tracker_rpc("send_message", {"agent_name": recipient, "message": message, "metadata": participant_metadata, "sender_name": sender_name})
                 if not participant_result:
                     raise RuntimeError("tracker RPC send_message failed")
-                event = kernel.record_approval_notification(approval["approval_id"], True, f"participant:{recipient}")
+                event = kernel.tasks.record_approval_notification(approval["approval_id"], True, f"participant:{recipient}")
                 participant_results.append({"agent": recipient, "sent": True, "result": participant_result, "event": event})
             except Exception as participant_error:
-                event = kernel.record_approval_notification(approval["approval_id"], False, f"participant:{recipient}: {participant_error}")
+                event = kernel.tasks.record_approval_notification(approval["approval_id"], False, f"participant:{recipient}: {participant_error}")
                 participant_results.append({"agent": recipient, "sent": False, "error": str(participant_error), "event": event})
     except Exception as e:
         participant_results.append({"agent": None, "sent": False, "error": str(e)})
@@ -3393,7 +3393,7 @@ def notify_approval_request(kernel: LearningKernel, approval: dict) -> dict:
 def _require_chain_summary_before_submit(kernel: LearningKernel, task_chain_id: str | None, root_task_id: str | None) -> None:
     if not task_chain_id or not root_task_id:
         raise ValueError("submit-completion is only for task-chain/scoped-phase completion; pass --task-chain-id and --root-task-id after running task summarize-chain")
-    summary = kernel.latest_chain_summary(root_task_id)
+    summary = kernel.tasks.latest_chain_summary(root_task_id)
     if not summary or summary.get("task_chain_id") != task_chain_id:
         raise ValueError("run `broccoli-comms task summarize-chain <task_chain_id> --root-task-id <root_task_id>` before submit-completion")
 
@@ -3404,7 +3404,7 @@ def task_submit_completion(args: argparse.Namespace) -> None:
     instance = args.instance or os.environ.get("AGENT_ID") or os.environ.get("AGENT_UUID")
     try:
         _require_chain_summary_before_submit(kernel, args.task_chain_id, args.root_task_id)
-        payload = kernel.submit_completion(
+        payload = kernel.tasks.submit_completion(
             args.task_id,
             agent=agent,
             agent_instance_id=instance,
@@ -3428,12 +3428,12 @@ def task_submit_completion(args: argparse.Namespace) -> None:
 
 
 def task_approval_list(args: argparse.Namespace) -> None:
-    _print_payload(learning_kernel().list_approvals(status=args.status), True)
+    _print_payload(learning_kernel().tasks.list_approvals(status=args.status), True)
 
 
 def task_approval_show(args: argparse.Namespace) -> None:
     try:
-        _print_payload(learning_kernel().show_approval(args.approval_id), True)
+        _print_payload(learning_kernel().tasks.show_approval(args.approval_id), True)
     except KeyError:
         raise SystemExit(f"approval not found: {args.approval_id}")
 
@@ -3442,13 +3442,13 @@ def task_approval_review(args: argparse.Namespace) -> None:
     actor = getattr(args, "actor", None) or os.environ.get("AGENT_NAME") or "user"
     kernel = learning_kernel()
     try:
-        payload = kernel.review_completion(args.approval_id, args.result, next_step=args.next_step, notes=args.notes, status=args.status, task_version_at_submission=args.task_version_at_submission, actor=actor)
+        payload = kernel.tasks.review_completion(args.approval_id, args.result, next_step=args.next_step, notes=args.notes, status=args.status, task_version_at_submission=args.task_version_at_submission, actor=actor)
     except (KeyError, ValueError) as e:
         raise SystemExit(str(e))
     task_id = payload.get("task", {}).get("task_id")
     if task_id and not payload.get("idempotent"):
-        notify_payload = kernel.task_show(task_id, include_participants=True)
-        notify_payload["ready_dependents"] = kernel.task_ready_dependents(task_id, include_participants=True)
+        notify_payload = kernel.tasks.show(task_id, include_participants=True)
+        notify_payload["ready_dependents"] = kernel.tasks.ready_dependents(task_id, include_participants=True)
         payload["notification"] = notify_task_update(notify_payload, actor, {"status": payload.get("task", {}).get("status"), "result_status": args.result})
     _print_payload(payload, args.json)
 

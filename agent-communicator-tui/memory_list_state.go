@@ -110,29 +110,16 @@ func (m model) memoryListHeight() int {
 
 func (m *model) scrollSelectedMemoryIntoView(visibleRows int) {
 	items := m.filteredMemoryItems()
-	if len(items) == 0 {
-		m.memoryOffset = 0
-		return
-	}
-	visibleRows = min(max(1, visibleRows), len(items))
-	if m.memorySelected < m.memoryOffset {
-		m.memoryOffset = m.memorySelected
-	}
-	if m.memorySelected >= m.memoryOffset+visibleRows {
-		m.memoryOffset = m.memorySelected - visibleRows + 1
-	}
-	m.memoryOffset = min(max(0, m.memoryOffset), max(0, len(items)-visibleRows))
+	state := CardListState{Selected: m.memorySelected, Offset: m.memoryOffset, Count: len(items), Visible: visibleRows}.ScrollSelectedIntoView()
+	m.memorySelected = state.Selected
+	m.memoryOffset = state.Offset
 }
 
 func (m *model) moveMemorySelection(delta, visibleRows int) {
 	items := m.filteredMemoryItems()
-	if len(items) == 0 {
-		m.memorySelected = 0
-		m.memoryOffset = 0
-		return
-	}
-	m.memorySelected = min(max(0, m.memorySelected+delta), len(items)-1)
-	m.scrollSelectedMemoryIntoView(visibleRows)
+	state := CardListState{Selected: m.memorySelected, Offset: m.memoryOffset, Count: len(items), Visible: visibleRows}.Move(delta)
+	m.memorySelected = state.Selected
+	m.memoryOffset = state.Offset
 }
 
 func (m *model) cycleMemoryStatusFilter() {

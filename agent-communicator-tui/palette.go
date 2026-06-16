@@ -385,59 +385,27 @@ func (m model) updateCommandPalette(msg tea.KeyMsg) (model, tea.Cmd) {
 }
 
 func (m model) commandPaletteView(width, height int) string {
-	actions := m.filteredCommandActions()
-	paletteW := commandPaletteWidth(width)
-	paletteH := commandPaletteContentHeight(height)
-	contentW := max(8, paletteW-4)
-	panelBG := colors.PopupBg
-	panelLine := lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Text).Render
-	query := strings.TrimSpace(string(m.commandPalette.Query))
-	if query == "" {
-		query = "type to filter commands…"
-	}
-	titleGap := max(1, contentW-lipgloss.Width("Command palette")-lipgloss.Width("esc close"))
-	paletteMuted := fgOnBg(colors.Muted, panelBG)
-	lines := []string{
-		padStyledLine(paletteMuted.Render("Command palette")+bgSpaces(titleGap, panelBG)+paletteMuted.Render("esc close"), contentW, panelBG),
-		lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(colors.InputBg).Foreground(colors.Text).Padding(0, 1).Render(truncateCells(query, max(1, contentW-2))),
-	}
-	visibleStart := min(max(0, m.commandPalette.Offset), len(actions))
-	lastCategory := ""
-	if visibleStart > 0 {
-		lastCategory = actions[visibleStart-1].Category
-		lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Muted).Render(truncateCells("↑ more commands", contentW)))
-	}
-	visibleEnd := visibleStart
-	for i, action := range actions[visibleStart:] {
-		actionIndex := visibleStart + i
-		if len(lines) >= paletteH-1 {
-			break
-		}
-		visibleEnd = actionIndex + 1
-		if action.Category != lastCategory {
-			lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.TextSubtle).Bold(true).Render(truncateCells(strings.ToUpper(action.Category), contentW)))
-			lastCategory = action.Category
-		}
-		title := truncateCells(action.Title, max(1, contentW-lipgloss.Width(action.Shortcut)-3))
-		gap := max(1, contentW-lipgloss.Width(title)-lipgloss.Width(action.Shortcut))
-		rowText := title + strings.Repeat(" ", gap) + action.Shortcut
-		if actionIndex == m.commandPalette.Selected {
-			lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(colors.SelectedBg).Foreground(colors.SelectedFg).Bold(true).Render(truncateCells(rowText, contentW)))
-		} else {
-			lines = append(lines, panelLine(rowText))
-		}
-		if action.Subtitle != "" && len(lines) < paletteH-1 {
-			lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Muted).Render(truncateCells("  "+action.Subtitle, contentW)))
-		}
-	}
-	if len(actions) == 0 {
-		lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Muted).Render("No backed commands match."))
-	} else if visibleEnd < len(actions) && len(lines) < paletteH {
-		lines = append(lines, lipgloss.NewStyle().Width(contentW).MaxWidth(contentW).Background(panelBG).Foreground(colors.Muted).Render(truncateCells("↓ more commands", contentW)))
-	}
-	content := strings.Join(lines, "\n")
-	box := lipgloss.NewStyle().Width(paletteW-2).MaxWidth(paletteW).Border(lipgloss.NormalBorder()).BorderForeground(colors.PopupBorder).Padding(1, 1).Background(panelBG).Render(content)
+	box := CommandPaletteComponent{
+		Title:       "Command palette",
+		Help:        "esc close",
+		Placeholder: "type to filter commands…",
+		Query:       string(m.commandPalette.Query),
+		Items:       commandPaletteItems(m.filteredCommandActions()),
+		Selected:    m.commandPalette.Selected,
+		Offset:      m.commandPalette.Offset,
+		Width:       width,
+		Height:      height,
+		Popup:       true,
+	}.View()
 	return overlayString(m.baseView(), box, width, height)
+}
+
+func commandPaletteItems(actions []commandAction) []CommandPaletteItem {
+	items := make([]CommandPaletteItem, 0, len(actions))
+	for _, action := range actions {
+		items = append(items, CommandPaletteItem{Title: action.Title, Subtitle: action.Subtitle, Category: action.Category, Shortcut: action.Shortcut, Enabled: true})
+	}
+	return items
 }
 
 func overlayString(base, overlay string, width, height int) string {

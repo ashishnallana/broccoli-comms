@@ -11,10 +11,7 @@ import (
 
 func (m model) conversationPanel(width, height int) string {
 	defer debugSince("conversation_panel", time.Now())
-	padX := 3
-	if width < 70 {
-		padX = 1
-	}
+	padX := responsivePanelPaddingForWidth(width, width >= 70)
 	innerW := max(1, width-(padX*2))
 	title := titleStyle.Render(m.conversationTitle())
 	composer := m.composerBox(innerW)
@@ -43,14 +40,11 @@ func (m model) messageView(width int) string {
 
 func (m model) messageViewWithHeight(width, visible int) string {
 	defer debugSince("message_view", time.Now())
-	lines := m.messageLinesForWidth(width)
-	visible = max(1, visible)
-	if len(lines) == 0 {
-		return ""
-	}
-	offset := clampMessageOffset(m.messageOffset, len(lines), visible)
-	end := min(len(lines), offset+visible)
-	return lipgloss.NewStyle().Width(max(1, width)).Height(visible).MaxHeight(visible).Background(colors.BaseBg).Render(strings.Join(lines[offset:end], "\n"))
+	return m.messageViewportPanel(width, visible).View()
+}
+
+func (m model) messageViewportPanel(width, visible int) ViewportPanel {
+	return NewViewportPanel(width, visible, m.messageOffset, colors.BaseBg, m.messageLinesForWidth(width))
 }
 
 func (m model) messageLinesForWidth(width int) []string {
@@ -161,14 +155,10 @@ func (m model) messageVisibleLines() int {
 	bottomH := lineCount(m.footer(max(1, m.width))) + lineCount(m.bottomTabBar(max(1, m.width)))
 	return max(1, m.height-bottomH-m.messageChromeHeight())
 }
-func messagePageSize(height int) int             { return max(1, height/2) }
-func messageBottomOffset(total, visible int) int { return max(0, total-visible) }
+func messagePageSize(height int) int             { return viewportPageSize(height) }
+func messageBottomOffset(total, visible int) int { return viewportBottomOffset(total, visible) }
 func clampMessageOffset(offset, total, visible int) int {
-	maxOffset := messageBottomOffset(total, visible)
-	if offset > maxOffset {
-		return maxOffset
-	}
-	return max(0, offset)
+	return clampViewportOffset(offset, total, visible)
 }
 
 func (m model) scrollHint() string {

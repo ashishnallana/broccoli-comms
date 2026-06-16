@@ -21,19 +21,12 @@ func (m model) taskManagementView(width, height int) string {
 }
 
 func taskLayoutWidths(width int) (int, int) {
-	right := min(42, max(28, (width*32)/100))
-	if width < 100 {
-		right = min(34, max(24, width/3))
-	}
-	return max(10, width-right), right
+	return contentDetailLayoutWidths(width)
 }
 
 func (m model) taskPrimaryPanel(width, height int, wide bool) string {
 	bg := colors.BaseBg
-	padX := 3
-	if !wide {
-		padX = 1
-	}
+	padX := responsivePanelPadding(width, wide)
 	innerW := max(1, width-(padX*2))
 	data := m.taskData()
 	title := "Chain Investigation"
@@ -73,12 +66,8 @@ func (m model) taskPrimaryPanel(width, height int, wide bool) string {
 }
 
 func (m model) taskAgentFilterInputBox(width int) string {
-	padX := 2
-	if m.width < 70 {
-		padX = 1
-	}
+	padX := responsiveInputPadding(m.width)
 	inner := max(1, width-(padX*2))
-	blank := bgSpaces(width, colors.InputBg)
 	style := fgOnBg(colors.Muted, colors.InputBg)
 	if m.tasksAgentFilterFocused {
 		style = fgOnBg(colors.Text, colors.InputBg)
@@ -87,8 +76,8 @@ func (m model) taskAgentFilterInputBox(width int) string {
 	if strings.TrimSpace(string(m.tasksAgentFilter)) != "" {
 		text = "agent filter: " + strings.TrimSpace(string(m.tasksAgentFilter))
 	}
-	line := bgSpaces(padX, colors.InputBg) + padStyledLine(style.Render(truncateCells(text, inner)), inner, colors.InputBg) + bgSpaces(padX, colors.InputBg)
-	return strings.Join([]string{blank, line, blank}, "\n")
+	line := style.Render(truncateCells(text, inner))
+	return renderInputSurface(width, m.width, []string{line}, colors.InputBg)
 }
 
 func taskHelpLine(data taskManagementData) string {
