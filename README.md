@@ -115,6 +115,8 @@ initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the
 
 Provider fields:
 
+When installed through the Broccoli Comms Home Manager module, prefer Nix options such as `services.broccoli-comms.providers.<name>.cmd`, `autoAcceptFlag`, `promptFlagName`, `initialMessage`, `tmuxSubmitKey`, `agentRootDir`, `agentsDir`, and `extraSettings`; the module renders `~/.config/broccoli-comms/config.toml` from those options.
+
 - `cmd`: executable or absolute path to launch for the provider alias used in `broccoli-comms run NAME -- PROVIDER ...`.
 - `defaultArgs`: optional string or TOML array appended after `cmd` for every launch of that provider.
 - `auto-accept-flag`: optional provider-specific flag that enables auto-accept/auto-approve mode. Leave empty to disable.

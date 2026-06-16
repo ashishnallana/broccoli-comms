@@ -3,6 +3,7 @@ let
   cfg = config.services.broccoli-comms;
   pcfg = config.programs.broccoli-comms;
   packages = self.packages.${pkgs.system};
+  configTomlFormat = pkgs.formats.toml {};
 
   registrySpecType = lib.types.submodule {
     options = {
@@ -15,6 +16,30 @@ let
       };
     };
   };
+
+  providerSpecType = lib.types.submodule ({ name, ... }: {
+    options = {
+      cmd = lib.mkOption { type = lib.types.str; default = name; description = "Provider executable or absolute command path."; };
+      agentsDir = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Optional provider-specific agents directory."; };
+      agentRootDir = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Optional stable root for this provider's agent workspaces."; };
+      autoAcceptFlag = lib.mkOption { type = lib.types.str; default = ""; description = "Provider flag that enables auto-accept/auto-approve behavior. Empty disables it."; };
+      promptFlagName = lib.mkOption { type = lib.types.str; default = "--"; description = "Provider flag for the initial prompt. Use -- when the prompt is positional."; };
+      initialMessage = lib.mkOption { type = lib.types.nullOr lib.types.str; default = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."; description = "Initial prompt passed to the provider; null disables it."; };
+      tmuxSubmitKey = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Optional tmux key used to submit text for this provider, for example C-M."; };
+      extraSettings = lib.mkOption { type = lib.types.attrs; default = {}; description = "Additional raw TOML settings for this provider."; };
+    };
+  });
+
+  compactAttrs = lib.filterAttrsRecursive (_: value: value != null);
+  providerToml = provider: compactAttrs ({
+    cmd = provider.cmd;
+    agentsDir = provider.agentsDir;
+    "agent-root-dir" = provider.agentRootDir;
+    "auto-accept-flag" = provider.autoAcceptFlag;
+    "prompt-flag-name" = provider.promptFlagName;
+    "initial-message" = provider.initialMessage;
+    "tmux-submit-key" = provider.tmuxSubmitKey;
+  } // provider.extraSettings);
 
   cacheRoot = config.xdg.cacheHome or "${config.home.homeDirectory}/.cache";
   stateRoot = config.xdg.stateHome or "${config.home.homeDirectory}/.local/state";
@@ -31,6 +56,32 @@ let
   trackerStdout = "${broccoliCacheDir}/launchd.stdout.log";
   trackerStderr = "${broccoliCacheDir}/launchd.stderr.log";
   trackerHostSuffixPath = "${stateRoot}/broccoli-comms/agent-tracker/hostname-suffix";
+
+  configTomlAttrs = compactAttrs {
+    paths = compactAttrs {
+      runtime_dir = broccoliRuntimeDir;
+      cache_dir = broccoliCacheDir;
+      config_dir = broccoliConfigDir;
+      "agent-root-dir" = broccoliAgentRootDir;
+    };
+    tracker.http_port = cfg.tracker.httpPort;
+    registry = {
+      heartbeat_seconds = cfg.tracker.registryHeartbeatSeconds;
+      auth_enabled = cfg.tracker.registryAuth;
+    };
+    ui.capture_pane_default_lines = cfg.tracker.capturePaneDefaultLines;
+    core.enable_reliable_send_keys = cfg.tracker.enableReliableSendKeys;
+    scheduled_jobs = {
+      enabled = true;
+      agent_task_nudge = {
+        enabled = true;
+        interval_seconds = cfg.tracker.agentTaskNudgeIntervalSeconds;
+        backoff_multiplier = cfg.tracker.agentTaskNudgeBackoffMultiplier;
+        max_nudges = cfg.tracker.agentTaskNudgeMaxNudges;
+      };
+    };
+    providers = lib.mapAttrs (_: providerToml) cfg.providers;
+  };
 
   escapedRegistries = builtins.replaceStrings ["\""] ["\\\""] (builtins.toJSON cfg.tracker.registries);
 
@@ -158,6 +209,32 @@ in {
     cacheDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_CACHE_DIR. Defaults to ~/.cache/broccoli-comms for Home Manager-managed logs and state."; };
     configDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional BROCCOLI_COMMS_CONFIG_DIR. Defaults to ~/.config/broccoli-comms."; };
     agentRootDir = mkOption { type = types.nullOr types.str; default = null; description = "Optional stable root for `broccoli-comms run` agent workspaces. When unset, run uses temp directories; when set, workspaces are <agentRootDir>/<agent-name>."; };
+    providers = mkOption {
+      type = types.attrsOf providerSpecType;
+      default = {
+        jetski = {
+          cmd = "/google/bin/releases/jetski-devs/tools/cli";
+          agentsDir = "_agents";
+          agentRootDir = "${config.home.homeDirectory}/.agents-root";
+          autoAcceptFlag = "--dangerously-skip-permissions";
+          promptFlagName = "--prompt-interactive";
+        };
+        pi = {
+          cmd = "pi";
+          autoAcceptFlag = "";
+        };
+        codex = {
+          cmd = "codex";
+          autoAcceptFlag = "--dangerously-bypass-approvals-and-sandbox";
+        };
+        claude = {
+          cmd = "claude";
+          agentRootDir = "${config.home.homeDirectory}/.agents-root";
+          autoAcceptFlag = "--dangerously-skip-permissions";
+        };
+      };
+      description = "Provider defaults rendered to ~/.config/broccoli-comms/config.toml under [providers.<name>].";
+    };
 
     tracker = {
       enable = mkOption { type = types.bool; default = cfg.enable; description = "Enable agent-tracker as a systemd user service or launchd agent."; };
@@ -227,63 +304,7 @@ in {
         ".agents/skills/broccoli-comms-cli/SKILL.md".source = "${packages.defaultSkills}/broccoli-comms-cli/SKILL.md";
         ".agents/skills/agent-memory-audit/SKILL.md".source = "${packages.defaultSkills}/agent-memory-audit/SKILL.md";
       };
-      xdg.configFile."broccoli-comms/config.toml".text = ''
-        [paths]
-        ${lib.optionalString (broccoliRuntimeDir != null) ''runtime_dir = "${broccoliRuntimeDir}"''}
-        cache_dir = "${broccoliCacheDir}"
-        config_dir = "${broccoliConfigDir}"
-        ${lib.optionalString (broccoliAgentRootDir != null) ''agent-root-dir = "${broccoliAgentRootDir}"''}
-
-        [tracker]
-        http_port = ${toString cfg.tracker.httpPort}
-
-        [registry]
-        heartbeat_seconds = ${toString cfg.tracker.registryHeartbeatSeconds}
-        auth_enabled = ${if cfg.tracker.registryAuth then "true" else "false"}
-
-        [ui]
-        capture_pane_default_lines = ${toString cfg.tracker.capturePaneDefaultLines}
-
-        [core]
-        enable_reliable_send_keys = ${if cfg.tracker.enableReliableSendKeys then "true" else "false"}
-
-        [scheduled_jobs]
-        enabled = true
-
-        [scheduled_jobs.agent_task_nudge]
-        enabled = true
-        interval_seconds = ${toString cfg.tracker.agentTaskNudgeIntervalSeconds}
-        backoff_multiplier = ${toString cfg.tracker.agentTaskNudgeBackoffMultiplier}
-        max_nudges = ${toString cfg.tracker.agentTaskNudgeMaxNudges}
-
-        [providers.jetski]
-        cmd = "/google/bin/releases/jetski-devs/tools/cli"
-        agentsDir = "_agents"
-        agent-root-dir = "${config.home.homeDirectory}/.agents-root"
-        auto-accept-flag = "--dangerously-skip-permissions"
-        prompt-flag-name = "--prompt-interactive"
-        initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
-
-        [providers.pi]
-        cmd = "pi"
-        auto-accept-flag = ""
-        prompt-flag-name = "--"
-        initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
-
-        [providers.codex]
-        cmd = "codex"
-        auto-accept-flag = "--dangerously-bypass-approvals-and-sandbox"
-        prompt-flag-name = "--"
-        initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
-
-        [providers.claude]
-        cmd = "claude"
-        agent-root-dir = "${config.home.homeDirectory}/.agents-root"
-        auto-accept-flag = "--dangerously-skip-permissions"
-        prompt-flag-name = "--"
-        initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
-
-      '';
+      xdg.configFile."broccoli-comms/config.toml".source = configTomlFormat.generate "broccolicommsconfig.toml" configTomlAttrs;
     })
 
     (lib.mkIf cfg.tracker.enable {

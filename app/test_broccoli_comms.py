@@ -1046,33 +1046,28 @@ agent_communicator_tui = "/config/agent-communicator"
 
     def test_home_manager_provider_defaults_set_launch_flags_and_agent_roots(self):
         text = (Path(__file__).resolve().parents[1] / "modules" / "home-manager.nix").read_text()
-        expected = {
-            "jetski": {
-                "cmd": 'cmd = "/google/bin/releases/jetski-devs/tools/cli"',
-                "auto": 'auto-accept-flag = "--dangerously-skip-permissions"',
-                "prompt": 'prompt-flag-name = "--prompt-interactive"',
-                "root": 'agent-root-dir = "${config.home.homeDirectory}/.agents-root"',
-            },
-            "pi": {"cmd": 'cmd = "pi"', "auto": 'auto-accept-flag = ""'},
-            "codex": {"cmd": 'cmd = "codex"', "auto": 'auto-accept-flag = "--dangerously-bypass-approvals-and-sandbox"'},
-            "claude": {
-                "cmd": 'cmd = "claude"',
-                "auto": 'auto-accept-flag = "--dangerously-skip-permissions"',
-                "root": 'agent-root-dir = "${config.home.homeDirectory}/.agents-root"',
-            },
-        }
-        for provider, values in expected.items():
-            marker = f"[providers.{provider}]"
-            self.assertIn(marker, text)
-            start = text.index(marker)
-            next_provider = text.find("[providers.", start + 1)
-            block = text[start: next_provider if next_provider != -1 else len(text)]
-            self.assertIn(values["cmd"], block)
-            self.assertIn(values["auto"], block)
-            self.assertIn(values.get("prompt", 'prompt-flag-name = "--"'), block)
-            self.assertIn('initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."', block)
-            if "root" in values:
-                self.assertIn(values["root"], block)
+        for want in [
+            "configTomlFormat = pkgs.formats.toml {}",
+            "providerSpecType = lib.types.submodule",
+            "providers = mkOption",
+            'xdg.configFile."broccoli-comms/config.toml".source = configTomlFormat.generate',
+            '"agent-root-dir" = provider.agentRootDir',
+            '"auto-accept-flag" = provider.autoAcceptFlag',
+            '"prompt-flag-name" = provider.promptFlagName',
+            '"initial-message" = provider.initialMessage',
+            '"tmux-submit-key" = provider.tmuxSubmitKey',
+            'cmd = "/google/bin/releases/jetski-devs/tools/cli"',
+            'agentsDir = "_agents"',
+            'autoAcceptFlag = "--dangerously-skip-permissions"',
+            'promptFlagName = "--prompt-interactive"',
+            'cmd = "pi"',
+            'cmd = "codex"',
+            'autoAcceptFlag = "--dangerously-bypass-approvals-and-sandbox"',
+            'cmd = "claude"',
+            'agentRootDir = "${config.home.homeDirectory}/.agents-root"',
+        ]:
+            self.assertIn(want, text)
+        self.assertNotIn('xdg.configFile."broccoli-comms/config.toml".text =', text)
 
     def test_run_passes_provider_agent_root_dir_to_workspace_builder(self):
         calls = []
