@@ -1722,9 +1722,18 @@ Durable state lives in Broccoli Comms. Do not rely on either cwd for memory.
 - When the user says a result is correct, ensure the task is marked `good`/`validated` with `broccoli-comms task mark-result <task_id> --result good --json` so the append-only event log captures: goal -> checkpoints/discoveries -> result summary -> user validation.
 - For partial or incorrect results, include a remediation next_step with `task mark-result --result bad|need_improvements --next-step ...`.
 
+## Task-tracked multi-agent workflow
+- Treat every non-trivial or verifiable request as task-tracked work. Do not do investigation, file/code inspection, command execution, code changes, deployment, or other durable/verifiable work without a Broccoli Comms task and WorkingState checkpoint. Only skip task creation for true one-off answers that need no investigation, tools, durable state, or deliverable.
+- Tasks are the coordination unit for multi-agent work. Keep related subtasks in the same task_chain_id/root_task_id, use chain defaults for recurring collaborators, and preserve chain/root ids in checkpoints and handoffs.
+- Role responsibilities: assignee implements or answers; reviewer checks correctness and marks good/bad/need_improvements when configured; verifier performs independent validation when configured; coordinator/requester sequences work and resolves blockers; observers/specialists/participants contribute only in their scoped role.
+
 ## Role notification and handoff guidance
-- On ordinary task review/completion handoffs, notify active reviewer/verifier participants when moving work to `review` or `done`; notify the assignee on `bad`/`need_improvements`; notify verifier on `good` review results when present, otherwise coordinator/requester; and include assignee plus coordinator/requester for final `validated`/good outcomes.
-- For `blocked`, `archived`, `ready`, and `working` transitions, notify only role-relevant participants such as assignee, coordinator, requester, or blocker owner; avoid broad fan-out to reviewers/verifiers unless their role is directly relevant.
+- Task status/result changes auto-notify role-relevant participants and the shared `agent-communicator` UI. Do not send duplicate manual pings unless extra context is needed.
+- `review` or `done` notifies active reviewer/verifier participants when present, otherwise coordinator/requester. Use this for ordinary implementation handoff.
+- `result:bad` or `result:need_improvements` notifies assignee plus coordinator/requester and must include a remediation `next_step`.
+- `result:good` notifies verifier when present, otherwise coordinator/requester. If the task also becomes `validated`, assignee plus coordinator/requester are notified.
+- `validated` notifies assignee plus coordinator/requester and may notify assignees/coordinators/requesters of dependent tasks that become ready.
+- `ready` notifies assignee plus coordinator/requester; `working` notifies coordinator/requester; `blocked` or `archived` notifies assignee plus coordinator/requester. Avoid broad fan-out to reviewers/verifiers unless their role is directly relevant.
 - Avoid self-notifications and duplicate notifications. Treat local/remote aliases for the same agent as one recipient, and combine all applicable roles/reasons into one concise notification instead of sending multiple messages to the same recipient.
 
 ## Clarification and correction tracking
@@ -1757,7 +1766,7 @@ Durable state lives in Broccoli Comms. Do not rely on either cwd for memory.
 
 ### Adding a Task
 **Goal-Driven Execution Workflow:**
-Only skip task creation for true one-off user queries that have easy answers and require no investigation, file/code inspection, command execution, durable state, or verifiable deliverable. Anything that requires investigation must be created and tracked as a task first.
+All non-trivial work must be tracked through Broccoli Comms tasks. Only skip task creation for true one-off user queries that have easy answers and require no investigation, file/code inspection, command execution, durable state, or verifiable deliverable. Anything that requires investigation, tool use, state changes, code/file edits, deployment, or a concrete result must be created and tracked as a task first.
 When a request is received that expects a concrete verifiable result:
 1. **Convert to Task**: Create a new task first using `broccoli-comms task create` so the goal can be formally tracked.
 2. **Set collaboration roles for new chains**: When starting a new root task/task chain, ask the user/coordinator which collaborator agents should participate as reviewer, verifier, coordinator, observer, or specialist. Add them at creation time with `--reviewer`, `--verifier`, `--coordinator`, or `--participant role:agent`, and set reusable chain defaults with `broccoli-comms task chain-defaults set <chain> --agent <agent> --role <role>` when follow-up tasks in the same chain should inherit those roles. Do not prompt for every subtask when active chain defaults already capture the intended collaborators; use `--task-chain-id`/`--root-task-id` so defaults apply.
