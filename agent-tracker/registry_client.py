@@ -19,6 +19,18 @@ STATUS_PATH = os.path.join(state.CACHE_DIR, "registry-status.json")
 PANE_OUTPUT_EVENT_DEDUPE_MAX = int(os.environ.get("AGENT_PANE_OUTPUT_EVENT_DEDUPE_MAX", "1000"))
 _pane_output_event_dedupe = {}
 _pane_output_event_dedupe_lock = threading.Lock()
+MESSAGE_METADATA_FIELDS = (
+    "content_type", "approval_id", "task_id", "task_title", "task_status", "task_next_step",
+    "result_summary", "task_chain_id", "root_task_id", "task_version_at_submission",
+    "created_event_seq", "event_seq_at_submission", "source", "sender_source",
+    "memory_id", "memory_type", "memory_title", "memory_scope", "memory_status",
+    "memory_version", "source_task_id", "recipient_agent", "recipient_kind",
+    "delivery_scope",
+)
+
+
+def _message_metadata(source: dict) -> dict:
+    return {key: source.get(key) for key in MESSAGE_METADATA_FIELDS if key in source}
 
 
 class RegistryClient:
@@ -1070,7 +1082,8 @@ def _event_loop(client=None):
                     "message": payload.get("message"),
                     "message_id": payload.get("message_id"),
                     "recipient": payload.get("target_agent_name"),
-                    "read": False
+                    "read": False,
+                    **_message_metadata(payload),
                 }
                 try:
                     mailbox_name = config.get("ui", "default_mailbox_name", "agent-communicator")
@@ -1224,6 +1237,7 @@ def _delivery_loop(client=None):
                         "sender_agent_type": delivery.get("sender_agent_type"),
                         "sender_agent_cmd": delivery.get("sender_agent_cmd"),
                         "kind": delivery.get("kind"),
+                        **_message_metadata(delivery),
                         "recipient_agent_id": delivery.get("target_agent_id"),
                         "recipient_tracker_id": tracker_id,
                         "recipient_hostname": HOSTNAME,

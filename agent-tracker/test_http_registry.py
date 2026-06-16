@@ -275,7 +275,7 @@ class TestHttpAndRegistry(unittest.TestCase):
             server, base = start(registry_server.make_handler(store=store, token="secret"))
             self.addCleanup(server.shutdown)
             self.addCleanup(server.server_close)
-            code, body = post(f"{base}/messages", {"sender_tracker_id": "t1", "sender_agent_id": "a1", "sender_agent_name": "agent1", "sender_hostname": "host1", "sender_model_type": "pi", "sender_agent_type": "pi", "sender_agent_cmd": "pi", "kind": "text", "target_agent_id": "a2", "message": "hello"}, token="secret")
+            code, body = post(f"{base}/messages", {"sender_tracker_id": "t1", "sender_agent_id": "a1", "sender_agent_name": "agent1", "sender_hostname": "host1", "sender_model_type": "pi", "sender_agent_type": "pi", "sender_agent_cmd": "pi", "kind": "task_update", "content_type": "application/vnd.broccoli.task-update+json", "task_id": "task-1", "task_title": "Remote visible", "task_status": "review", "delivery_scope": "shared_service_broadcast", "target_agent_id": "a2", "message": "hello"}, token="secret")
             self.assertEqual(code, 202)
             message_id = body["message_id"]
             reloaded = registry_server.Store(state_path=state_path)
@@ -288,7 +288,12 @@ class TestHttpAndRegistry(unittest.TestCase):
             self.assertEqual(deliveries["deliveries"][0]["sender_model_type"], "pi")
             self.assertEqual(deliveries["deliveries"][0]["sender_agent_type"], "pi")
             self.assertEqual(deliveries["deliveries"][0]["sender_agent_cmd"], "pi")
-            self.assertEqual(deliveries["deliveries"][0]["kind"], "text")
+            self.assertEqual(deliveries["deliveries"][0]["kind"], "task_update")
+            self.assertEqual(deliveries["deliveries"][0]["content_type"], "application/vnd.broccoli.task-update+json")
+            self.assertEqual(deliveries["deliveries"][0]["task_id"], "task-1")
+            self.assertEqual(deliveries["deliveries"][0]["task_title"], "Remote visible")
+            self.assertEqual(deliveries["deliveries"][0]["task_status"], "review")
+            self.assertEqual(deliveries["deliveries"][0]["delivery_scope"], "shared_service_broadcast")
             self.assertEqual(post(f"{base}/trackers/t2/deliveries/{message_id}/ack", {}, token="secret")[0], 200)
             self.assertEqual(get(f"{base}/trackers/t2/deliveries?wait=0", token="secret")[1]["deliveries"], [])
 

@@ -2726,6 +2726,63 @@ def _task_notification_delivery(agent: str, message: str, metadata: dict, sender
         return {"agent": agent, "sent": bool(result), "delivery": "send_message_fallback", "error": str(e), "result": result}
 
 
+def _remote_shared_service_targets(identity: str) -> list[str]:
+    """Return explicit remote target addresses for a shared service identity.
+
+    Shared service names such as agent-communicator exist once per tracker/host.
+    A bare local send targets only the local mailbox, so cross-host broadcast must
+    address each remote instance as <hostname>/<identity> explicitly.
+    """
+    try:
+        info = tracker_rpc("tracker_info", {}, timeout=5.0)
+        local_tracker_id = (info or {}).get("tracker_id") if isinstance(info, dict) else None
+        trackers = tracker_rpc("list_trackers", {}, timeout=10.0)
+    except Exception:
+        return []
+    if not isinstance(trackers, list):
+        return []
+    targets: list[str] = []
+    seen: set[str] = set()
+    for tracker in trackers:
+        if not isinstance(tracker, dict):
+            continue
+        if tracker.get("tracker_id") and tracker.get("tracker_id") == local_tracker_id:
+            continue
+        if tracker.get("status") not in {None, "", "active", "online"}:
+            continue
+        hostname = str(tracker.get("hostname") or "").strip()
+        if not hostname:
+            continue
+        target = f"{hostname}/{identity}"
+        if target not in seen:
+            seen.add(target)
+            targets.append(target)
+    return targets
+
+
+def _notify_shared_service_identity(identity: str, message: str, metadata: dict, sender_name: str) -> dict:
+    local_result = None
+    local_error = None
+    try:
+        local_result = tracker_rpc("send_message", {"agent_name": identity, "message": message, "metadata": metadata, "sender_name": sender_name})
+        if not local_result:
+            raise RuntimeError("tracker RPC send_message failed")
+    except Exception as e:
+        local_error = str(e)
+    remote_results = []
+    remote_metadata = {**metadata, "recipient_agent": identity, "recipient_kind": "shared_service", "delivery_scope": "shared_service_broadcast"}
+    for target in _remote_shared_service_targets(identity):
+        try:
+            result = tracker_rpc("send_message", {"target_address": target, "message": message, "metadata": remote_metadata, "sender_name": sender_name})
+            remote_results.append({"target": target, "sent": bool(result), "result": result})
+        except Exception as e:
+            remote_results.append({"target": target, "sent": False, "error": str(e)})
+    payload = {"sent": bool(local_result) or any(item.get("sent") for item in remote_results), "local": {"sent": bool(local_result), "result": local_result}, "remote": remote_results}
+    if local_error:
+        payload["local"]["error"] = local_error
+    return payload
+
+
 def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
     if not task or not updates:
         return {"sent": False, "skipped": True}
@@ -2744,17 +2801,8 @@ def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
         "sender_source": "system",
     }
     message = _task_update_attention_message(task, actor, updates)
-    ui_sent = False
-    ui_result = None
-    ui_error = None
     sender_name = actor or "task-kernel"
-    try:
-        ui_result = tracker_rpc("send_message", {"agent_name": UI_AGENT_NAME, "message": message, "metadata": metadata, "sender_name": sender_name})
-        if not ui_result:
-            raise RuntimeError("tracker RPC send_message failed")
-        ui_sent = True
-    except Exception as e:
-        ui_error = str(e)
+    ui_result = _notify_shared_service_identity(UI_AGENT_NAME, message, metadata, sender_name)
     participant_results = []
     if "status" in updates or "result_status" in updates:
         for recipient in _task_update_notification_recipients(task, actor, updates):
@@ -2765,9 +2813,9 @@ def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
                 participant_results.append({**delivery, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or []})
             except Exception as participant_error:
                 participant_results.append({"agent": agent, "roles": recipient.get("roles") or [], "reasons": recipient.get("reasons") or [], "sent": False, "delivery": "failed", "error": str(participant_error)})
-    payload = {"sent": ui_sent, "result": ui_result, "participant_notifications": participant_results}
-    if ui_error:
-        payload["error"] = ui_error
+    payload = {"sent": bool(ui_result.get("sent")), "result": ui_result.get("local", {}).get("result"), "ui_broadcast": ui_result, "participant_notifications": participant_results}
+    if ui_result.get("local", {}).get("error"):
+        payload["error"] = ui_result["local"]["error"]
     return payload
 
 

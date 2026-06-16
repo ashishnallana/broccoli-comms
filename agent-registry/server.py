@@ -23,6 +23,19 @@ import pane_output_registry
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 LOG = logging.getLogger("agent-registry")
 
+MESSAGE_METADATA_FIELDS = (
+    "content_type", "approval_id", "task_id", "task_title", "task_status", "task_next_step",
+    "result_summary", "task_chain_id", "root_task_id", "task_version_at_submission",
+    "created_event_seq", "event_seq_at_submission", "source", "sender_source",
+    "memory_id", "memory_type", "memory_title", "memory_scope", "memory_status",
+    "memory_version", "source_task_id", "recipient_agent", "recipient_kind",
+    "delivery_scope",
+)
+
+
+def _message_metadata(body):
+    return {key: body.get(key) for key in MESSAGE_METADATA_FIELDS if key in body}
+
 
 def _env_bool(name, default):
     value = os.environ.get(name)
@@ -712,6 +725,7 @@ def _fanout_remote_message_delivered(store, target_tracker_id, target_agent, msg
                     "message_id": msg_payload.get("message_id"),
                     "message": msg_payload.get("message"),
                     "timestamp": msg_payload.get("sent_at"),
+                    **_message_metadata(msg_payload),
                 }
                 store.enqueue_tracker_event(source_tracker_id, "remote_agent_event", "registry", event_payload)
                 LOG.info("AUDIT: Fanned out remote watch event to source_tracker_id=%s client_id=%s (scope=%s, is_broad=%s)", source_tracker_id, client_id, scope, is_broad)
@@ -1176,6 +1190,7 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                     "sender_agent_type": body.get("sender_agent_type"),
                     "sender_agent_cmd": body.get("sender_agent_cmd"),
                     "kind": body.get("kind"),
+                    **_message_metadata(body),
                     "message_id": body.get("message_id"),
                     "swarms": body.get("swarms") or [],
                     "membership_snapshot": body.get("membership_snapshot") or {},

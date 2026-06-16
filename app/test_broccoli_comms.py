@@ -1126,6 +1126,35 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertEqual(again, workspace)
             self.assertEqual((workspace / "AGENTS.md").read_text(), f"hello planner {workspace}")
 
+    def test_task_update_broadcasts_to_remote_agent_communicator_instances(self):
+        calls = []
+
+        def fake_tracker_rpc(method, params=None, **kwargs):
+            calls.append((method, params or {}, kwargs))
+            if method == "tracker_info":
+                return {"tracker_id": "local-tracker"}
+            if method == "list_trackers":
+                return [
+                    {"tracker_id": "local-tracker", "hostname": "local-host", "status": "active"},
+                    {"tracker_id": "remote-tracker", "hostname": "remote-host", "status": "active"},
+                    {"tracker_id": "gone-tracker", "hostname": "gone-host", "status": "gone"},
+                ]
+            if method == "send_message":
+                return {"success": True}
+            return None
+
+        task = {"task_id": "task-1", "title": "Remote visible", "status": "review", "participants": []}
+        with mock.patch.object(broccoli_comms_app, "tracker_rpc", side_effect=fake_tracker_rpc):
+            result = broccoli_comms_app.notify_task_update(task, "coder", {"status": "review"})
+
+        send_calls = [(method, params) for method, params, _ in calls if method == "send_message"]
+        self.assertEqual(send_calls[0][1]["agent_name"], "agent-communicator")
+        self.assertEqual(send_calls[1][1]["target_address"], "remote-host/agent-communicator")
+        self.assertEqual(send_calls[1][1]["metadata"]["delivery_scope"], "shared_service_broadcast")
+        self.assertEqual(send_calls[1][1]["metadata"]["content_type"], "application/vnd.broccoli.task-update+json")
+        self.assertTrue(result["sent"])
+        self.assertEqual(result["ui_broadcast"]["remote"][0]["target"], "remote-host/agent-communicator")
+
     def test_agent_assign_swarm_calls_live_assignment_rpc(self):
         args = argparse.Namespace(swarm="backend-fix", main="planner", subagent=["coder-a"], json=True)
         with mock.patch.object(broccoli_comms_app, "ensure_tracker") as ensure_tracker, \

@@ -1351,6 +1351,32 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    @mock.patch("registry_client.find_remote_agent", return_value={"name": "agent-communicator", "hostname": "remote-host", "tracker_id": "remote-tracker", "agent_id": "remote-ui-id"})
+    @mock.patch("registry_client.send_remote_message", return_value=(202, {"ok": True}))
+    def test_remote_send_preserves_structured_metadata(self, send_remote, find_remote):
+        state.set_agent("sender", {"agent_id": "sender-id", "status": "idle", "agent_type": "pi", "agent_cmd": "pi"})
+        self.assertTrue(rpc_handler.handle_send_message({
+            "target_address": "remote-host/agent-communicator",
+            "message": "Task task-1 moved to review",
+            "sender_name": "sender",
+            "metadata": {
+                "content_type": "application/vnd.broccoli.task-update+json",
+                "kind": "task_update",
+                "task_id": "task-1",
+                "task_title": "Remote visible",
+                "task_status": "review",
+                "delivery_scope": "shared_service_broadcast",
+            },
+        }))
+        args = send_remote.call_args.args
+        self.assertEqual(args[3], "remote-host")
+        self.assertEqual(args[4], "agent-communicator")
+        metadata = args[8]
+        self.assertEqual(metadata["content_type"], "application/vnd.broccoli.task-update+json")
+        self.assertEqual(metadata["kind"], "task_update")
+        self.assertEqual(metadata["task_id"], "task-1")
+        self.assertEqual(metadata["delivery_scope"], "shared_service_broadcast")
+
     @mock.patch("registry_client.send_remote_message")
     @mock.patch("tmux_util.send_keys")
     def test_send_message_treats_local_target_address_as_local_only(self, send_keys, send_remote):

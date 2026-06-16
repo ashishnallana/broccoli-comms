@@ -503,10 +503,10 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
                 direction="outbound",
                 source="send_message",
             )
-            delivery_metadata = sender_metadata
+            delivery_metadata = {**sender_metadata, **(content_metadata or {})}
             if remote_event:
                 delivery_metadata = {
-                    **sender_metadata,
+                    **delivery_metadata,
                     "swarms": remote_event.get("swarms") or [],
                     "membership_snapshot": remote_event.get("membership_snapshot") or {},
                     "swarm_context": params.get("swarm_context") or params.get("swarm"),
