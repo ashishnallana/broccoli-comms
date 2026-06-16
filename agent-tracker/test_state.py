@@ -104,6 +104,13 @@ class TestState(unittest.TestCase):
             "agent_id": "id-1", "name": "agent1", "aliases": [], "status": "idle", "agent_type": "unknown", "agent_cmd": "unknown", "model_type": "unknown", "cwd": "/work/project", "swarms": [{"name": "backend-fix", "role": "main"}], "current_task": "reviewing card UX", "current_task_id": "", "current_task_status": "", "current_task_next_step": "run tests"
         }])
 
+    def test_get_agents_for_registry_marks_agent_communicator_shared_service(self):
+        state.set_agent("agent-communicator", {"agent_id": "ui-id", "status": "idle", "is_mailbox": True, "direct_input_disabled": True})
+        agent = state.get_agents_for_registry()[0]
+        self.assertEqual(agent["logical_identity"], "agent-communicator")
+        self.assertEqual(agent["service_kind"], "shared_service")
+        self.assertEqual(agent["capabilities"], {"mailbox": True, "direct_input": False})
+
     def test_get_agents_for_registry_uses_durable_current_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = f"{tmp}/learning-kernel.sqlite3"

@@ -119,6 +119,22 @@ class TestHttpAndRegistry(unittest.TestCase):
             store.trackers["t1"]["last_heartbeat"] = time.time() - 5
             self.assertEqual(get(f"{base}/agents", token="secret")[1]["agents"], [])
 
+    def test_registry_filters_shared_service_agents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = registry_server.Store(state_path=os.path.join(tmp, "registry-state.json"))
+            server, base = start(registry_server.make_handler(store=store, token="secret"))
+            self.addCleanup(server.shutdown)
+            self.addCleanup(server.server_close)
+            payload = {"tracker_id": "t1", "hostname": "host1", "address": "127.0.0.1", "http_port": 19876, "agents": [
+                {"agent_id": "ui-1", "name": "agent-communicator", "aliases": [], "status": "idle", "agent_type": "agent-communicator-ui", "agent_cmd": "agent-communicator", "logical_identity": "agent-communicator", "service_kind": "shared_service", "capabilities": {"mailbox": True, "direct_input": False}},
+                {"agent_id": "a1", "name": "coder", "aliases": [], "status": "idle", "agent_type": "pi", "agent_cmd": "pi"},
+            ]}
+            self.assertEqual(post(f"{base}/trackers", payload, token="secret")[0], 201)
+            code, body = get(f"{base}/agents?logical_identity=agent-communicator&service_kind=shared_service", token="secret")
+            self.assertEqual(code, 200)
+            self.assertEqual([agent["name"] for agent in body["agents"]], ["agent-communicator"])
+            self.assertEqual(body["agents"][0]["capabilities"], {"mailbox": True, "direct_input": False})
+
     def test_registry_current_task_fields_are_bounded(self):
         long_task = "x" * 5000
         long_next_step = "y" * 5000

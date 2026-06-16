@@ -2731,12 +2731,37 @@ def _task_notification_delivery(agent: str, message: str, metadata: dict, sender
 
 
 def _remote_shared_service_targets(identity: str) -> list[str]:
-    """Return explicit remote target addresses for a shared service identity.
+    """Return explicit remote target addresses for active shared-service instances.
 
-    Shared service names such as agent-communicator exist once per tracker/host.
-    A bare local send targets only the local mailbox, so cross-host broadcast must
-    address each remote instance as <hostname>/<identity> explicitly.
+    Phase 3 uses registry-backed agent discovery via tracker `list` with
+    include_remote instead of guessing one service per tracker hostname.  Older
+    trackers/registries without service metadata fall back to the previous
+    tracker-hostname enumeration for compatibility.
     """
+    targets: list[str] = []
+    seen: set[str] = set()
+    try:
+        agents = tracker_rpc("list", {"include_remote": True}, timeout=10.0)
+    except Exception:
+        agents = None
+    if isinstance(agents, dict):
+        for name, agent in agents.items():
+            if not isinstance(agent, dict):
+                continue
+            if agent.get("scope") != "remote":
+                continue
+            if agent.get("status") not in {None, "", "active", "online", "idle", "working"}:
+                continue
+            if agent.get("logical_identity") != identity or agent.get("service_kind") != "shared_service":
+                continue
+            target = str(agent.get("target_address") or name or "").strip()
+            if not target or "/" not in target or target in seen:
+                continue
+            seen.add(target)
+            targets.append(target)
+        if targets:
+            return targets
+
     try:
         info = tracker_rpc("tracker_info", {}, timeout=5.0)
         local_tracker_id = (info or {}).get("tracker_id") if isinstance(info, dict) else None
@@ -2745,8 +2770,6 @@ def _remote_shared_service_targets(identity: str) -> list[str]:
         return []
     if not isinstance(trackers, list):
         return []
-    targets: list[str] = []
-    seen: set[str] = set()
     for tracker in trackers:
         if not isinstance(tracker, dict):
             continue

@@ -234,17 +234,17 @@ class TestLearningKernelCli(unittest.TestCase):
     def test_task_update_shared_service_uses_router_fanout_and_preserves_metadata(self):
         task = {"task_id": "task-1", "title": "Notify", "status": "review", "assigned_agent": "coder", "participants": []}
         calls = []
-        trackers = [
-            {"tracker_id": "local-tracker", "hostname": "local-host", "status": "active"},
-            {"tracker_id": "remote-tracker", "hostname": "remote-host", "status": "active"},
-            {"tracker_id": "stale-tracker", "hostname": "stale-host", "status": "gone"},
-        ]
+        registry_agents = {
+            "agent-communicator": {"scope": "local", "logical_identity": "agent-communicator", "service_kind": "shared_service", "status": "idle"},
+            "remote-host/agent-communicator": {"scope": "remote", "target_address": "remote-host/agent-communicator", "logical_identity": "agent-communicator", "service_kind": "shared_service", "status": "idle"},
+            "stale-host/agent-communicator": {"scope": "remote", "target_address": "stale-host/agent-communicator", "logical_identity": "agent-communicator", "service_kind": "shared_service", "status": "gone"},
+            "remote-host/other": {"scope": "remote", "target_address": "remote-host/other", "logical_identity": "other", "service_kind": "shared_service", "status": "idle"},
+        }
         def fake_rpc(method, payload, **_kw):
             calls.append((method, payload))
-            if method == "tracker_info":
-                return {"tracker_id": "local-tracker"}
-            if method == "list_trackers":
-                return trackers
+            if method == "list":
+                self.assertTrue(payload.get("include_remote"))
+                return registry_agents
             return {"ok": True}
         with mock.patch.object(broccoli, "tracker_rpc", side_effect=fake_rpc):
             notice = broccoli.notify_task_update(task, "coder", {"status": "review"})

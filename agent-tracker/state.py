@@ -491,6 +491,18 @@ def current_task_fields_for_agent(name: str, info: dict, durable_tasks: dict | N
     return fields
 
 
+def shared_service_metadata(name: str | None, info: dict | None = None) -> dict:
+    """Return registry-safe shared-service metadata for well-known service identities."""
+    name = name or (info or {}).get("name")
+    if name == "agent-communicator":
+        return {
+            "logical_identity": "agent-communicator",
+            "service_kind": "shared_service",
+            "capabilities": {"mailbox": True, "direct_input": False},
+        }
+    return {}
+
+
 def get_agents_for_registry() -> list[dict]:
     """Returns a sidecar/registry-safe snapshot of agents."""
     durable_tasks = durable_current_tasks_by_agent()
@@ -505,6 +517,7 @@ def get_agents_for_registry() -> list[dict]:
             "model_type": normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd")),
             "cwd": info.get("cwd"),
             "swarms": info.get("swarms", []),
+            **shared_service_metadata(info.get("name"), info),
             **current_task_fields_for_agent(info.get("name"), info, durable_tasks),
         } for agent_id, info in state.items() if not info.get("no_registry", False)]
 
