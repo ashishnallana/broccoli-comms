@@ -1124,12 +1124,13 @@ class LearningKernel:
             metadata["description"] = clean_text(kw.get("description"), "memory_body")
         source_task_id = clean_text(kw.get("source_task_id") or kw.get("source_task"), "list_item")
         trusted_manual = bool(kw.get("trusted_manual"))
-        if not trusted_manual and not source_task_id and typ not in ("habit", "fact"):
+        allow_proposal_metadata = bool(kw.get("allow_proposal_metadata"))
+        if not trusted_manual and not source_task_id and typ not in ("habit", "fact") and not allow_proposal_metadata:
             raise ValueError("source_task_id is required unless trusted_manual")
         if typ == "expertise":
             if not subject_agent and not (scope.startswith("team:") or scope.startswith("project:")):
                 raise ValueError("expertise requires subject_agent or explicit team/project scope")
-            metadata = self._clean_expertise_metadata(metadata)
+            metadata = self._clean_expertise_metadata(metadata, allow_proposal_metadata=allow_proposal_metadata)
         else:
             self._reject_forbidden_memory_metadata(metadata)
         return {"type": typ, "scope": scope, "subject_agent": subject_agent, "title": title, "body": body, "tags": tags, "metadata": metadata, "source_task_id": source_task_id, "trusted_manual": trusted_manual}
@@ -1160,12 +1161,13 @@ class LearningKernel:
             for child in value:
                 self._reject_forbidden_memory_metadata(child)
 
-    def _clean_expertise_metadata(self, metadata: Any) -> dict[str, Any]:
+    def _clean_expertise_metadata(self, metadata: Any, *, allow_proposal_metadata: bool = False) -> dict[str, Any]:
         if not isinstance(metadata, dict):
             raise ValueError("expertise metadata must be an object")
         self._reject_forbidden_memory_metadata(metadata)
         allowed = {"task_family", "tools", "evidence_task_ids", "validation_count", "last_validated_at", "known_limits", "description"}
-        unknown = set(metadata) - allowed
+        proposal_allowed = {"proposal_kind", "target_memory_id", "target_expected_version", "archive_reason"} if allow_proposal_metadata else set()
+        unknown = set(metadata) - allowed - proposal_allowed
         if unknown:
             raise ValueError("unsupported expertise metadata field")
         cleaned = dict(metadata)
@@ -1178,6 +1180,17 @@ class LearningKernel:
         for key in ("task_family", "last_validated_at", "known_limits"):
             if key in cleaned:
                 cleaned[key] = clean_text(cleaned.get(key), "list_item")
+        if allow_proposal_metadata:
+            if "proposal_kind" in cleaned:
+                cleaned["proposal_kind"] = clean_text(cleaned.get("proposal_kind"), "list_item")
+                if cleaned["proposal_kind"] not in {"edit", "archive"}:
+                    raise ValueError("unsupported expertise metadata field")
+            if "target_memory_id" in cleaned:
+                cleaned["target_memory_id"] = clean_text(cleaned.get("target_memory_id"), "list_item")
+            if "target_expected_version" in cleaned:
+                cleaned["target_expected_version"] = clean_nonnegative_int(cleaned.get("target_expected_version"), "target_expected_version")
+            if "archive_reason" in cleaned:
+                cleaned["archive_reason"] = clean_text(cleaned.get("archive_reason"), "event_text")
         return cleaned
 
     def _memory_idempotency_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1286,9 +1299,9 @@ class LearningKernel:
             raise KeyError(target_id)
         if target_expected is not None and int(target.get("version") or 0) != int(target_expected):
             raise ValueError("stale target memory version")
-        payload = self._clean_memory_payload({k: proposal.get(k) for k in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata")})
+        payload = self._clean_memory_payload({**{k: proposal.get(k) for k in ("type", "scope", "subject_agent", "title", "body", "source_task_id", "trusted_manual", "tags", "metadata")}, "allow_proposal_metadata": True})
         target_metadata = dict(payload.get("metadata") or {})
-        for key in ("proposal_kind", "target_memory_id", "target_expected_version"):
+        for key in ("proposal_kind", "target_memory_id", "target_expected_version", "archive_reason"):
             target_metadata.pop(key, None)
         payload["metadata"] = target_metadata
         conn.execute("BEGIN IMMEDIATE")
@@ -1325,7 +1338,7 @@ class LearningKernel:
             metadata.update({"proposal_kind": "edit", "target_memory_id": memory_id, "target_expected_version": int(target["version"])})
             merged["metadata"] = metadata
             merged["trusted_manual"] = False
-            return self._memory_propose(**merged, proposed_by=proposer, proposed_by_instance=instance, non_learning=False)
+            return self._memory_propose(**merged, proposed_by=proposer, proposed_by_instance=instance, non_learning=False, allow_proposal_metadata=True)
 
     def _memory_propose_archive(self, memory_id: str, *, expected_version: int | None = None, reason: str | None = None, **kw: Any) -> dict[str, Any]:
         if kw.get("non_learning"):
@@ -1350,7 +1363,7 @@ class LearningKernel:
                 title=f"Archive: {target.get('title') or memory_id}", body=reason or f"Archive memory {memory_id}.",
                 source_task_id=kw.get("source_task_id") or target.get("source_task_id"), trusted_manual=False,
                 tags=target.get("tags"), metadata=metadata, proposed_by=proposer, proposed_by_instance=instance,
-                non_learning=False,
+                non_learning=False, allow_proposal_metadata=True,
             )
 
     def _approve_memory_archive_proposal(self, conn: sqlite3.Connection, proposal: dict[str, Any], actor: str, expected_version: int | None) -> dict[str, Any]:

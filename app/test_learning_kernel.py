@@ -789,6 +789,44 @@ class TestLearningKernelCli(unittest.TestCase):
             event_types = [e["event_type"] for e in k.events(subject_id=active["memory"]["memory_id"])]
             self.assertIn("memory_revoked", event_types)
 
+    def test_memory_archive_proposal_revokes_active_expertise_target_on_approval(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            task = k.task_create(title="validated", assigned_agent="a", scope="project:x")
+            k.mark_result(task["task_id"], "good")
+            proposed = k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="Expert", body="bounded", source_task_id=task["task_id"], proposed_by="a", metadata={"tools": ["cli"]})
+            active = k.memory_approve(proposed["memory"]["memory_id"], expected_version=proposed["memory"]["version"])
+
+            archive = k.memory_propose_archive(active["memory"]["memory_id"], expected_version=active["memory"]["version"], reason="obsolete expertise", proposed_by="a")
+            self.assertEqual(archive["memory"]["status"], "pending")
+            self.assertEqual(archive["memory"]["type"], "expertise")
+            self.assertEqual(archive["memory"]["metadata"]["proposal_kind"], "archive")
+            self.assertEqual(archive["memory"]["metadata"]["target_memory_id"], active["memory"]["memory_id"])
+            self.assertEqual(archive["memory"]["metadata"]["archive_reason"], "obsolete expertise")
+
+            approved = k.memory_approve(archive["memory"]["memory_id"], expected_version=archive["memory"]["version"])
+            self.assertEqual(approved["memory"]["memory_id"], active["memory"]["memory_id"])
+            self.assertEqual(approved["memory"]["status"], "revoked")
+            self.assertEqual(approved["memory"]["metadata"], {"tools": ["cli"]})
+            self.assertEqual(approved["proposal"]["status"], "superseded")
+            event_types = [e["event_type"] for e in k.events(subject_id=active["memory"]["memory_id"])]
+            self.assertIn("memory_revoked", event_types)
+            self.assertIn("memory_archive_proposal_approved", [e["event_type"] for e in k.events(subject_id=archive["memory"]["memory_id"])])
+
+    def test_memory_archive_proposal_handles_trusted_manual_expertise_without_source_task(self):
+        with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
+            k = broccoli.learning_kernel()
+            proposed = k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="Manual expert", body="manual", trusted_manual=True, proposed_by="user")
+            active = k.memory_approve(proposed["memory"]["memory_id"], expected_version=proposed["memory"]["version"], actor="user")
+            self.assertIsNone(active["memory"].get("source_task_id"))
+
+            archive = k.memory_propose_archive(active["memory"]["memory_id"], expected_version=active["memory"]["version"], reason="manual obsolete", proposed_by="a")
+            self.assertEqual(archive["memory"]["status"], "pending")
+            self.assertEqual(archive["memory"]["metadata"]["proposal_kind"], "archive")
+            approved = k.memory_approve(archive["memory"]["memory_id"], expected_version=archive["memory"]["version"], actor="user")
+            self.assertEqual(approved["memory"]["status"], "revoked")
+            self.assertEqual(approved["proposal"]["status"], "superseded")
+
     def test_memory_archive_proposal_rejects_pending_target_on_approval(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
             k = broccoli.learning_kernel()
@@ -903,6 +941,8 @@ class TestLearningKernelCli(unittest.TestCase):
                 k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"nested": {"Score": 1}})
             with self.assertRaisesRegex(ValueError, "unsupported"):
                 k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"extra": "no"})
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                k.memory_propose(type="expertise", scope="project:x", subject_agent="a", title="E", body="E", source_task_id=task["task_id"], proposed_by="a", metadata={"proposal_kind": "archive"})
 
     def test_direct_completion_is_blocked_when_review_roles_are_active(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
