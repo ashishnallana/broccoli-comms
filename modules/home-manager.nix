@@ -214,7 +214,7 @@ in {
       default = {
         jetski = {
           cmd = "/google/bin/releases/jetski-devs/tools/cli";
-          agentsDir = "_agents";
+          agentsDir = ".agents";
           agentRootDir = "${config.home.homeDirectory}/.agents-root";
           autoAcceptFlag = "--dangerously-skip-permissions";
           promptFlagName = "--prompt-interactive";
