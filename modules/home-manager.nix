@@ -261,7 +261,7 @@ in {
         agentsDir = "_agents"
         agent-root-dir = "${config.home.homeDirectory}/.agents-root"
         auto-accept-flag = "--dangerously-skip-permissions"
-        prompt-flag-name = "--"
+        prompt-flag-name = "--prompt-interactive"
         initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
         [providers.pi]

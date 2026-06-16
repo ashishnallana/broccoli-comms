@@ -1050,6 +1050,7 @@ agent_communicator_tui = "/config/agent-communicator"
             "jetski": {
                 "cmd": 'cmd = "/google/bin/releases/jetski-devs/tools/cli"',
                 "auto": 'auto-accept-flag = "--dangerously-skip-permissions"',
+                "prompt": 'prompt-flag-name = "--prompt-interactive"',
                 "root": 'agent-root-dir = "${config.home.homeDirectory}/.agents-root"',
             },
             "pi": {"cmd": 'cmd = "pi"', "auto": 'auto-accept-flag = ""'},
@@ -1068,7 +1069,7 @@ agent_communicator_tui = "/config/agent-communicator"
             block = text[start: next_provider if next_provider != -1 else len(text)]
             self.assertIn(values["cmd"], block)
             self.assertIn(values["auto"], block)
-            self.assertIn('prompt-flag-name = "--"', block)
+            self.assertIn(values.get("prompt", 'prompt-flag-name = "--"'), block)
             self.assertIn('initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."', block)
             if "root" in values:
                 self.assertIn(values["root"], block)
