@@ -101,7 +101,24 @@ make build
 
 If `doctor` fails, install the missing runtime dependency or use the Nix package path.
 
-## 5. Multi-device architecture
+## 5. Provider customization layout
+
+`broccoli-comms run NAME -- PROVIDER` can use provider-specific bootstrap paths from `~/.config/broccoli-comms/config.toml`.
+
+- Legacy/default providers that set `agentsDir` write generated bootstrap files under that directory, preserving existing behavior.
+- The `jetski` provider defaults to `context-layout = "jetski"`: `AGENTS.md` is written at the workspace root, rules are written to `.agents/rules/{memory,habits,expertise}.md`, and durable skills are written to `.agents/skills/<skill>/SKILL.md`.
+- Non-Jetski providers keep the legacy layout unless `context-layout = "jetski"` is set explicitly.
+
+Example:
+
+```toml
+[providers.jetski]
+cmd = "/google/bin/releases/jetski-devs/tools/cli"
+agentsDir = ".agents"
+context-layout = "jetski"
+```
+
+## 6. Multi-device architecture
 
 `agent-registry` is the rendezvous service for multiple agent-tracker instances.
 
@@ -118,7 +135,7 @@ Important properties:
 - The registry does not need to connect back to tracker machines for normal message delivery.
 - Cross-device messages are at-least-once; tracker inbox delivery de-duplicates by `message_id`.
 
-## 6. Registry host setup
+## 7. Registry host setup
 
 ### Broccoli Comms source/runtime CLI
 
@@ -212,7 +229,7 @@ curl http://registry-host:8080/healthz
 curl -H "Authorization: Bearer $(cat token-file)" http://registry-host:8080/agents
 ```
 
-## 7. Tracker/client machine setup
+## 8. Tracker/client machine setup
 
 Each machine that should publish local agents or receive cross-device messages needs `agent-tracker` registry integration.
 
@@ -279,7 +296,7 @@ broccoli-comms agent-tracker list
 broccoli-comms agent-tracker send-message other-host/agent-name "hello from this host"
 ```
 
-## 8. Managed agents on a registry host
+## 9. Managed agents on a registry host
 
 The registry NixOS/Home Manager modules can also keep local agents running in tmux. This is optional and separate from registry discovery.
 
@@ -312,7 +329,7 @@ Important: `managedAgents` only starts/reconciles local tmux agents. To publish 
 
 By default, managed agents use the target user's normal tmux socket under `/run/user/<uid>/tmux-<uid>/default`. The helper defensively ignores invalid inherited runtime dirs such as bare `/run/user`; set `tmuxSocketPath` explicitly if you need a different socket.
 
-## 9. Testing with `~/projects/nix/test-vm`
+## 10. Testing with `~/projects/nix/test-vm`
 
 The reusable test VM provides SSH on `127.0.0.1:2222` with user/password `dev`/`dev`.
 
@@ -392,7 +409,7 @@ Expected results:
 - `agent-registry.service` is active
 - tmux has a `registry-smoke` pane tagged with `@agent_name=smoke`
 
-## 10. Direct pane input over the registry
+## 11. Direct pane input over the registry
 
 Normal `send-message` delivery remains inbox-based and is the default. Direct pane input (`send-text`, `send-key`, TUI `/text`, TUI `/key`) bypasses inbox history and controls an agent pane directly.
 
@@ -460,7 +477,7 @@ Guardrails:
 - logs/audit include request metadata and text length/hash, not full text payloads
 - `broccoli-comms doctor` warns when remote pane input is enabled without registry auth/token assumptions in the current environment
 
-## 11. Current future work
+## 12. Current future work
 
 These are intentionally not required for the basic setup above:
 

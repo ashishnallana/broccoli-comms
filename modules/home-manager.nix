@@ -21,6 +21,7 @@ let
     options = {
       cmd = lib.mkOption { type = lib.types.str; default = name; description = "Provider executable or absolute command path."; };
       agentsDir = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Optional provider-specific agents directory."; };
+      contextLayout = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Optional provider bootstrap context layout, for example jetski for root AGENTS.md plus .agents/rules and .agents/skills."; };
       agentRootDir = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Optional stable root for this provider's agent workspaces."; };
       autoAcceptFlag = lib.mkOption { type = lib.types.str; default = ""; description = "Provider flag that enables auto-accept/auto-approve behavior. Empty disables it."; };
       promptFlagName = lib.mkOption { type = lib.types.str; default = "--"; description = "Provider flag for the initial prompt. Use -- when the prompt is positional."; };
@@ -34,6 +35,7 @@ let
   providerToml = provider: compactAttrs ({
     cmd = provider.cmd;
     agentsDir = provider.agentsDir;
+    "context-layout" = provider.contextLayout;
     "agent-root-dir" = provider.agentRootDir;
     "auto-accept-flag" = provider.autoAcceptFlag;
     "prompt-flag-name" = provider.promptFlagName;
@@ -215,6 +217,7 @@ in {
         jetski = {
           cmd = "/google/bin/releases/jetski-devs/tools/cli";
           agentsDir = ".agents";
+          contextLayout = "jetski";
           agentRootDir = "${config.home.homeDirectory}/.agents-root";
           autoAcceptFlag = "--dangerously-skip-permissions";
           promptFlagName = "--prompt-interactive";

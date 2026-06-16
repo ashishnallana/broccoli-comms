@@ -115,13 +115,14 @@ initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the
 
 Provider fields:
 
-When installed through the Broccoli Comms Home Manager module, prefer Nix options such as `services.broccoli-comms.providers.<name>.cmd`, `autoAcceptFlag`, `promptFlagName`, `initialMessage`, `tmuxSubmitKey`, `agentRootDir`, `agentsDir`, and `extraSettings`; the module renders `~/.config/broccoli-comms/config.toml` from those options.
+When installed through the Broccoli Comms Home Manager module, prefer Nix options such as `services.broccoli-comms.providers.<name>.cmd`, `autoAcceptFlag`, `promptFlagName`, `initialMessage`, `tmuxSubmitKey`, `agentRootDir`, `agentsDir`, `contextLayout`, and `extraSettings`; the module renders `~/.config/broccoli-comms/config.toml` from those options.
 
 - `cmd`: executable or absolute path to launch for the provider alias used in `broccoli-comms run NAME -- PROVIDER ...`.
 - `defaultArgs`: optional string or TOML array appended after `cmd` for every launch of that provider.
 - `auto-accept-flag`: optional provider-specific flag that enables auto-accept/auto-approve mode. Leave empty to disable.
 - `prompt-flag-name` plus `initial-message`: when both are non-empty, `broccoli-comms run` passes them as the provider's initial prompt/message flag and value. Use `--` for providers whose initial prompt is a positional argument. The message is passed as the configured provider argument; it is not converted into an inbox notification.
 - provider-level `agent-root-dir`: optional stable root for only that provider. It overrides `[paths].agent-root-dir` for runs launched through the provider alias.
+- `agentsDir`: optional provider customization subdirectory. The legacy layout writes bootstrap files under that subdirectory. The `jetski` provider uses `context-layout = "jetski"` by default: `AGENTS.md` stays at the workspace root, rules are written to `<agentsDir>/rules/{memory,habits,expertise}.md`, and skills are written to `<agentsDir>/skills/<skill>/SKILL.md`. Other providers keep the legacy layout unless `context-layout` is explicitly set.
 
 Path fields:
 

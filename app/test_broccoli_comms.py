@@ -363,6 +363,34 @@ agent_communicator_tui = "/config/agent-communicator"
         launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
         self.assertIn("--dangerously-skip-permissions", launched)
 
+    def test_run_uses_jetski_context_layout_from_provider_alias(self):
+        calls = []
+
+        def fake_tmux(*cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd and cmd[0] == "new-window":
+                return mock.Mock(returncode=0, stdout="%42\t%1", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "broccoli-comms"
+            cfg_dir.mkdir(parents=True)
+            (cfg_dir / "config.toml").write_text('[providers.jetski]\ncmd = "jetski"\nagentsDir = ".agents"\n')
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp}):
+                with mock.patch.object(broccoli_comms_app, "ensure_tracker"), \
+                     mock.patch.object(broccoli_comms_app, "ensure_tmux"), \
+                     mock.patch.object(broccoli_comms_app, "window_exists", return_value=False), \
+                     mock.patch.object(broccoli_comms_app, "tmux", side_effect=fake_tmux), \
+                     mock.patch.object(broccoli_comms_app, "ephemeral_agent_workspace", return_value=f"{tmp}/agent-workspace") as workspace:
+                    broccoli_comms_app.run(argparse.Namespace(name="planner", cwd=tmp, scope=None, swarm=None, role=None, host=None, command=["jetski"], json=True))
+
+        workspace.assert_called_once()
+        self.assertEqual(workspace.call_args.kwargs["agents_dir"], ".agents")
+        self.assertEqual(workspace.call_args.kwargs["context_layout"], "jetski")
+        launched = [call for call in calls if call and call[0] == "new-window"][0][-1]
+        self.assertIn("BROCCOLI_AGENTS_DIR=.agents", launched)
+        self.assertIn("BROCCOLI_COMMS_CONTEXT_LAYOUT=jetski", launched)
+
     def test_run_includes_provider_initial_message_prompt_flag_from_toml(self):
         calls = []
 
@@ -995,6 +1023,29 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertNotIn("source: `" + str(context / "habits.md") + "`", agents)
             self.assertNotIn("secret detailed steps", agents)
 
+    def test_bootstrap_context_writes_jetski_agents_rules_and_skills_layout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = {
+                "agents_md": "# Agent Operating Contract\n",
+                "memory": [
+                    {"memory_id": "mem-skill", "type": "skill", "title": "Deploy Helper", "body": "steps", "metadata": {"description": "Deploy safely"}},
+                    {"memory_id": "mem-expert", "type": "expertise", "title": "System", "body": "Architecture"},
+                ],
+            }
+            with mock.patch.dict(os.environ, {"BROCCOLI_AGENTS_DIR": ".agents", "BROCCOLI_COMMS_CONTEXT_LAYOUT": "jetski"}, clear=False):
+                result = broccoli_comms_app.write_bootstrap_context_files(payload, tmp)
+            context = Path(result["context_dir"])
+            self.assertEqual(context, Path(tmp))
+            self.assertTrue((context / "AGENTS.md").exists())
+            self.assertTrue((context / ".agents" / "rules" / "memory.md").exists())
+            self.assertTrue((context / ".agents" / "rules" / "expertise.md").exists())
+            self.assertTrue((context / ".agents" / "skills" / "Deploy-Helper" / "SKILL.md").exists())
+            agents = (context / "AGENTS.md").read_text()
+            self.assertIn(str(context / ".agents" / "rules" / "memory.md"), agents)
+            self.assertIn(str(context / ".agents" / "rules" / "expertise.md"), agents)
+            self.assertIn(str(context / ".agents" / "skills" / "Deploy-Helper" / "SKILL.md"), agents)
+            self.assertFalse((context / ".agents" / "AGENTS.md").exists())
+
     def test_bootstrap_agents_md_removes_habits_startup_read_instruction(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = broccoli_comms_app.agent_contract("a", "a@s1", tmp)
@@ -1058,6 +1109,7 @@ agent_communicator_tui = "/config/agent-communicator"
             "providerSpecType = lib.types.submodule",
             "providers = mkOption",
             'xdg.configFile."broccoli-comms/config.toml".source = configTomlFormat.generate',
+            '"context-layout" = provider.contextLayout',
             '"agent-root-dir" = provider.agentRootDir',
             '"auto-accept-flag" = provider.autoAcceptFlag',
             '"prompt-flag-name" = provider.promptFlagName',
@@ -1065,6 +1117,7 @@ agent_communicator_tui = "/config/agent-communicator"
             '"tmux-submit-key" = provider.tmuxSubmitKey',
             'cmd = "/google/bin/releases/jetski-devs/tools/cli"',
             'agentsDir = ".agents"',
+            'contextLayout = "jetski"',
             'autoAcceptFlag = "--dangerously-skip-permissions"',
             'promptFlagName = "--prompt-interactive"',
             'cmd = "pi"',
@@ -1113,6 +1166,12 @@ agent_communicator_tui = "/config/agent-communicator"
         body = (Path(workspace) / "AGENTS.md").read_text()
         self.assertEqual(body, f"hello planner {workspace}")
         self.assertIn("/broccoli-agents/planner/", workspace)
+
+    def test_ephemeral_agent_workspace_jetski_layout_keeps_agents_md_at_root(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"TMPDIR": tmp}, clear=False):
+            workspace = Path(broccoli_comms_app.ephemeral_agent_workspace("planner", agents_dir=".agents", context_layout="jetski"))
+            self.assertTrue((workspace / "AGENTS.md").exists())
+            self.assertFalse((workspace / ".agents" / "AGENTS.md").exists())
 
     def test_ephemeral_agent_workspace_uses_temp_root_when_agent_root_unset(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}, clear=False):

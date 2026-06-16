@@ -741,7 +741,39 @@ def managed_track_env_assignments() -> list[str]:
     return [shell_env_assignment(key, env[key]) for key in keys if key in env and (env.get(key) or key in {"BROCCOLI_COMMS_TRACK_ACTIVE", "AGENT_WRAPPER_DEPTH", "AGENT_NAME", "AGENT_ID", "AGENT_UUID"})]
 
 
-def ephemeral_agent_workspace(name: str, agents_dir: str | None = None, source_cwd: str | Path | None = None, agent_root_dir: str | Path | None = None) -> str:
+def _provider_context_layout(provider_alias: str | None, provider_cfg: dict | None) -> str:
+    cfg = provider_cfg if isinstance(provider_cfg, dict) else {}
+    explicit = cfg.get("context-layout", cfg.get("contextLayout", cfg.get("context_layout")))
+    if explicit:
+        return str(explicit)
+    if provider_alias == "jetski":
+        return "jetski"
+    return "legacy"
+
+
+def _provider_launch_settings(command: list[str], *, apply_command_overrides: bool = True) -> tuple[list[str], str | None, str | None, str]:
+    agents_dir = None
+    provider_agent_root_dir = None
+    context_layout = "legacy"
+    if not command:
+        return command, agents_dir, provider_agent_root_dir, context_layout
+    provider_alias = command[0]
+    provider_cfg = get_toml_config("providers", provider_alias, {})
+    context_layout = _provider_context_layout(provider_alias, provider_cfg)
+    if provider_cfg:
+        if apply_command_overrides:
+            cmd_override = provider_cfg.get("cmd", provider_alias)
+            default_args = _provider_arg_list(provider_cfg.get("defaultArgs", []))
+            auto_accept_args = _provider_arg_list(provider_cfg.get("auto-accept-flag", provider_cfg.get("autoAcceptFlag", provider_cfg.get("auto_accept_flag", ""))))
+            initial_message_args = _provider_initial_message_args(provider_cfg)
+            command = [cmd_override] + default_args + auto_accept_args + initial_message_args + command[1:]
+        if "agentsDir" in provider_cfg:
+            agents_dir = provider_cfg["agentsDir"]
+        provider_agent_root_dir = provider_cfg.get("agent-root-dir", provider_cfg.get("agentRootDir", provider_cfg.get("agent_root_dir")))
+    return command, agents_dir, provider_agent_root_dir, context_layout
+
+
+def ephemeral_agent_workspace(name: str, agents_dir: str | None = None, source_cwd: str | Path | None = None, agent_root_dir: str | Path | None = None, context_layout: str = "legacy") -> str:
     safe_name = re.sub(r"[^A-Za-z0-9_.-]", "-", name).strip("-._") or "agent"
     agent_root = Path(str(agent_root_dir)).expanduser() if agent_root_dir else configured_agent_root_dir()
     if agent_root is not None:
@@ -751,7 +783,7 @@ def ephemeral_agent_workspace(name: str, agents_dir: str | None = None, source_c
         base = Path(tempfile.gettempdir()) / "broccoli-agents" / safe_name
         tmp_root = base / uuid.uuid4().hex[:12]
         exist_ok = False
-    workspace = tmp_root / agents_dir if agents_dir else tmp_root
+    workspace = tmp_root if context_layout == "jetski" else (tmp_root / agents_dir if agents_dir else tmp_root)
     workspace.mkdir(parents=True, exist_ok=exist_ok)
     (workspace / "AGENTS.md").write_text(agent_contract(name, f"{name}@pending", workspace, agent_contract_template(), source_cwd=source_cwd))
     return str(tmp_root)
@@ -785,6 +817,7 @@ def managed_agent_launch_command(
     scope: str | None = None,
     immutable: bool = False,
     agents_dir: str | None = None,
+    context_layout: str = "legacy",
 ) -> str:
     launch_cwd = launch_cwd or cwd
     command_args = _parse_command_for_bootstrap(command)
@@ -811,6 +844,8 @@ def managed_agent_launch_command(
     ]
     if agents_dir:
         launch_parts.append(f"BROCCOLI_AGENTS_DIR={shlex.quote(agents_dir)}")
+    if context_layout and context_layout != "legacy":
+        launch_parts.append(f"BROCCOLI_COMMS_CONTEXT_LAYOUT={shlex.quote(context_layout)}")
     if immutable:
         launch_parts.append("BROCCOLI_COMMS_IMMUTABLE_INSTANCE=1")
         launch_parts.append("BROCCOLI_COMMS_NON_LEARNING=1")
@@ -851,15 +886,19 @@ def reconcile_agents(names: set[str] | None = None, *, autostart_only: bool = Fa
         if not os.path.isdir(cwd):
             raise SystemExit(f"configured cwd for agent {name!r} does not exist: {cwd}")
         command = spec.get("command") or "bash"
-        launch_cwd = ephemeral_agent_workspace(name, source_cwd=cwd)
+        command_args, agents_dir, provider_agent_root_dir, context_layout = _provider_launch_settings(_parse_command_for_bootstrap(str(command)), apply_command_overrides=False)
+        launch_command = shlex.join(command_args) if command_args else str(command)
+        launch_cwd = ephemeral_agent_workspace(name, agents_dir=agents_dir, source_cwd=cwd, agent_root_dir=provider_agent_root_dir, context_layout=context_layout)
         launch = managed_agent_launch_command(
             name,
             cwd,
-            command,
+            launch_command,
             spec.get("swarms") or [],
             launch_cwd=launch_cwd,
             scope=spec.get("scope"),
             immutable=bool(spec.get("immutable") or spec.get("non_learning")),
+            agents_dir=agents_dir,
+            context_layout=context_layout,
         )
         result = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", SESSION, "-n", name, "-c", launch_cwd, launch)
         window_id = result.stdout.strip()
@@ -1700,27 +1739,14 @@ def run(args: argparse.Namespace) -> None:
     if not os.path.isdir(source_cwd):
         raise SystemExit(f"run source-cwd does not exist or is not a directory: {source_cwd}")
 
-    agents_dir = None
-    provider_agent_root_dir = None
-    if command:
-        provider_alias = command[0]
-        provider_cfg = get_toml_config("providers", provider_alias, {})
-        if provider_cfg:
-            cmd_override = provider_cfg.get("cmd", provider_alias)
-            default_args = _provider_arg_list(provider_cfg.get("defaultArgs", []))
-            auto_accept_args = _provider_arg_list(provider_cfg.get("auto-accept-flag", provider_cfg.get("autoAcceptFlag", provider_cfg.get("auto_accept_flag", ""))))
-            initial_message_args = _provider_initial_message_args(provider_cfg)
-            command = [cmd_override] + default_args + auto_accept_args + initial_message_args + command[1:]
-            if "agentsDir" in provider_cfg:
-                agents_dir = provider_cfg["agentsDir"]
-            provider_agent_root_dir = provider_cfg.get("agent-root-dir", provider_cfg.get("agentRootDir", provider_cfg.get("agent_root_dir")))
+    command, agents_dir, provider_agent_root_dir, context_layout = _provider_launch_settings(command)
 
     ensure_tracker()
     ensure_tmux()
     if window_exists(args.name):
         raise SystemExit(f"agent {args.name!r} is already running; stop or edit it first")
 
-    launch_cwd = ephemeral_agent_workspace(args.name, agents_dir=agents_dir, source_cwd=source_cwd, agent_root_dir=provider_agent_root_dir)
+    launch_cwd = ephemeral_agent_workspace(args.name, agents_dir=agents_dir, source_cwd=source_cwd, agent_root_dir=provider_agent_root_dir, context_layout=context_layout)
     context_path = str(Path(launch_cwd))
 
     if using_saved_config and not (getattr(args, "swarm", None) or getattr(args, "role", None)):
@@ -1751,6 +1777,7 @@ def run(args: argparse.Namespace) -> None:
         launch_cwd=launch_cwd,
         immutable=immutable,
         agents_dir=agents_dir,
+        context_layout=context_layout,
     )
 
     result = tmux(
@@ -3047,9 +3074,11 @@ def _markdown_memory_list(title: str, records: list[dict]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list[dict] | None = None) -> str:
-    memory_path = path / "memory.md"
-    expertise_path = path / "expertise.md"
+def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list[dict] | None = None, rules_dir: Path | None = None, skills_dir: Path | None = None) -> str:
+    rules_root = rules_dir or path
+    skills_root = skills_dir or (path / "skills")
+    memory_path = rules_root / "memory.md"
+    expertise_path = rules_root / "expertise.md"
     base = base.replace(
         "1. If present in the working directory, read generated `memory.md`, `habits.md`, and `expertise.md`; bootstrap-generated `AGENTS.md` may provide absolute paths for these files and a concise list of available skills.",
         "1. If present in the working directory, read generated `memory.md` and `expertise.md`; retained habits are embedded directly in this AGENTS.md, and bootstrap-generated `AGENTS.md` may provide absolute paths for context files and a concise list of available skills.",
@@ -3087,7 +3116,7 @@ def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list
         lines.extend(["", "## Available skills from durable memory"])
         for mem in skills:
             skill_name = safe_context_name(str(mem.get("title") or mem.get("memory_id") or "skill"))
-            skill_path = path / "skills" / skill_name / "SKILL.md"
+            skill_path = skills_root / skill_name / "SKILL.md"
             desc = (mem.get("metadata") or {}).get("description") or ""
             lines.extend([
                 f"- **{mem.get('title') or mem.get('memory_id')}**",
@@ -3101,11 +3130,20 @@ def _bootstrap_agents_md(base: str, path: Path, skills: list[dict], habits: list
 
 
 def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dict:
-    path = Path(context_dir)
+    root_path = Path(context_dir)
     agents_override = os.environ.get("BROCCOLI_AGENTS_DIR")
-    if agents_override:
-        path = path / agents_override
+    context_layout = os.environ.get("BROCCOLI_COMMS_CONTEXT_LAYOUT") or "legacy"
+    if agents_override and context_layout != "jetski":
+        path = root_path / agents_override
+        rules_dir = path
+        skills_dir = path / "skills"
+    else:
+        path = root_path
+        rules_dir = (root_path / agents_override / "rules") if (agents_override and context_layout == "jetski") else root_path
+        skills_dir = (root_path / agents_override / "skills") if (agents_override and context_layout == "jetski") else (root_path / "skills")
     path.mkdir(parents=True, exist_ok=True)
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    skills_dir.mkdir(parents=True, exist_ok=True)
     memories = payload.get("memory") or []
     by_type = {typ: [m for m in memories if m.get("type") == typ] for typ in ["fact", "episode", "habit", "expertise", "skill"]}
     task = payload.get("task") or {}
@@ -3127,19 +3165,19 @@ def write_bootstrap_context_files(payload: dict, context_dir: str | Path) -> dic
         "habits.md": _markdown_memory_list("Habits", by_type["habit"]),
         "expertise.md": _markdown_memory_list("Expertise", by_type["expertise"]),
     }.items():
-        target = path / name
+        target = rules_dir / name
         target.write_text(content, encoding="utf-8")
         files.append(str(target))
     for mem in by_type["skill"]:
         skill_name = safe_context_name(str(mem.get("title") or mem.get("memory_id") or "skill"))
-        target = path / "skills" / skill_name / "SKILL.md"
+        target = skills_dir / skill_name / "SKILL.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         desc = (mem.get("metadata") or {}).get("description") or ""
         body = str(mem.get("body") or "").strip()
         target.write_text(f"---\nname: {skill_name}\ndescription: {desc}\n---\n\n{body}\n", encoding="utf-8")
         files.append(str(target))
     agents_target = path / "AGENTS.md"
-    agents_target.write_text(_bootstrap_agents_md(str(payload.get("agents_md") or ""), path, by_type["skill"], by_type["habit"]), encoding="utf-8")
+    agents_target.write_text(_bootstrap_agents_md(str(payload.get("agents_md") or ""), path, by_type["skill"], by_type["habit"], rules_dir=rules_dir, skills_dir=skills_dir), encoding="utf-8")
     files.append(str(agents_target))
     return {"context_dir": str(path), "files": files}
 
