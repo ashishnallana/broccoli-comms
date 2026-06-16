@@ -155,14 +155,21 @@ class TestLearningKernelCli(unittest.TestCase):
             ],
         )
 
+    def _delivery_calls(self, calls):
+        return [(method, payload) for method, payload in calls if method in {"send_message", "send_input"}]
+
+    def _delivery_target(self, payload):
+        return payload.get("agent_name") or payload.get("target_address")
+
     def test_task_status_notification_routes_done_review_to_reviewer_roles(self):
         task = {"task_id": "task-1", "title": "Notify", "status": "review", "assigned_agent": "coder", "participants": [{"agent": "coder", "role": "assignee", "status": "active"}, {"agent": "reviewer", "role": "reviewer", "status": "active"}, {"agent": "verifier", "role": "verifier", "status": "active"}, {"agent": "old-reviewer", "role": "reviewer", "status": "inactive"}]}
         calls = []
         with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
             notice = broccoli.notify_task_update(task, "coder", {"status": "review"})
         self.assertTrue(notice["sent"])
-        self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "reviewer", "verifier"])
-        for _method, payload in calls:
+        delivery_calls = self._delivery_calls(calls)
+        self.assertEqual([self._delivery_target(payload) for _method, payload in delivery_calls], [broccoli.UI_AGENT_NAME, "reviewer", "verifier"])
+        for _method, payload in delivery_calls:
             self.assertEqual(payload["sender_name"], "coder")
             body = payload.get("message") or payload.get("text")
             self.assertNotIn("\n", body)
@@ -172,7 +179,7 @@ class TestLearningKernelCli(unittest.TestCase):
                 self.assertEqual(payload["metadata"]["task_id"], "task-1")
                 self.assertEqual(payload["metadata"]["task_status"], "review")
         def flaky_tracker(_method, payload, **_kw):
-            if payload["agent_name"] == "reviewer":
+            if payload.get("agent_name") == "reviewer":
                 raise RuntimeError("offline")
             return {"ok": True}
         with mock.patch.object(broccoli, "tracker_rpc", side_effect=flaky_tracker):
@@ -199,8 +206,8 @@ class TestLearningKernelCli(unittest.TestCase):
         with mock.patch.object(broccoli, "tracker_agents", return_value={"host/coder": {"aliases": ["coder"]}, "coder": {"target_address": "host/coder"}}), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
             notice = broccoli.notify_task_update(task, "reviewer", {"status": "ready"})
         self.assertTrue(notice["sent"])
-        participant_payloads = [payload for _method, payload in calls if payload["agent_name"] != broccoli.UI_AGENT_NAME]
-        self.assertEqual([payload["agent_name"] for payload in participant_payloads], ["requester", "host/coder"])
+        participant_payloads = [payload for _method, payload in self._delivery_calls(calls) if self._delivery_target(payload) != broccoli.UI_AGENT_NAME]
+        self.assertEqual([self._delivery_target(payload) for payload in participant_payloads], ["requester", "host/coder"])
         self.assertEqual(participant_payloads[1]["metadata"]["recipient_roles"], ["assignee", "coordinator"])
         self.assertEqual(participant_payloads[1]["metadata"]["recipient_reasons"], ["status:ready"])
         self.assertEqual(notice["participant_notifications"][1]["roles"], ["assignee", "coordinator"])
@@ -217,11 +224,65 @@ class TestLearningKernelCli(unittest.TestCase):
         calls = []
         with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
             notice = broccoli.notify_task_update(task, "coder", {"status": "review"})
-        self.assertEqual([method for method, _payload in calls], ["send_message", "send_input"])
-        self.assertEqual(calls[1][1]["agent_name"], "reviewer")
-        self.assertEqual(calls[1][1]["mode"], "text")
-        self.assertIn("Task task-1 moved to review by coder", calls[1][1]["text"])
+        delivery_calls = self._delivery_calls(calls)
+        self.assertEqual([method for method, _payload in delivery_calls], ["send_message", "send_input"])
+        self.assertEqual(delivery_calls[1][1]["agent_name"], "reviewer")
+        self.assertEqual(delivery_calls[1][1]["mode"], "text")
+        self.assertIn("Task task-1 moved to review by coder", delivery_calls[1][1]["text"])
         self.assertEqual(notice["participant_notifications"][0]["delivery"], "send_input")
+
+    def test_task_update_shared_service_uses_router_fanout_and_preserves_metadata(self):
+        task = {"task_id": "task-1", "title": "Notify", "status": "review", "assigned_agent": "coder", "participants": []}
+        calls = []
+        trackers = [
+            {"tracker_id": "local-tracker", "hostname": "local-host", "status": "active"},
+            {"tracker_id": "remote-tracker", "hostname": "remote-host", "status": "active"},
+            {"tracker_id": "stale-tracker", "hostname": "stale-host", "status": "gone"},
+        ]
+        def fake_rpc(method, payload, **_kw):
+            calls.append((method, payload))
+            if method == "tracker_info":
+                return {"tracker_id": "local-tracker"}
+            if method == "list_trackers":
+                return trackers
+            return {"ok": True}
+        with mock.patch.object(broccoli, "tracker_rpc", side_effect=fake_rpc):
+            notice = broccoli.notify_task_update(task, "coder", {"status": "review"})
+        self.assertTrue(notice["sent"])
+        delivery_calls = self._delivery_calls(calls)
+        self.assertEqual([self._delivery_target(payload) for _method, payload in delivery_calls], [broccoli.UI_AGENT_NAME, "remote-host/agent-communicator"])
+        local_metadata = delivery_calls[0][1]["metadata"]
+        remote_metadata = delivery_calls[1][1]["metadata"]
+        for metadata in (local_metadata, remote_metadata):
+            self.assertEqual(metadata["content_type"], "application/vnd.broccoli.task-update+json")
+            self.assertEqual(metadata["kind"], "task_update")
+            self.assertEqual(metadata["task_id"], "task-1")
+            self.assertEqual(metadata["task_status"], "review")
+            self.assertEqual(metadata["recipient_agent"], broccoli.UI_AGENT_NAME)
+            self.assertEqual(metadata["recipient_kind"], "shared_service")
+            self.assertEqual(metadata["delivery_scope"], "shared_service_broadcast")
+            self.assertEqual(metadata["target_logical_identity"], broccoli.UI_AGENT_NAME)
+        self.assertEqual(notice["ui_broadcast"]["mode"], "fanout")
+        self.assertEqual(notice["ui_broadcast"]["remote"][0]["target"], "remote-host/agent-communicator")
+
+    def test_router_direct_host_qualified_target_uses_target_address(self):
+        calls = []
+        with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+            result = broccoli._route_message("remote-host/agent-communicator", "hello", {"kind": "text"}, "sender", mode="direct")
+        self.assertTrue(result["sent"])
+        self.assertEqual(calls[0][0], "send_message")
+        self.assertEqual(calls[0][1]["target_address"], "remote-host/agent-communicator")
+        self.assertNotIn("agent_name", calls[0][1])
+
+    def test_router_auto_bare_agent_communicator_remains_local_only(self):
+        calls = []
+        with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
+            result = broccoli._route_message(broccoli.UI_AGENT_NAME, "hello", {"kind": "text"}, "sender", mode="auto")
+        self.assertTrue(result["sent"])
+        self.assertEqual(result["mode"], "local")
+        self.assertEqual([method for method, _payload in calls], ["send_message"])
+        self.assertEqual(calls[0][1]["agent_name"], broccoli.UI_AGENT_NAME)
+        self.assertNotIn("target_address", calls[0][1])
 
     def test_task_update_notifications_fallback_to_inbox_for_mailbox_offline_and_remote(self):
         metadata = {"kind": "task_update"}
@@ -281,7 +342,7 @@ class TestLearningKernelCli(unittest.TestCase):
             with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
                 notice = broccoli.notify_chain_summary(k, summary, "coder")
             self.assertTrue(notice["sent"])
-            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "lead", "reviewer"])
+            self.assertEqual([payload["agent_name"] for _method, payload in self._delivery_calls(calls)], [broccoli.UI_AGENT_NAME, "lead", "reviewer"])
             self.assertEqual(calls[0][1]["metadata"]["kind"], "task_chain_summary")
 
     def test_ready_dependents_excludes_already_active_or_done_dependents(self):
@@ -304,8 +365,9 @@ class TestLearningKernelCli(unittest.TestCase):
             calls = []
             with mock.patch.dict(os.environ, {"AGENT_NAME": "reviewer"}, clear=False), mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
                 broccoli.task_update(args)
-            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder", "next", "coord"])
-            for _method, payload in calls:
+            delivery_calls = self._delivery_calls(calls)
+            self.assertEqual([payload["agent_name"] for _method, payload in delivery_calls], [broccoli.UI_AGENT_NAME, "coder", "next", "coord"])
+            for _method, payload in delivery_calls:
                 self.assertEqual(payload["sender_name"], "reviewer")
                 self.assertIn("moved to validated by reviewer. Read inbox.", payload.get("message") or payload.get("text"))
 
@@ -313,8 +375,9 @@ class TestLearningKernelCli(unittest.TestCase):
         task = {"task_id": "task-1", "title": "Notify", "status": "review", "participants": [{"agent": "reviewer", "role": "reviewer", "status": "active"}]}
         calls = []
         def flaky_tracker(_method, payload, **_kw):
-            calls.append(payload["agent_name"])
-            if payload["agent_name"] == broccoli.UI_AGENT_NAME:
+            if _method in {"send_message", "send_input"}:
+                calls.append(payload.get("agent_name") or payload.get("target_address"))
+            if payload.get("agent_name") == broccoli.UI_AGENT_NAME:
                 raise RuntimeError("ui offline")
             return {"ok": True}
         with mock.patch.object(broccoli, "tracker_rpc", side_effect=flaky_tracker):
@@ -332,7 +395,7 @@ class TestLearningKernelCli(unittest.TestCase):
             calls = []
             with mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
                 broccoli.task_mark_result(args)
-            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder"])
+            self.assertEqual([payload["agent_name"] for _method, payload in self._delivery_calls(calls)], [broccoli.UI_AGENT_NAME, "coder"])
 
     def test_assigned_agent_update_upserts_assignee_participant(self):
         with tempfile.TemporaryDirectory() as tmp, self.env(tmp):
@@ -997,10 +1060,11 @@ class TestLearningKernelCli(unittest.TestCase):
             with mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
                 notice = broccoli.notify_approval_request(k, approval)
             self.assertTrue(notice["sent"])
-            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder", "reviewer", "verifier"])
-            for _method, payload in calls:
+            delivery_calls = self._delivery_calls(calls)
+            self.assertEqual([payload["agent_name"] for _method, payload in delivery_calls], [broccoli.UI_AGENT_NAME, "coder", "reviewer", "verifier"])
+            for _method, payload in delivery_calls:
                 self.assertEqual(payload["sender_name"], "coder")
-            participant_payloads = [payload for _method, payload in calls[1:]]
+            participant_payloads = [payload for _method, payload in delivery_calls[1:]]
             self.assertEqual([payload["metadata"]["recipient_agent"] for payload in participant_payloads], ["coder", "reviewer", "verifier"])
             self.assertEqual([p["agent"] for p in notice["participant_notifications"]], ["coder", "reviewer", "verifier"])
             events = [e for e in k.events(task_id=task["task_id"]) if e["event_type"] == "task_approval_notification_sent"]
@@ -1031,7 +1095,7 @@ class TestLearningKernelCli(unittest.TestCase):
             calls = []
             with mock.patch.dict(os.environ, {"AGENT_NAME": "reviewer"}, clear=False), mock.patch.object(broccoli, "learning_kernel", return_value=k), mock.patch.object(broccoli, "tracker_rpc", side_effect=lambda method, payload, **kw: calls.append((method, payload)) or {"ok": True}):
                 broccoli.task_approval_review(args)
-            self.assertEqual([payload["agent_name"] for _method, payload in calls], [broccoli.UI_AGENT_NAME, "coder"])
+            self.assertEqual([payload["agent_name"] for _method, payload in self._delivery_calls(calls)], [broccoli.UI_AGENT_NAME, "coder"])
 
 
 if __name__ == "__main__":

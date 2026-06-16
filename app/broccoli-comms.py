@@ -2711,6 +2711,9 @@ def _task_update_attention_message(task: dict, actor: str, updates: dict) -> str
     return _single_line_message_part(message, 1000)
 
 
+SHARED_SERVICE_IDENTITIES = {UI_AGENT_NAME: {"kind": "shared_service", "default_delivery": "fanout_active_trackers"}}
+
+
 def _task_notification_delivery(agent: str, message: str, metadata: dict, sender_name: str) -> dict:
     if "/" in str(agent or ""):
         result = tracker_rpc("send_message", {"agent_name": agent, "message": message, "metadata": {**metadata, "preferred_delivery": "send_input", "delivery_fallback_reason": "remote_or_qualified_target"}, "sender_name": sender_name})
@@ -2760,27 +2763,73 @@ def _remote_shared_service_targets(identity: str) -> list[str]:
     return targets
 
 
-def _notify_shared_service_identity(identity: str, message: str, metadata: dict, sender_name: str) -> dict:
-    local_result = None
-    local_error = None
-    try:
-        local_result = tracker_rpc("send_message", {"agent_name": identity, "message": message, "metadata": metadata, "sender_name": sender_name})
-        if not local_result:
-            raise RuntimeError("tracker RPC send_message failed")
-    except Exception as e:
-        local_error = str(e)
-    remote_results = []
-    remote_metadata = {**metadata, "recipient_agent": identity, "recipient_kind": "shared_service", "delivery_scope": "shared_service_broadcast"}
-    for target in _remote_shared_service_targets(identity):
+def _routing_metadata(metadata: dict | None, target: str, kind: str, scope: str) -> dict:
+    return {
+        **(metadata or {}),
+        "recipient_agent": target,
+        "recipient_kind": kind,
+        "delivery_scope": scope,
+        "target_logical_identity": target if kind == "shared_service" else None,
+    }
+
+
+def _clean_routing_metadata(metadata: dict) -> dict:
+    return {k: v for k, v in metadata.items() if v is not None}
+
+
+def _route_message(target: str, message: str, metadata: dict | None, sender_name: str, *, mode: str = "auto", delivery_scope: str | None = None) -> dict:
+    """Route a message using local/direct/fanout/auto semantics.
+
+    This is the phase-1 internal routing layer for system notifications.  It
+    preserves bare-name local-only compatibility for ordinary sends while giving
+    task-update broadcasts an explicit shared-service fanout path.
+    """
+    target = str(target or "").strip()
+    if not target:
+        return {"sent": False, "error": "target required", "mode": mode}
+    if mode == "auto":
+        mode = "direct" if "/" in target else "local"
+    if mode not in {"local", "direct", "fanout"}:
+        raise ValueError("unsupported delivery mode")
+
+    if mode == "fanout":
+        scope = delivery_scope or "shared_service_broadcast"
+        local_metadata = _clean_routing_metadata(_routing_metadata(metadata, target, "shared_service", scope))
+        local_result = None
+        local_error = None
         try:
-            result = tracker_rpc("send_message", {"target_address": target, "message": message, "metadata": remote_metadata, "sender_name": sender_name})
-            remote_results.append({"target": target, "sent": bool(result), "result": result})
+            local_result = tracker_rpc("send_message", {"agent_name": target, "message": message, "metadata": local_metadata, "sender_name": sender_name})
+            if not local_result:
+                raise RuntimeError("tracker RPC send_message failed")
         except Exception as e:
-            remote_results.append({"target": target, "sent": False, "error": str(e)})
-    payload = {"sent": bool(local_result) or any(item.get("sent") for item in remote_results), "local": {"sent": bool(local_result), "result": local_result}, "remote": remote_results}
-    if local_error:
-        payload["local"]["error"] = local_error
-    return payload
+            local_error = str(e)
+        remote_results = []
+        for remote_target in _remote_shared_service_targets(target):
+            try:
+                result = tracker_rpc("send_message", {"target_address": remote_target, "message": message, "metadata": local_metadata, "sender_name": sender_name})
+                remote_results.append({"target": remote_target, "sent": bool(result), "delivery": "direct", "result": result})
+            except Exception as e:
+                remote_results.append({"target": remote_target, "sent": False, "delivery": "direct", "error": str(e)})
+        payload = {"sent": bool(local_result) or any(item.get("sent") for item in remote_results), "mode": "fanout", "delivery_scope": scope, "local": {"target": target, "sent": bool(local_result), "delivery": "local", "result": local_result}, "remote": remote_results}
+        if local_error:
+            payload["local"]["error"] = local_error
+        return payload
+
+    scope = delivery_scope or ("direct" if mode == "direct" else "local")
+    route_metadata = _clean_routing_metadata(_routing_metadata(metadata, target, "direct" if mode == "direct" else "local", scope))
+    params = {"message": message, "metadata": route_metadata, "sender_name": sender_name}
+    if mode == "direct" and "/" in target and not target.startswith("local/"):
+        params["target_address"] = target
+    else:
+        params["agent_name"] = target[6:] if target.startswith("local/") else target
+    result = tracker_rpc("send_message", params)
+    return {"sent": bool(result), "mode": mode, "delivery_scope": scope, "target": target, "result": result}
+
+
+def _notify_shared_service_identity(identity: str, message: str, metadata: dict, sender_name: str) -> dict:
+    policy = SHARED_SERVICE_IDENTITIES.get(identity, {})
+    scope = "shared_service_broadcast" if policy.get("kind") == "shared_service" else "fanout"
+    return _route_message(identity, message, metadata, sender_name, mode="fanout", delivery_scope=scope)
 
 
 def notify_task_update(task: dict, actor: str, updates: dict) -> dict:
