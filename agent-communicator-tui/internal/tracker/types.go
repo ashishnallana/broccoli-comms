@@ -168,6 +168,8 @@ type Event struct {
 	TargetAgentName string  `json:"target_agent_name,omitempty"`
 	Sender          string  `json:"sender,omitempty"`
 	MessageID       string  `json:"message_id,omitempty"`
+	ContentType     string  `json:"content_type,omitempty"`
+	Kind            string  `json:"kind,omitempty"`
 	HasAttachments  bool    `json:"has_attachments,omitempty"`
 	Hostname        string  `json:"hostname,omitempty"`
 	TrackerID       string  `json:"tracker_id,omitempty"`

@@ -23,6 +23,14 @@ func isTaskUpdateMessage(msg tracker.Message) bool {
 	return msg.ContentType == taskUpdateContentType || msg.Kind == "task_update" || msg.Kind == "task_status_changed"
 }
 
+func isCompactTaskUpdateMessage(msg tracker.Message) bool {
+	return isTaskUpdateMessage(msg) && msg.ApprovalID == ""
+}
+
+func isSelectableTimelineMessage(msg tracker.Message) bool {
+	return !isCompactTaskUpdateMessage(msg)
+}
+
 func isMemoryProposalMessage(msg tracker.Message) bool {
 	return msg.ContentType == memoryProposalContentType || msg.Kind == "memory_proposal"
 }
@@ -113,7 +121,7 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	body := msg.Body
 	innerWidth := max(8, width-8)
 	useBg := shouldRenderIncomingBubbleBackground(m.mode, msg) && width >= 70
-	if isTaskUpdateMessage(msg) && msg.ApprovalID == "" {
+	if isCompactTaskUpdateMessage(msg) {
 		useBg = false
 	}
 	displayBody, isPaneCapture := paneCaptureDisplayBody(body)
@@ -131,7 +139,7 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	} else if isTaskUpdateMessage(msg) && msg.ApprovalID != "" {
 		body = renderApprovalRequestBody(msg, innerWidth, bodyBg)
 	} else if isTaskUpdateMessage(msg) {
-		body = renderTaskUpdateBody(msg, innerWidth, bodyBg, index == m.messageSelected)
+		body = renderTaskUpdateBody(msg, innerWidth, bodyBg, index == m.messageSelected && isSelectableTimelineMessage(msg))
 	} else if isMemoryProposalMessage(msg) {
 		body = renderMemoryProposalBody(msg, innerWidth, bodyBg)
 	} else if isApprovalRequestMessage(msg) {
@@ -143,12 +151,16 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 	if useBg {
 		rowBg = bodyBg
 	}
+	compactTaskUpdate := isCompactTaskUpdateMessage(msg)
 	railStyle := fgOnBg(colors.Muted, rowBg)
-	if index == m.messageSelected {
+	if index == m.messageSelected && isSelectableTimelineMessage(msg) {
 		railStyle = fgOnBg(colors.Accent, rowBg).Bold(true)
 	}
 	rail := railStyle.Render("┃")
 	indent := bgSpaces(2, rowBg)
+	if compactTaskUpdate {
+		rail = ""
+	}
 	wrapWidth := innerWidth
 	bubblePadX := 2
 	if useBg {
@@ -187,7 +199,7 @@ func (m model) messageBubbleLines(msg tracker.Message, index, width int) []strin
 		out = append(out, padStyledLine(rail+indent+blank, width, rowBg))
 		header = renderIncomingBubbleLine(header)
 	}
-	if !isTaskUpdateMessage(msg) || msg.ApprovalID != "" {
+	if !isCompactTaskUpdateMessage(msg) {
 		out = append(out, padStyledLine(rail+indent+header, width, rowBg))
 	}
 

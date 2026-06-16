@@ -108,6 +108,10 @@ def _read_and_update_inbox_file(
     except IOError as e:
         raise RuntimeError(f"Failed to access inbox file: {e}")
 
+def _is_task_update_message(msg: dict) -> bool:
+    return msg.get("content_type") == "application/vnd.broccoli.task-update+json" or msg.get("kind") in {"task_update", "task_status_changed"}
+
+
 def _unread_count_key(msg: dict, registry_client=None) -> str | None:
     sender_agent_id = msg.get("sender_agent_id")
     sender_tracker_id = msg.get("sender_tracker_id")
@@ -163,7 +167,7 @@ def handle_get_unread_counts(
                         msg = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if msg.get("read", False):
+                    if msg.get("read", False) or _is_task_update_message(msg):
                         continue
                     key = _unread_count_key(msg, registry_client)
                     if not key:

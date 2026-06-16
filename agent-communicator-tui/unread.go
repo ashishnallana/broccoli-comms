@@ -7,7 +7,7 @@ func (m *model) markUnreadFromEvents(result tracker.WaitEventsResult) {
 		return
 	}
 	for _, event := range result.Events {
-		if event.TargetAgentName != m.ownName || event.Sender == "" || event.Sender == m.ownName {
+		if !eventCountsAsUnread(event) || event.TargetAgentName != m.ownName || event.Sender == "" || event.Sender == m.ownName {
 			continue
 		}
 		for _, row := range m.rows {
@@ -16,6 +16,13 @@ func (m *model) markUnreadFromEvents(result tracker.WaitEventsResult) {
 			}
 		}
 	}
+}
+
+func eventCountsAsUnread(event tracker.Event) bool {
+	if event.Type != "message_delivered" && event.Type != "message_notified" {
+		return false
+	}
+	return event.ContentType != taskUpdateContentType && event.Kind != "task_update" && event.Kind != "task_status_changed"
 }
 
 func (m *model) markUnread(row agentRow) {

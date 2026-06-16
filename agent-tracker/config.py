@@ -20,6 +20,27 @@ def get(section: str, key: str, default=None):
     config = load_config()
     return config.get(section, {}).get(key, default)
 
+
+def get_any(section: str, keys: list[str], default=None):
+    values = load_config().get(section, {})
+    if not isinstance(values, dict):
+        return default
+    for key in keys:
+        if key in values:
+            return values[key]
+    return default
+
+
+def get_provider(provider: str | None) -> dict:
+    provider = str(provider or "").strip()
+    if not provider:
+        return {}
+    providers = load_config().get("providers", {})
+    if not isinstance(providers, dict):
+        return {}
+    value = providers.get(provider, {})
+    return value if isinstance(value, dict) else {}
+
 def get_base_cache_dir() -> Path:
     configured = get("paths", "cache_dir")
     if configured:

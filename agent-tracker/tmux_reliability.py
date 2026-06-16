@@ -80,7 +80,8 @@ def send_keys_reliable(
     text: str,
     socket_path: str = None,
     timeout: float = 10.0,
-    poll_interval: float = 0.5
+    poll_interval: float = 0.5,
+    submit_key: str = "Enter",
 ) -> bool:
     """Sends a string of keys (e.g., a text notification) to a pane and verifies it appeared on screen.
     
@@ -92,8 +93,8 @@ def send_keys_reliable(
 
     exit_copy_mode_if_needed(pane_id, socket_path)
 
-    # Send the keys followed by Enter (tmux literal key name)
-    run_tmux(["send-keys", "-t", pane_id, text, "Enter"], socket_path)
+    # Send the keys followed by provider submit key (tmux literal key name)
+    run_tmux(["send-keys", "-t", pane_id, text, submit_key or "Enter"], socket_path)
 
     start_time = time.time()
     while time.time() - start_time < timeout:

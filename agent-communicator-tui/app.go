@@ -398,8 +398,34 @@ func (m model) retryCurrentOperation() tea.Cmd {
 }
 
 func (m *model) selectLatestMessage() {
-	m.messageSelected = 0
+	m.messageSelected = selectableMessageIndex(m.displayOrderedMessages(), 0, 1)
 	m.messageOffset = 0
+}
+
+func selectableMessageIndex(messages []tracker.Message, start, delta int) int {
+	if len(messages) == 0 {
+		return 0
+	}
+	if delta == 0 {
+		delta = 1
+	}
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(messages) {
+		start = len(messages) - 1
+	}
+	for i := start; i >= 0 && i < len(messages); i += delta {
+		if isSelectableTimelineMessage(messages[i]) {
+			return i
+		}
+	}
+	for i := start - delta; i >= 0 && i < len(messages); i -= delta {
+		if isSelectableTimelineMessage(messages[i]) {
+			return i
+		}
+	}
+	return clampSelectedMessage(start, len(messages))
 }
 
 func clampSelectedMessage(selected, count int) int {

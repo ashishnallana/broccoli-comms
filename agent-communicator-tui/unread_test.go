@@ -10,12 +10,27 @@ import (
 
 func TestIncomingEventHighlightsAgentListRow(t *testing.T) {
 	m := model{ownName: "coding-agent", selected: 1, rows: []agentRow{{Name: "alice", Scope: "local"}, {Name: "bob", Scope: "local"}}}
-	m.markUnreadFromEvents(tracker.WaitEventsResult{Events: []tracker.Event{{TargetAgentName: "coding-agent", Sender: "alice"}}})
+	m.markUnreadFromEvents(tracker.WaitEventsResult{Events: []tracker.Event{{Type: "message_delivered", TargetAgentName: "coding-agent", Sender: "alice"}}})
 	if !m.hasUnread(m.rows[0]) {
 		t.Fatal("incoming event did not mark row unread")
 	}
 	if view := m.agentList(40, 10); !strings.Contains(view, "1") {
 		t.Fatalf("agent list missing unread count badge:\n%s", view)
+	}
+}
+
+func TestTaskUpdateEventsDoNotHighlightAgentListRow(t *testing.T) {
+	row := agentRow{Name: "task-kernel", Scope: "local"}
+	cases := []tracker.Event{
+		{Type: "message_delivered", TargetAgentName: "coding-agent", Sender: "task-kernel", ContentType: taskUpdateContentType, Kind: "task_update"},
+		{Type: "message_notified", TargetAgentName: "coding-agent", Sender: "task-kernel", Kind: "task_status_changed"},
+	}
+	for _, event := range cases {
+		m := model{ownName: "coding-agent", rows: []agentRow{row}}
+		m.markUnreadFromEvents(tracker.WaitEventsResult{Events: []tracker.Event{event}})
+		if m.hasUnread(row) {
+			t.Fatalf("task update event should not mark row unread: %+v", event)
+		}
 	}
 }
 
@@ -43,7 +58,7 @@ func TestCtrlAClearsUnreadForSelectedConversation(t *testing.T) {
 func TestRemoteIncomingEventHighlightsMatchingHostRow(t *testing.T) {
 	row := agentRow{Name: "dawns/alice", Scope: "remote", Hostname: "dawnstar", AgentName: "alice", TargetAddress: "dawnstar/alice"}
 	m := model{ownName: "coding-agent", rows: []agentRow{row}}
-	m.markUnreadFromEvents(tracker.WaitEventsResult{Events: []tracker.Event{{TargetAgentName: "coding-agent", Sender: "alice (via dawnstar)"}}})
+	m.markUnreadFromEvents(tracker.WaitEventsResult{Events: []tracker.Event{{Type: "message_delivered", TargetAgentName: "coding-agent", Sender: "alice (via dawnstar)"}}})
 	if !m.hasUnread(row) {
 		t.Fatal("remote incoming event did not mark row unread")
 	}

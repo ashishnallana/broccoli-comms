@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tanmayvijay/home-manager-core/agent-communicator-tui/internal/tracker"
 )
 
@@ -104,7 +105,7 @@ func TestTaskUpdateMessageRendersCompactWithoutSenderChrome(t *testing.T) {
 			t.Fatalf("task update card missing %q in:\n%s", want, view)
 		}
 	}
-	for _, duplicate := range []string{"task-kernel", "Task update", "moved to review by broccoli-agent", "Skill docs updated"} {
+	for _, duplicate := range []string{"task-kernel", "Task update", "moved to review by broccoli-agent", "Skill docs updated", "┃"} {
 		if strings.Contains(view, duplicate) {
 			t.Fatalf("task update card should be compact and avoid %q in:\n%s", duplicate, view)
 		}
@@ -114,14 +115,33 @@ func TestTaskUpdateMessageRendersCompactWithoutSenderChrome(t *testing.T) {
 	}
 }
 
-func TestTaskUpdateMessageShowsResultSummaryWhenHighlighted(t *testing.T) {
+func TestTaskUpdateMessageDoesNotHighlightAsSelected(t *testing.T) {
 	msg := tracker.Message{Sender: "task-kernel", ContentType: taskUpdateContentType, Kind: "task_update", TaskID: "task-1", TaskTitle: "Update skill docs", TaskStatus: "review", ResultSummary: "Skill docs updated", TaskNextStep: "Await validation"}
 	m := model{messages: []tracker.Message{msg}, messageSelected: 0}
 	view := strings.Join(m.messageBubbleLines(m.messages[0], 0, 100), "\n")
-	for _, want := range []string{"Skill docs updated", "Await validation"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("highlighted task update missing %q in:\n%s", want, view)
-		}
+	if strings.Contains(view, "Skill docs updated") || strings.Contains(view, "┃") {
+		t.Fatalf("task update should not render selected-only summary or timeline rail:\n%s", view)
+	}
+	if !strings.Contains(view, "Await validation") {
+		t.Fatalf("task update should keep next-step content:\n%s", view)
+	}
+}
+
+func TestMessageSelectionSkipsCompactTaskUpdates(t *testing.T) {
+	m := model{messages: []tracker.Message{
+		{Sender: "alice", Body: "older normal"},
+		{Sender: "task-kernel", ContentType: taskUpdateContentType, Kind: "task_update", TaskID: "task-1", TaskTitle: "Task update", TaskStatus: "done"},
+		{Sender: "bob", Body: "latest normal"},
+	}, messageSelected: 0}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(model)
+	if m.messageSelected != 2 {
+		t.Fatalf("down should skip compact task update, selected=%d", m.messageSelected)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(model)
+	if m.messageSelected != 0 {
+		t.Fatalf("up should skip compact task update, selected=%d", m.messageSelected)
 	}
 }
 

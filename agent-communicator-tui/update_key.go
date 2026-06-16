@@ -342,14 +342,16 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (model, tea.Cmd) {
 		}
 	case tea.KeyUp:
 		m.messageFocused = true
+		messages := m.displayOrderedMessages()
 		if m.messageSelected > 0 {
-			m.messageSelected--
+			m.messageSelected = selectableMessageIndex(messages, m.messageSelected-1, -1)
 			m.scrollSelectedMessageIntoView()
 		}
 	case tea.KeyDown:
 		m.messageFocused = true
-		if m.messageSelected < len(m.displayOrderedMessages())-1 {
-			m.messageSelected++
+		messages := m.displayOrderedMessages()
+		if m.messageSelected < len(messages)-1 {
+			m.messageSelected = selectableMessageIndex(messages, m.messageSelected+1, 1)
 			m.scrollSelectedMessageIntoView()
 		}
 	case tea.KeyPgUp, tea.KeyCtrlU:

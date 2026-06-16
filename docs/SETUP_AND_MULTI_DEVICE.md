@@ -404,6 +404,20 @@ broccoli-comms agent-tracker send-text --no-submit alice "draft prompt"
 broccoli-comms agent-tracker send-key alice C-c Enter
 ```
 
+Provider-specific submit keys can be configured in `~/.config/broccoli-comms/config.toml`. The default is `Enter`; set `tmux-submit-key` when a provider needs a different tmux key such as `C-M`:
+
+```toml
+[providers.pi]
+cmd = "pi"
+tmux-submit-key = "Enter"
+
+[providers.codex]
+cmd = "codex"
+tmux-submit-key = "C-M"
+```
+
+`send-message` inbox notifications and direct `send-text` submission choose the submit key from the target agent provider (`model_type`/`agent_type`/`agent_cmd`). `send-text --no-submit` still types text without pressing any submit key.
+
 Remote direct input is disabled by default and should be enabled only for trusted registries/trackers. Enable all required gates before using host-qualified remote targets:
 
 ```sh

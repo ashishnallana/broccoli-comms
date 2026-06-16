@@ -59,6 +59,10 @@ class TestTmuxUtil(unittest.TestCase):
 
     @mock.patch("tmux_util.enqueue_tmux_cmd")
     def test_send_keys_rate_limiting_gap(self, mock_enqueue):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self._assert_send_keys_rate_limiting_gap(mock_enqueue)
+
+    def _assert_send_keys_rate_limiting_gap(self, mock_enqueue):
         # 1. Trigger first send_keys (initial state)
         start_time = time.time()
         tmux_util.send_keys("%1", "hello")
@@ -162,6 +166,12 @@ class TestTmuxUtil(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0], ["tmux", "-S", "/tmp/tmux.sock", "send-keys", "-t", "%1", "Enter"])
 
     @mock.patch("tmux_util.subprocess.run")
+    def test_send_literal_text_uses_configured_submit_key(self, run):
+        run.return_value = mock.Mock(returncode=0, stdout=b"")
+        tmux_util.send_literal_text("%1", "hello", socket_path="/tmp/tmux.sock", submit_key="C-M")
+        self.assertEqual(run.call_args_list[1].args[0], ["tmux", "-S", "/tmp/tmux.sock", "send-keys", "-t", "%1", "C-M"])
+
+    @mock.patch("tmux_util.subprocess.run")
     def test_send_literal_text_no_submit(self, run):
         run.return_value = mock.Mock(returncode=0, stdout=b"")
         tmux_util.send_literal_text("%1", "draft", submit=False, socket_path="/tmp/tmux.sock")
@@ -171,9 +181,9 @@ class TestTmuxUtil(unittest.TestCase):
     @mock.patch("tmux_util.subprocess.run")
     def test_send_symbolic_keys_normalizes_aliases(self, run):
         run.return_value = mock.Mock(returncode=0, stdout=b"")
-        tmux_util.send_symbolic_keys("%1", ["ESC", "Return", "C-C", "Ctrl-D"], socket_path="/tmp/tmux.sock")
+        tmux_util.send_symbolic_keys("%1", ["ESC", "Return", "C-C", "Ctrl-D", "C-M"], socket_path="/tmp/tmux.sock")
         run.assert_called_once()
-        self.assertEqual(run.call_args.args[0], ["tmux", "-S", "/tmp/tmux.sock", "send-keys", "-t", "%1", "Escape", "Enter", "C-c", "C-d"])
+        self.assertEqual(run.call_args.args[0], ["tmux", "-S", "/tmp/tmux.sock", "send-keys", "-t", "%1", "Escape", "Enter", "C-c", "C-d", "C-M"])
 
     def test_send_symbolic_keys_rejects_malformed_unknown_keys(self):
         bad_keys = ["", "C-", "NotAKey", "C- ", "C-;", "C-a;rm", "C--a", "C-M-S-a", "hello world"]

@@ -987,6 +987,8 @@ class TestRpcHandler(unittest.TestCase):
                 f.write(json.dumps({"sender": "remote-alpha", "sender_agent_id": "alpha-id", "sender_tracker_id": "remote-tracker", "message": "b", "read": False, "message_id": "m2"}) + "\n")
                 f.write(json.dumps({"sender": "legacy", "message": "c", "read": False, "message_id": "m3"}) + "\n")
                 f.write(json.dumps({"sender": "alpha", "sender_agent_id": "alpha-id", "message": "read", "read": True, "message_id": "m4"}) + "\n")
+                f.write(json.dumps({"sender": "task-kernel", "message": "task update", "read": False, "message_id": "m5", "content_type": "application/vnd.broccoli.task-update+json", "kind": "task_update"}) + "\n")
+                f.write(json.dumps({"sender": "task-kernel", "message": "task status", "read": False, "message_id": "m6", "kind": "task_status_changed"}) + "\n")
 
             result = rpc_handler.handle_get_unread_counts({"agent_name": "agent1"})
             self.assertEqual(result["total"], 3)
@@ -999,6 +1001,8 @@ class TestRpcHandler(unittest.TestCase):
             self.assertFalse(stored[0]["read"])
             self.assertFalse(stored[1]["read"])
             self.assertFalse(stored[2]["read"])
+            self.assertFalse(stored[4]["read"])
+            self.assertFalse(stored[5]["read"])
         finally:
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
@@ -1485,6 +1489,28 @@ class TestRpcHandler(unittest.TestCase):
 
     @mock.patch("tmux_util.send_keys")
     @mock.patch("tmux_util.send_keys_reliable")
+    def test_deliver_local_message_uses_target_provider_submit_key_for_notification(self, mock_send_keys_reliable, mock_send_keys):
+        mock_send_keys_reliable.return_value = False
+        state.set_agent("receiver", {
+            "agent_id": "receiver-id",
+            "uuid": "receiver-id",
+            "tmux_pane": "%1",
+            "tmux_socket": "sock",
+            "status": "idle",
+            "agent_type": "codex",
+            "agent_cmd": "codex",
+        })
+        with mock.patch("config.load_config", return_value={"providers": {"codex": {"tmux-submit-key": "C-M"}}}):
+            rpc_handler.deliver_local_message("receiver", {
+                "sender": "sender-agent",
+                "message": "hello",
+                "message_id": "msg-provider-submit",
+            })
+        mock_send_keys_reliable.assert_called_once_with("%1", "New message in inbox from sender-agent", "sock", timeout=5, submit_key="C-M")
+        mock_send_keys.assert_called_once_with("%1", "New message in inbox from sender-agent", "sock", submit_key="C-M")
+
+    @mock.patch("tmux_util.send_keys")
+    @mock.patch("tmux_util.send_keys_reliable")
     def test_deliver_local_message_reliable_exception_fallback(self, mock_send_keys_reliable, mock_send_keys):
         mock_send_keys_reliable.side_effect = Exception("tmux error")
         inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
@@ -1673,6 +1699,22 @@ class TestRpcHandler(unittest.TestCase):
     def test_send_input_hostname_local_target_address_resolves_locally(self, send_literal):
         state.set_agent("agent1", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock"})
         result = rpc_handler.handle_send_input({"target_address": f"{rpc_handler.LOCAL_HOSTNAME}/id-1", "input_type": "text", "text": "hello"})
+        self.assertTrue(result["success"])
+        send_literal.assert_called_once_with("%1", "hello", submit=True, socket_path="sock")
+
+    @mock.patch("tmux_util.send_literal_text")
+    def test_send_input_uses_target_provider_submit_key(self, send_literal):
+        state.set_agent("codex-agent", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock", "agent_type": "codex", "agent_cmd": "codex"})
+        with mock.patch("config.load_config", return_value={"providers": {"codex": {"tmux-submit-key": "C-M"}}}):
+            result = rpc_handler.handle_send_input({"agent_name": "codex-agent", "input_type": "text", "text": "hello"})
+        self.assertTrue(result["success"])
+        send_literal.assert_called_once_with("%1", "hello", submit=True, socket_path="sock", submit_key="C-M")
+
+    @mock.patch("tmux_util.send_literal_text")
+    def test_send_input_defaults_to_enter_when_provider_submit_key_missing(self, send_literal):
+        state.set_agent("pi-agent", {"agent_id": "id-1", "status": "idle", "tmux_pane": "%1", "tmux_socket": "sock", "agent_type": "pi", "agent_cmd": "pi"})
+        with mock.patch("config.load_config", return_value={"providers": {"codex": {"tmux-submit-key": "C-M"}}}):
+            result = rpc_handler.handle_send_input({"agent_name": "pi-agent", "input_type": "text", "text": "hello"})
         self.assertTrue(result["success"])
         send_literal.assert_called_once_with("%1", "hello", submit=True, socket_path="sock")
 

@@ -99,7 +99,8 @@ func (m *model) setMode(mode viewMode) {
 	if mode == savedView {
 		m.clampSavedSelected()
 	}
-	m.messageSelected = clampSelectedMessage(m.messageSelected, len(m.displayOrderedMessages()))
+	messages := m.displayOrderedMessages()
+	m.messageSelected = selectableMessageIndex(messages, clampSelectedMessage(m.messageSelected, len(messages)), 1)
 }
 
 func (m *model) selectTab(delta int) {

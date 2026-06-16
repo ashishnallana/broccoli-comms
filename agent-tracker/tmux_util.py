@@ -194,8 +194,8 @@ def unset_pane_title(pane_id, socket_path=None):
     cmd = tmux_command(["select-pane", "-t", pane_id, "-T", ""], socket_path)
     enqueue_tmux_cmd(cmd)
 
-def send_keys(pane_id, keys, socket_path=None):
-    """Sends keys followed by a short delay and Enter to ensure submission."""
+def send_keys(pane_id, keys, socket_path=None, submit_key="Enter"):
+    """Sends keys followed by a short delay and provider submit key."""
     global last_send_keys_time
     cmd_base = tmux_base(socket_path)
     
@@ -216,8 +216,8 @@ def send_keys(pane_id, keys, socket_path=None):
         enqueue_tmux_cmd(["sleep", "0.5"])
         last_send_keys_time += 0.5
         
-        # 3. Send the Enter key to submit
-        enqueue_tmux_cmd(cmd_base + ["send-keys", "-t", pane_id, "Enter"])
+        # 3. Send the provider submit key to submit
+        enqueue_tmux_cmd(cmd_base + ["send-keys", "-t", pane_id, normalize_key_token(submit_key or "Enter")])
 
 
 _SIMPLE_KEY_ALIASES = {
@@ -275,8 +275,8 @@ def _run_tmux_input(cmd, socket_path=None):
     )
 
 
-def send_literal_text(pane_id, text, submit=True, socket_path=None):
-    """Type literal text into a pane, optionally pressing Enter afterwards."""
+def send_literal_text(pane_id, text, submit=True, socket_path=None, submit_key="Enter"):
+    """Type literal text into a pane, optionally pressing the provider submit key afterwards."""
     if not pane_id:
         raise ValueError("pane_id is required")
     if not isinstance(text, str):
@@ -285,7 +285,7 @@ def send_literal_text(pane_id, text, submit=True, socket_path=None):
         raise ValueError("text must not be empty")
     _run_tmux_input(tmux_base(socket_path) + ["send-keys", "-t", pane_id, "-l", "--", text], socket_path)
     if submit:
-        _run_tmux_input(tmux_base(socket_path) + ["send-keys", "-t", pane_id, "Enter"], socket_path)
+        _run_tmux_input(tmux_base(socket_path) + ["send-keys", "-t", pane_id, normalize_key_token(submit_key or "Enter")], socket_path)
     return True
 
 
@@ -335,7 +335,7 @@ def normalize_key_token(key):
     elif re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", base_lower):
         base = "F" + base_lower[1:]
     elif len(base_raw) == 1 and base_raw.isalnum():
-        base = base_raw.lower() if "C" in modifiers else base_raw
+        base = "M" if "C" in modifiers and base_raw.lower() == "m" else (base_raw.lower() if "C" in modifiers else base_raw)
     else:
         raise ValueError(f"unknown key: {key}")
     return "-".join(modifiers + [base])
@@ -465,9 +465,9 @@ def spin_agent(agent_name, command, target_pane=None, session=None, directory=No
         logging.error("Tmux spin failed cmd=%s stderr=%s", cmd if 'cmd' in locals() else tmux_cmd, e.stderr.decode())
         raise
 
-def send_keys_reliable(pane_id, keys, socket_path=None, timeout=10):
+def send_keys_reliable(pane_id, keys, socket_path=None, timeout=10, submit_key="Enter"):
     """Sends keys to a pane reliably, verifying they appeared on screen."""
-    return tmux_reliability.send_keys_reliable(pane_id, keys, socket_path if socket_path is not None else default_tmux_socket(), timeout)
+    return tmux_reliability.send_keys_reliable(pane_id, keys, socket_path if socket_path is not None else default_tmux_socket(), timeout, submit_key=normalize_key_token(submit_key or "Enter"))
 
 def execute_command_reliable(pane_id, command, socket_path=None, timeout=30):
     """Executes a command in a pane reliably, waiting for execution and returning the exit code."""

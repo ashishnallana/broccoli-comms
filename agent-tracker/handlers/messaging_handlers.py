@@ -83,6 +83,23 @@ def remote_message_focus_enabled() -> bool:
     return config.get("ui", "focus_remote_messages", False)
 
 
+def _target_provider(info: dict) -> str:
+    return state.normalize_model_type(info.get("model_type"), info.get("agent_type"), info.get("agent_cmd"))
+
+
+def _provider_submit_key(info: dict) -> str:
+    provider = _target_provider(info)
+    provider_cfg = config.get_provider(provider)
+    raw = None
+    for key in ("tmux-submit-key", "tmux_submit_key", "submit-key", "submit_key"):
+        if key in provider_cfg:
+            raw = provider_cfg.get(key)
+            break
+    if raw in (None, ""):
+        return "Enter"
+    return tmux_util.normalize_key_token(str(raw))
+
+
 def _maybe_focus_remote_delivery(info: dict, current_name: str, msg_obj: dict) -> None:
     sender_tracker_id = msg_obj.get("sender_tracker_id")
     if not sender_tracker_id or sender_tracker_id == registry_client.TRACKER_ID:
@@ -192,6 +209,8 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
             "sender": notify_sender,
             "message_id": msg_obj.get("message_id"),
             "has_attachments": bool(msg_obj.get("attachments")),
+            "content_type": msg_obj.get("content_type"),
+            "kind": msg_obj.get("kind"),
         }
         state.publish_event("message_delivered", notification)
         if msg_obj.get("sender_tracker_id") and msg_obj.get("sender_tracker_id") != registry_client.TRACKER_ID:
@@ -219,7 +238,9 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
             if enable_reliable or verify:
                 try:
                     logging.info(f"Attempting reliable notification delivery for {current_name} to pane {info['tmux_pane']} (verify={verify})")
-                    delivered = tmux_util.send_keys_reliable(info["tmux_pane"], notify_msg, info["tmux_socket"], timeout=5)
+                    submit_key = _provider_submit_key(info)
+                    kwargs = {"timeout": 5} if submit_key == "Enter" else {"timeout": 5, "submit_key": submit_key}
+                    delivered = tmux_util.send_keys_reliable(info["tmux_pane"], notify_msg, info["tmux_socket"], **kwargs)
                     if delivered:
                         logging.info(f"Reliable notification successfully delivered to {current_name} in pane {info['tmux_pane']}")
                     else:
@@ -232,7 +253,11 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
                     logging.warning(f"Error during reliable notification delivery: {e}. Falling back to legacy send_keys.")
 
             if not delivered:
-                tmux_util.send_keys(info["tmux_pane"], notify_msg, info["tmux_socket"])
+                submit_key = _provider_submit_key(info)
+                if submit_key == "Enter":
+                    tmux_util.send_keys(info["tmux_pane"], notify_msg, info["tmux_socket"])
+                else:
+                    tmux_util.send_keys(info["tmux_pane"], notify_msg, info["tmux_socket"], submit_key=submit_key)
 
             _publish_message_notified(info, current_name, pending_item)
         return current_name
@@ -388,7 +413,11 @@ def handle_send_input(params: dict, caller_pid: int = None, identify_agent=None)
         if mode == "text":
             text = input_payload["text"]
             submit = input_payload["submit"]
-            tmux_util.send_literal_text(tmux_pane, text, submit=submit, socket_path=tmux_socket)
+            submit_key = _provider_submit_key(info)
+            if submit_key == "Enter":
+                tmux_util.send_literal_text(tmux_pane, text, submit=submit, socket_path=tmux_socket)
+            else:
+                tmux_util.send_literal_text(tmux_pane, text, submit=submit, socket_path=tmux_socket, submit_key=submit_key)
             return {"success": True, "target": current_name, "mode": "text", "submitted": submit}
         normalized = input_payload["keys"]
         tmux_util.send_symbolic_keys(tmux_pane, normalized, socket_path=tmux_socket)
