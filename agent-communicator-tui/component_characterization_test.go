@@ -62,7 +62,7 @@ func TestComponentCharacterizationComposerMessagePaletteAndRows(t *testing.T) {
 		}
 		assertRenderedContainsAll(t, "agent row", agent, "alpha", "online", "pi")
 
-		taskLines := taskRowLines(taskRecord{TaskID: "task-1", Title: "Implement component shell", Status: "working", Priority: "P1", AssignedAgent: "broccoli-agent", NextStep: "extract helpers"}, true, false, 72)
+		taskLines := taskRowLines(taskRecord{TaskID: "task-1", Title: "Implement component shell", Status: "working", Priority: "P1", AssignedAgent: "broccoli-agent", NextStep: "extract helpers"}, true, false, 72, nil)
 		if len(taskLines) != 2 {
 			t.Fatalf("task row lines=%d want 2: %#v", len(taskLines), taskLines)
 		}

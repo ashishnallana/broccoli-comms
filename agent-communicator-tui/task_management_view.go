@@ -111,26 +111,26 @@ func taskChainLines(data taskManagementData, width, height int) []string {
 }
 
 func taskChainRowLines(chain taskChainSummary, selected bool, width int) []string {
-	bg := colors.TaskUpdateBg
-	fg := colors.Text
-	marker := "┃"
+	visual := taskChainVisualState(chain)
+	bg := visual.bg
+	marker := visual.marker
 	if selected {
 		bg = colors.SelectedBg
-		fg = colors.SelectedFg
 		marker = "▸"
 	}
-	style := fgOnBg(fg, bg).Bold(selected)
 	meta := fgOnBg(colors.Muted, bg)
+	statusStyle := fgOnBg(visual.fg, bg).Bold(!selected)
 	if selected {
 		meta = fgOnBg(colors.SelectedFg, bg)
+		statusStyle = fgOnBg(colors.SelectedFg, bg).Bold(true)
 	}
-	line1 := fmt.Sprintf("%s %s · root %s · %s", marker, firstNonEmpty(chain.ChainID, "chain"), firstNonEmpty(chain.RootTaskID, "—"), firstNonEmpty(chain.RootTitle, "Untitled chain"))
-	line2 := fmt.Sprintf("  W%d R%d Q%d B%d Rev%d · agents %s", chain.Counts.Working, chain.Counts.Ready, chain.Counts.Queued, chain.Counts.Blocked, chain.Counts.Review, firstNonEmpty(strings.Join(chain.Agents, ", "), "—"))
+	line1 := fmt.Sprintf("%s %s · %s · root %s · %s", marker, visual.badge, firstNonEmpty(chain.ChainID, "chain"), firstNonEmpty(chain.RootTaskID, "—"), firstNonEmpty(chain.RootTitle, "Untitled chain"))
+	line2 := fmt.Sprintf("  W%d R%d Q%d B%d Rev%d C%d · agents %s", chain.Counts.Working, chain.Counts.Ready, chain.Counts.Queued, chain.Counts.Blocked, chain.Counts.Review, chain.Counts.Completed, firstNonEmpty(strings.Join(chain.Agents, ", "), "—"))
 	current := firstNonEmpty(chain.CurrentTask.Title, chain.CurrentTask.TaskID, "no current")
 	next := firstNonEmpty(chain.NextTask.Title, chain.NextTask.TaskID, "no next")
 	line3 := fmt.Sprintf("  current %s · next %s · updated %s", current, next, firstNonEmpty(chain.LatestUpdate, "—"))
 	return []string{
-		padStyledLine(style.Render(truncateCells(line1, width)), width, bg),
+		padStyledLine(statusStyle.Render(truncateCells(line1, width)), width, bg),
 		padStyledLine(meta.Render(truncateCells(line2, width)), width, bg),
 		padStyledLine(meta.Render(truncateCells(line3, width)), width, bg),
 	}
@@ -143,6 +143,7 @@ func taskBucketLines(data taskManagementData, width, height int) []string {
 	if len(rows) > 0 {
 		selectedTaskID = rows[min(max(0, dataSelectedIndex(data, len(rows))), len(rows)-1)].TaskID
 	}
+	approvalByTask := approvalsByTask(data.Approvals)
 	rowIndex := 0
 	for _, bucket := range data.Buckets {
 		if len(bucket.Tasks) == 0 {
@@ -157,7 +158,7 @@ func taskBucketLines(data taskManagementData, width, height int) []string {
 			}
 			current := task.TaskID == data.CurrentTaskID && bucket.Name == "Current"
 			selected := task.TaskID != "" && task.TaskID == selectedTaskID
-			bucketLines = append(bucketLines, taskRowLines(task, current, selected, width)...)
+			bucketLines = append(bucketLines, taskRowLines(task, current, selected, width, approvalByTask[task.TaskID])...)
 			if len(lines)+len(bucketLines)+1 >= height {
 				break
 			}
@@ -182,41 +183,36 @@ func dataSelectedIndex(data taskManagementData, count int) int {
 	return min(max(0, data.SelectedIndex), max(0, count-1))
 }
 
-func taskRowLines(task taskRecord, current bool, selected bool, width int) []string {
-	bg := colors.BaseBg
-	fg := colors.Text
-	marker := "┃"
-	completed := taskCompleted(task)
+func taskRowLines(task taskRecord, current bool, selected bool, width int, approvals []taskApprovalRecord) []string {
+	visual := taskVisualState(task, approvals)
+	bg := visual.bg
+	marker := visual.marker
 	if current {
 		bg = colors.SelectedBg
-		fg = colors.SelectedFg
 		marker = "▸"
 	} else if selected {
 		bg = colors.PanelBgAlt
-		fg = colors.TextStrong
 		marker = "›"
-	} else if strings.EqualFold(task.Status, "blocked") || task.BlockedReason != "" {
-		bg = colors.PanelBgAlt
-		fg = colors.Warning
-	} else if completed {
-		fg = colors.Muted
-		marker = "✓"
 	}
-	style := fgOnBg(fg, bg)
 	metaStyle := fgOnBg(colors.Muted, bg)
+	statusStyle := fgOnBg(visual.fg, bg).Bold(!selected && !current)
 	if current {
 		metaStyle = fgOnBg(colors.SelectedFg, bg)
+		statusStyle = fgOnBg(colors.SelectedFg, bg).Bold(true)
 	}
 	status := firstNonEmpty(task.Status, task.ResultStatus, "unknown")
-	line1 := fmt.Sprintf("%s %s · %s", marker, firstNonEmpty(task.TaskID, "task"), firstNonEmpty(task.Title, "Untitled task"))
+	line1 := fmt.Sprintf("%s %s · %s · %s", marker, visual.badge, firstNonEmpty(task.TaskID, "task"), firstNonEmpty(task.Title, "Untitled task"))
 	line2 := fmt.Sprintf("  %s · %s · %s", status, firstNonEmpty(task.Priority, "priority —"), firstNonEmpty(task.AssignedAgent, "unassigned"))
+	if hasPendingApproval(approvals) {
+		line2 += " · approval pending"
+	}
 	if task.NextStep != "" {
 		line2 += " · next " + task.NextStep
 	} else if task.BlockedReason != "" {
 		line2 += " · blocked " + task.BlockedReason
 	}
 	return []string{
-		padStyledLine(style.Bold(current || selected).Render(truncateCells(line1, width)), width, bg),
+		padStyledLine(statusStyle.Render(truncateCells(line1, width)), width, bg),
 		padStyledLine(metaStyle.Render(truncateCells(line2, width)), width, bg),
 	}
 }
@@ -254,6 +250,48 @@ func (m model) taskDetailsPanel(width, height int) string {
 		}
 	}
 	return padBlock(strings.Join(lines, "\n"), width, height, 1, bg)
+}
+
+type taskStatusVisual struct {
+	badge  string
+	marker string
+	fg     lipgloss.Color
+	bg     lipgloss.Color
+}
+
+func taskVisualState(task taskRecord, approvals []taskApprovalRecord) taskStatusVisual {
+	status := normalizedTaskStatus(task, taskWorkingState{})
+	switch {
+	case strings.TrimSpace(task.BlockedReason) != "" || status == "blocked":
+		return taskStatusVisual{badge: "! blocked", marker: "!", fg: colors.Warning, bg: colors.PanelBgAlt}
+	case hasPendingApproval(approvals) || status == "review" || status == "pending_review" || taskReviewHandoff(task, approvals):
+		return taskStatusVisual{badge: "◆ review", marker: "◆", fg: colors.AccentAlt, bg: colors.TaskUpdateBg}
+	case status == "working":
+		return taskStatusVisual{badge: "● working", marker: "●", fg: colors.AccentStrong, bg: colors.TaskUpdateBg}
+	case status == "ready":
+		return taskStatusVisual{badge: "◌ ready", marker: "◌", fg: colors.Accent, bg: colors.PanelBgAlt}
+	case taskCompleted(task):
+		return taskStatusVisual{badge: "✓ completed", marker: "✓", fg: colors.Success, bg: colors.BaseBg}
+	default:
+		return taskStatusVisual{badge: "• queued", marker: "┃", fg: colors.Muted, bg: colors.BaseBg}
+	}
+}
+
+func taskChainVisualState(chain taskChainSummary) taskStatusVisual {
+	switch {
+	case chain.Counts.Blocked > 0 || len(chain.Blockers) > 0:
+		return taskStatusVisual{badge: "! blocked", marker: "!", fg: colors.Warning, bg: colors.PanelBgAlt}
+	case hasPendingApproval(chain.Approvals) || chain.Counts.Review > 0:
+		return taskStatusVisual{badge: "◆ review", marker: "◆", fg: colors.AccentAlt, bg: colors.TaskUpdateBg}
+	case chain.Counts.Working > 0:
+		return taskStatusVisual{badge: "● working", marker: "●", fg: colors.AccentStrong, bg: colors.TaskUpdateBg}
+	case chain.Counts.Ready > 0:
+		return taskStatusVisual{badge: "◌ ready", marker: "◌", fg: colors.Accent, bg: colors.PanelBgAlt}
+	case chain.Counts.Total > 0 && chain.Counts.Completed == chain.Counts.Total:
+		return taskStatusVisual{badge: "✓ completed", marker: "✓", fg: colors.Success, bg: colors.BaseBg}
+	default:
+		return taskStatusVisual{badge: "• queued", marker: "┃", fg: colors.Muted, bg: colors.BaseBg}
+	}
 }
 
 func taskCompleted(task taskRecord) bool {

@@ -381,7 +381,7 @@ Use the higher-level Broccoli commands for most workflows:
 
 | Use case | Command | Notes |
 | --- | --- | --- |
-| Start a fresh named agent launch | `broccoli-comms run NAME -- COMMAND [ARGS...]` | Creates a fresh workspace under `/tmp/broccoli-agents/<name>/`, writes bootstrap context such as `AGENTS.md`, and starts the command through the Broccoli tracker wrapper. |
+| Start a fresh named agent launch | `broccoli-comms run NAME -- COMMAND [ARGS...]` | Creates a fresh workspace under `/tmp/broccoli-agents/<name>/`, writes bootstrap context such as `AGENTS.md`, and starts the command through the Broccoli tracker wrapper. If `NAME` is already configured, `broccoli-comms run NAME` reuses its configured command; otherwise pass `--default-agent-command CMD` to launch and save a default command for new names. |
 | Edit and restart an already-running managed agent | `broccoli-comms agent edit NAME [--rename NEW_NAME] [--cwd DIR] [--] [COMMAND [ARGS...]]` | Edit works only on a live managed agent and applies immediately by restart. |
 | Assign live agents to a swarm | `broccoli-comms agent assign-swarm SWARM --main MAIN --subagent AGENT` | Assigns already-running local agents; does not create or restart agents. |
 | Start configured swarm members | `broccoli-comms agent start-swarm SWARM` | Starts agents listed under top-level `swarms.<name>.members` in `config.json`. |
@@ -392,10 +392,13 @@ If `run` is used for tracker-level experiments, use `run` with the desired profi
 
 ### Run a new/ephemeral agent
 
-- Use `broccoli-comms run` for a brand-new agent launch path that does not alter config and always gets fresh `/tmp` workspace state.
+- Use `broccoli-comms run` for a brand-new agent launch path that always gets fresh `/tmp` workspace state.
 - `run` requires a unique `name` that is not currently running; if the name already has a managed window, stop it first (or use `agent edit` for that running agent).
-- Example:
+- Command resolution order is explicit command after `--`, then the configured command for `NAME`, then `--default-agent-command CMD` for a new unconfigured name.
+- Examples:
   - `broccoli-comms run planner --cwd ~/projects/my-app -- pi --role planner`
+  - `broccoli-comms run planner --cwd ~/projects/my-app` (reuses `planner` from `config.json`)
+  - `broccoli-comms run reviewer --cwd ~/projects/my-app --default-agent-command "pi --role reviewer"`
 - This writes bootstrap context such as `AGENTS.md` into `/tmp/broccoli-agents/planner/<random>/`.
 
 ### Edit a live managed agent

@@ -381,6 +381,41 @@ func TestTaskSelectionUsesOffsetInSmallViewport(t *testing.T) {
 	}
 }
 
+func TestTaskManagementStatusHighlightBadges(t *testing.T) {
+	m := model{mode: tasksView, width: 120, height: 28, tasksChainFocused: true, tasksItems: []taskRecord{
+		{TaskID: "task-working", Title: "Ongoing", Status: "working", CreatedAt: "2026-01-01T00:00:00Z"},
+		{TaskID: "task-ready", Title: "Pending", Status: "ready", DependsOn: []string{"task-working"}, CreatedAt: "2026-01-01T00:01:00Z"},
+		{TaskID: "task-review", Title: "Review me", Status: "done", DependsOn: []string{"task-working"}, CreatedAt: "2026-01-01T00:02:00Z"},
+	}, tasksStates: []taskWorkingState{{TaskID: "task-working", Status: "working", TaskChainID: "chain-1", RootTaskID: "task-working"}}, tasksApprovals: []taskApprovalRecord{{ApprovalID: "apr-1", TaskID: "task-review", TaskChainID: "chain-1", RootTaskID: "task-working", Status: "pending"}}}
+	view := stripANSIForTest(m.taskManagementView(120, 28))
+	for _, want := range []string{"● working", "◌ ready", "◆ review", "approval pending"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("status-highlighted task view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestTaskChainStatusHighlightBadges(t *testing.T) {
+	cases := []struct {
+		name  string
+		chain taskChainSummary
+		want  string
+	}{
+		{name: "completed", chain: taskChainSummary{ChainID: "done-chain", Counts: taskCounts{Total: 2, Completed: 2}}, want: "✓ completed"},
+		{name: "ready", chain: taskChainSummary{ChainID: "ready-chain", Counts: taskCounts{Total: 1, Ready: 1}}, want: "◌ ready"},
+		{name: "working", chain: taskChainSummary{ChainID: "working-chain", Counts: taskCounts{Total: 1, Working: 1}}, want: "● working"},
+		{name: "review", chain: taskChainSummary{ChainID: "review-chain", Counts: taskCounts{Total: 1, Review: 1}, Approvals: []taskApprovalRecord{{Status: "pending"}}}, want: "◆ review"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			row := stripANSIForTest(strings.Join(taskChainRowLines(tc.chain, false, 80), "\n"))
+			if !strings.Contains(row, tc.want) {
+				t.Fatalf("chain row missing %q:\n%s", tc.want, row)
+			}
+		})
+	}
+}
+
 func TestTaskManagementViewResponsiveStates(t *testing.T) {
 	m := model{mode: tasksView, width: 120, height: 24, rows: []agentRow{{Name: "coder", Status: "online", CurrentTaskID: "task-1", CurrentTask: "Implement Tasks tab"}, {Name: "reviewer", Status: "idle"}}, tasksItems: []taskRecord{{TaskID: "task-1", Title: "Implement Tasks tab", Status: "working", AssignedAgent: "coder"}, {TaskID: "task-2", Title: "Follow-up", Status: "ready", AssignedAgent: "coder", DependsOn: []string{"task-1"}}, {TaskID: "task-3", Title: "Reviewed", Status: "done", AssignedAgent: "reviewer", DependsOn: []string{"task-1"}}}, tasksStates: []taskWorkingState{{TaskID: "task-1", Agent: "coder", Status: "working", TaskChainID: "chain-1", RootTaskID: "root"}}}
 	wide := m.taskManagementView(120, 20)

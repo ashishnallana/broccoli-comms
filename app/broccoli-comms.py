@@ -1522,7 +1522,7 @@ def agent_attach(args: argparse.Namespace) -> None:
     exec_tmux_interactive(window["window_id"])
 
 
-def _consume_post_name_launch_options(args: argparse.Namespace, command: list[str], *, allow_command_flag: bool = False, allow_edit_flags: bool = False) -> list[str]:
+def _consume_post_name_launch_options(args: argparse.Namespace, command: list[str], *, allow_command_flag: bool = False, allow_edit_flags: bool = False, allow_default_agent_command: bool = False) -> list[str]:
     """Support `run NAME --cwd DIR -- cmd` despite argparse REMAINDER.
 
     argparse stops option parsing once a REMAINDER positional is reached.  The
@@ -1547,7 +1547,7 @@ def _consume_post_name_launch_options(args: argparse.Namespace, command: list[st
             args.autostart = (token == "--autostart")
             idx += 1
             continue
-        if token in ({"--cwd", "--scope", "--swarm", "--role", "--host", "--timeout"} | ({"--command"} if allow_command_flag else set()) | ({"--rename"} if allow_edit_flags else set())):
+        if token in ({"--cwd", "--scope", "--swarm", "--role", "--host", "--timeout"} | ({"--command"} if allow_command_flag else set()) | ({"--rename"} if allow_edit_flags else set()) | ({"--default-agent-command"} if allow_default_agent_command else set())):
             if idx + 1 >= len(remaining):
                 raise SystemExit(f"{token} requires a value")
             value = remaining[idx + 1]
@@ -1568,6 +1568,8 @@ def _consume_post_name_launch_options(args: argparse.Namespace, command: list[st
                     raise SystemExit("--timeout requires a number")
             elif token == "--command":
                 args.command_string = value
+            elif token == "--default-agent-command":
+                args.default_agent_command = value
             elif token == "--rename":
                 args.rename = value
             idx += 2
@@ -1659,7 +1661,7 @@ def run_remote(args: argparse.Namespace, command: list[str]) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    command = _consume_post_name_launch_options(args, list(getattr(args, "command", None) or []))
+    command = _consume_post_name_launch_options(args, list(getattr(args, "command", None) or []), allow_default_agent_command=True)
     if command and command[0] == "--":
         command = command[1:]
 
@@ -1676,14 +1678,21 @@ def run(args: argparse.Namespace) -> None:
     cfg = load_config()
     spec = (cfg.get("agents") or {}).get(args.name)
     using_saved_config = False
+    using_default_agent_command = False
     if not command:
-        if spec is None:
-            raise SystemExit(f"run requires a command after --, or a saved agent definition for {args.name!r}")
-        saved_command = spec.get("command")
-        if not saved_command:
-            raise SystemExit(f"saved agent {args.name!r} has no command")
-        command = _parse_command_for_bootstrap(str(saved_command))
-        using_saved_config = True
+        if spec is not None:
+            saved_command = spec.get("command")
+            if not saved_command:
+                raise SystemExit(f"saved agent {args.name!r} has no command")
+            command = _parse_command_for_bootstrap(str(saved_command))
+            using_saved_config = True
+        else:
+            default_command = str(getattr(args, "default_agent_command", "") or "").strip()
+            if not default_command:
+                raise SystemExit(f"run requires a command after --, a saved agent definition for {args.name!r}, or --default-agent-command")
+            command = _parse_command_for_bootstrap(default_command)
+            requested_command = shlex.join(command)
+            using_default_agent_command = True
 
     source_cwd_value = args.cwd or ((spec or {}).get("cwd") if using_saved_config else None)
     source_cwd = os.path.abspath(os.path.expanduser(source_cwd_value)) if source_cwd_value else os.getcwd()
@@ -1756,7 +1765,7 @@ def run(args: argparse.Namespace) -> None:
     window_id = window_and_pane[0]
     pane_id = window_and_pane[1] if len(window_and_pane) > 1 else ""
     tmux("set-option", "-w", "-t", window_id, MANAGED_AGENT_OPTION, args.name)
-    print(json.dumps({"started": args.name, "window_id": window_id, "pane_id": pane_id, "ephemeral_cwd": launch_cwd, "bootstrap_context": context_path, "bootstrap_context_dir": context_path, "configured": using_saved_config, "immutable": immutable}, indent=2, sort_keys=True))
+    print(json.dumps({"started": args.name, "window_id": window_id, "pane_id": pane_id, "ephemeral_cwd": launch_cwd, "bootstrap_context": context_path, "bootstrap_context_dir": context_path, "configured": using_saved_config, "default_agent_command": using_default_agent_command, "immutable": immutable}, indent=2, sort_keys=True))
 
 
 def stop(_args: argparse.Namespace) -> None:
@@ -3555,6 +3564,7 @@ def main() -> None:
     run_parser.add_argument("--swarm", action="append", help="Swarm membership name; repeat with --role for multiple swarms")
     run_parser.add_argument("--role", action="append", choices=sorted(VALID_SWARM_ROLES), help="Swarm role for the preceding --swarm")
     run_parser.add_argument("--json", action="store_true", help="Emit JSON start result")
+    run_parser.add_argument("--default-agent-command", help="Command to use when NAME is not configured and no command is passed after --")
     run_parser.add_argument("command", nargs=argparse.REMAINDER, help="Command to run after --")
     run_parser.set_defaults(func=run)
 

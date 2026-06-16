@@ -260,7 +260,7 @@ in {
         cmd = "/google/bin/releases/jetski-devs/tools/cli"
         agentsDir = "_agents"
         agent-root-dir = "${config.home.homeDirectory}/.agents-root"
-        auto-accept-flag = "--yolo"
+        auto-accept-flag = "--dangerously-skip-permissions"
         prompt-flag-name = "--"
         initial-message = "Read AGENTS.md, bootstrap with Broccoli Comms, then start the assigned task."
 
