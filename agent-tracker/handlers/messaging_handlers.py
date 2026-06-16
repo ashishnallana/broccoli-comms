@@ -40,21 +40,28 @@ def _is_uuid(value: str) -> bool:
 def _publish_message_notified(info: dict, agent_name: str, pending_item):
     sender_name = pending_item.get("sender") if isinstance(pending_item, dict) else pending_item
     message_id = pending_item.get("message_id") if isinstance(pending_item, dict) else None
+    delivery_id = pending_item.get("delivery_id") if isinstance(pending_item, dict) else None
     sender_agent_id = pending_item.get("sender_agent_id") if isinstance(pending_item, dict) else None
     sender_tracker_id = pending_item.get("sender_tracker_id") if isinstance(pending_item, dict) else None
-    state.publish_event("message_notified", {
+    notification = {
         "target_agent_id": info.get("agent_id"),
         "target_agent_name": agent_name,
         "sender": sender_name or "unknown",
         "message_id": message_id,
-    })
+    }
+    if delivery_id:
+        notification["delivery_id"] = delivery_id
+    state.publish_event("message_notified", notification)
     if sender_tracker_id and sender_tracker_id != registry_client.TRACKER_ID:
-        registry_client.publish_tracker_event(sender_tracker_id, "message_notified", {
+        remote_payload = {
             "message_id": message_id,
             "sender_agent_id": sender_agent_id,
             "receiver_agent_id": info.get("agent_id"),
             "receiver_agent_name": agent_name,
-        })
+        }
+        if delivery_id:
+            remote_payload["delivery_id"] = delivery_id
+        registry_client.publish_tracker_event(sender_tracker_id, "message_notified", remote_payload)
 
 
 def _resolve_target_agent_name(params: dict) -> str | None:
@@ -121,6 +128,7 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
     """Writes a message to a local agent inbox and triggers/queues notification."""
     msg_id = msg_obj.get("message_id") or str(uuid.uuid4())
     msg_obj["message_id"] = msg_id
+    delivery_id = msg_obj.get("delivery_id") or msg_id
 
     info = state.get_agent(target_name_or_id)
     if not info:
@@ -140,8 +148,10 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
                         if not line.strip():
                             continue
                         try:
-                            if json.loads(line).get("message_id") == msg_id:
-                                logging.info(f"Skipping duplicate delivery {msg_id} for {current_name}")
+                            existing = json.loads(line)
+                            existing_delivery_id = existing.get("delivery_id") or existing.get("message_id")
+                            if existing_delivery_id == delivery_id:
+                                logging.info(f"Skipping duplicate delivery {delivery_id} for {current_name}")
                                 return current_name
                         except json.JSONDecodeError:
                             continue
@@ -212,20 +222,26 @@ def deliver_local_message(target_name_or_id: str, msg_obj: dict, notify_sender: 
             "content_type": msg_obj.get("content_type"),
             "kind": msg_obj.get("kind"),
         }
+        if msg_obj.get("delivery_id"):
+            notification["delivery_id"] = msg_obj.get("delivery_id")
         state.publish_event("message_delivered", notification)
         if msg_obj.get("sender_tracker_id") and msg_obj.get("sender_tracker_id") != registry_client.TRACKER_ID:
-            registry_client.publish_tracker_event(msg_obj.get("sender_tracker_id"), "message_delivered", {
+            remote_payload = {
                 "message_id": msg_obj.get("message_id"),
                 "sender_agent_id": msg_obj.get("sender_agent_id"),
                 "receiver_agent_id": info.get("agent_id"),
                 "receiver_agent_name": current_name,
-            })
+            }
+            if msg_obj.get("delivery_id"):
+                remote_payload["delivery_id"] = msg_obj.get("delivery_id")
+            registry_client.publish_tracker_event(msg_obj.get("sender_tracker_id"), "message_delivered", remote_payload)
 
         _maybe_focus_remote_delivery(info, current_name, msg_obj)
 
         pending_item = {
             "sender": notify_sender,
             "message_id": msg_obj.get("message_id"),
+            "delivery_id": msg_obj.get("delivery_id"),
             "sender_agent_id": msg_obj.get("sender_agent_id"),
             "sender_tracker_id": msg_obj.get("sender_tracker_id"),
         }
@@ -476,6 +492,7 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
             registry_name, hostname = hostname.split(":", 1)
         if hostname not in {"local", LOCAL_HOSTNAME}:
             message_id = params.get("message_id") or str(uuid.uuid4())
+            delivery_id = params.get("delivery_id") or (content_metadata or {}).get("delivery_id")
             remote_recipient = registry_client.find_remote_agent(hostname, target, registry_name=registry_name) or {
                 "name": target,
                 "hostname": hostname,
@@ -485,6 +502,7 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
             }
             remote_payload = {
                 "message_id": message_id,
+                "delivery_id": delivery_id,
                 "timestamp": _utc_now_isoformat(),
                 "message": msg,
                 "attachments": attachments,
@@ -548,6 +566,7 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
         logging.info(warning_msg)
 
     message_id = params.get("message_id") or str(uuid.uuid4())
+    delivery_id = params.get("delivery_id") or (content_metadata or {}).get("delivery_id")
     payload = {
         "sender": sender_name,
         "timestamp": _utc_now_isoformat(),
@@ -555,6 +574,7 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
         "attachments": attachments,
         "read": False,
         "message_id": message_id,
+        **({"delivery_id": delivery_id} if delivery_id else {}),
         **sender_metadata,
         "sender_tracker_id": registry_client.TRACKER_ID,
     }
@@ -585,6 +605,8 @@ def handle_send_message(params: dict, caller_pid: int = None, identify_agent=Non
             "source_task_id",
             "recipient_agent",
             "recipient_kind",
+            "delivery_id",
+            "target_logical_identity",
         ):
             if key in content_metadata:
                 payload[key] = content_metadata[key]

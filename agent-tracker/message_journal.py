@@ -145,6 +145,7 @@ def build_message_event(
     return {
         "schema_version": SCHEMA_VERSION,
         "message_id": msg_obj.get("message_id"),
+        "delivery_id": msg_obj.get("delivery_id"),
         "timestamp": msg_obj.get("timestamp"),
         "sender": {
             "name": sender_name,
@@ -200,6 +201,7 @@ def to_registry_event(event: dict) -> dict:
     return {
         "schema_version": event.get("schema_version") or SCHEMA_VERSION,
         "message_id": event.get("message_id"),
+        "delivery_id": event.get("delivery_id"),
         "timestamp": event.get("timestamp"),
         "sender_tracker_id": sender.get("tracker_id"),
         "sender_hostname": sender.get("hostname"),

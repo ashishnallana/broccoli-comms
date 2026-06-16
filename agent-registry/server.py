@@ -29,7 +29,7 @@ MESSAGE_METADATA_FIELDS = (
     "created_event_seq", "event_seq_at_submission", "source", "sender_source",
     "memory_id", "memory_type", "memory_title", "memory_scope", "memory_status",
     "memory_version", "source_task_id", "recipient_agent", "recipient_kind",
-    "delivery_scope",
+    "delivery_scope", "delivery_id", "target_logical_identity",
 )
 
 
@@ -133,7 +133,7 @@ class Store:
             self.trackers = data.get("trackers") or {}
             self.agents = data.get("agents") or {}
             self.deliveries = {
-                tracker_id: {item["message_id"]: item for item in queue}
+                tracker_id: {item.get("delivery_id") or item["message_id"]: item for item in queue}
                 for tracker_id, queue in (data.get("deliveries") or {}).items()
                 if isinstance(queue, list)
             }
@@ -221,6 +221,7 @@ class Store:
         normalized = {
             "schema_version": event.get("schema_version") or 1,
             "message_id": message_id,
+            "delivery_id": event.get("delivery_id"),
             "timestamp": event.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
             "sender_tracker_id": event.get("sender_tracker_id"),
             "sender_hostname": event.get("sender_hostname"),
@@ -603,13 +604,15 @@ class Store:
 
     def enqueue_delivery(self, tracker_id, payload):
         entry = {**payload, "message_id": payload.get("message_id") or str(uuid.uuid4()), "queued_at": time.time()}
+        delivery_key = entry.get("delivery_id") or entry["message_id"]
         with self.cv:
-            self.deliveries.setdefault(tracker_id, {})[entry["message_id"]] = entry
+            self.deliveries.setdefault(tracker_id, {})[delivery_key] = entry
             self._persist_locked()
             self.cv.notify_all()
             LOG.info(
-                "queued delivery message_id=%s tracker_id=%s target_agent_id=%s sender_tracker=%s",
+                "queued delivery message_id=%s delivery_id=%s tracker_id=%s target_agent_id=%s sender_tracker=%s",
                 entry["message_id"],
+                entry.get("delivery_id"),
                 tracker_id,
                 entry.get("target_agent_id"),
                 entry.get("sender_tracker"),
@@ -632,14 +635,17 @@ class Store:
     def ack_delivery(self, tracker_id, message_id):
         with self.cv:
             queue = self.deliveries.get(tracker_id)
-            if not queue or message_id not in queue:
+            ack_key = message_id
+            if queue and ack_key not in queue:
+                ack_key = next((key for key, item in queue.items() if item.get("message_id") == message_id), message_id)
+            if not queue or ack_key not in queue:
                 LOG.warning("ack for unknown delivery tracker_id=%s message_id=%s", tracker_id, message_id)
                 return False
-            queue.pop(message_id, None)
+            queue.pop(ack_key, None)
             if not queue:
                 self.deliveries.pop(tracker_id, None)
             self._persist_locked()
-            LOG.info("acked delivery tracker_id=%s message_id=%s remaining=%s", tracker_id, message_id, len(self.deliveries.get(tracker_id, {})))
+            LOG.info("acked delivery tracker_id=%s ack_key=%s message_id=%s remaining=%s", tracker_id, ack_key, message_id, len(self.deliveries.get(tracker_id, {})))
             return True
 
     def enqueue_tracker_event(self, target_tracker_id, event_type, source_tracker_id, payload):
@@ -1192,13 +1198,14 @@ def make_handler(store=None, token=None, auth_required=None, remote_pane_input_e
                     "kind": body.get("kind"),
                     **_message_metadata(body),
                     "message_id": body.get("message_id"),
+                    "delivery_id": body.get("delivery_id"),
                     "swarms": body.get("swarms") or [],
                     "membership_snapshot": body.get("membership_snapshot") or {},
                     "swarm_context": body.get("swarm_context") or body.get("swarm"),
                     "sent_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
                 })
                 _fanout_remote_message_delivered(store, target["tracker_id"], target, entry)
-                return self._json(202, {"ok": True, "queued": True, "message_id": entry["message_id"], "target_agent_id": target["agent_id"], "target_name": target["name"], "target_tracker": target["hostname"]})
+                return self._json(202, {"ok": True, "queued": True, "message_id": entry["message_id"], "delivery_id": entry.get("delivery_id"), "target_agent_id": target["agent_id"], "target_name": target["name"], "target_tracker": target["hostname"]})
             self._json(404, {"error": "not_found", "message": "no such endpoint"})
 
         def do_DELETE(self):

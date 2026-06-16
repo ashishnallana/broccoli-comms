@@ -90,20 +90,26 @@ def _read_and_update_inbox_file(
         if agent_name and agent_info:
             for msg in newly_read:
                 logging.info("publishing message_read target=%s sender=%s message_id=%s sender_agent_id=%s sender_tracker_id=%s", agent_name, msg.get("sender", "unknown"), msg.get("message_id"), msg.get("sender_agent_id"), msg.get("sender_tracker_id"))
-                state.publish_event("message_read", {
+                read_payload = {
                     "target_agent_id": agent_info.get("agent_id"),
                     "target_agent_name": agent_name,
                     "sender": msg.get("sender", "unknown"),
                     "message_id": msg.get("message_id"),
-                })
+                }
+                if msg.get("delivery_id"):
+                    read_payload["delivery_id"] = msg.get("delivery_id")
+                state.publish_event("message_read", read_payload)
                 if msg.get("sender_tracker_id") and msg.get("sender_tracker_id") != registry_client.TRACKER_ID:
                     logging.info("relaying remote message_read back to sender_tracker_id=%s message_id=%s reader=%s", msg.get("sender_tracker_id"), msg.get("message_id"), agent_name)
-                    registry_client.publish_tracker_event(msg.get("sender_tracker_id"), "message_read", {
+                    remote_payload = {
                         "message_id": msg.get("message_id"),
                         "sender_agent_id": msg.get("sender_agent_id"),
                         "reader_agent_id": agent_info.get("agent_id"),
                         "reader_agent_name": agent_name,
-                    })
+                    }
+                    if msg.get("delivery_id"):
+                        remote_payload["delivery_id"] = msg.get("delivery_id")
+                    registry_client.publish_tracker_event(msg.get("sender_tracker_id"), "message_read", remote_payload)
         return {"mode": mode, "messages": result_messages}
     except IOError as e:
         raise RuntimeError(f"Failed to access inbox file: {e}")

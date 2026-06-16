@@ -25,7 +25,7 @@ MESSAGE_METADATA_FIELDS = (
     "created_event_seq", "event_seq_at_submission", "source", "sender_source",
     "memory_id", "memory_type", "memory_title", "memory_scope", "memory_status",
     "memory_version", "source_task_id", "recipient_agent", "recipient_kind",
-    "delivery_scope",
+    "delivery_scope", "delivery_id", "target_logical_identity",
 )
 
 
@@ -625,12 +625,15 @@ def _local_tracker_event_payload(event_type, payload):
     sender_name = state.get_agent_name_by_id(payload.get("sender_agent_id")) or payload.get("sender_agent_id") or "unknown"
     target_agent_id = payload.get("reader_agent_id") or payload.get("receiver_agent_id")
     target_agent_name = payload.get("reader_agent_name") or payload.get("receiver_agent_name")
-    return sender_name, {
+    local_payload = {
         "target_agent_id": target_agent_id,
         "target_agent_name": target_agent_name,
         "sender": sender_name,
         "message_id": payload.get("message_id"),
     }
+    if payload.get("delivery_id"):
+        local_payload["delivery_id"] = payload.get("delivery_id")
+    return sender_name, local_payload
 
 
 def publish_tracker_event(target_tracker_id, event_type, payload):
@@ -1230,6 +1233,7 @@ def _delivery_loop(client=None):
                         "attachments": delivery.get("attachments"),
                         "read": False,
                         "message_id": delivery.get("message_id"),
+                        "delivery_id": delivery.get("delivery_id"),
                         "sender_agent_id": delivery.get("sender_agent_id"),
                         "sender_tracker_id": delivery.get("sender_tracker_id"),
                         "sender_hostname": delivery.get("sender_hostname") or delivery.get("sender_tracker"),
@@ -1246,10 +1250,11 @@ def _delivery_loop(client=None):
                         "swarm_context": delivery.get("swarm_context"),
                     },
                 )
-                ack_status = _ack(client, delivery["message_id"])
+                ack_key = delivery.get("delivery_id") or delivery["message_id"]
+                ack_status = _ack(client, ack_key)
                 if ack_status == 200:
                     missing_target_first_seen.pop(delivery.get("message_id"), None)
-                    LOG.info("delivered and acked queued registry message_id=%s target_agent_id=%s", delivery["message_id"], delivery["target_agent_id"])
+                    LOG.info("delivered and acked queued registry delivery=%s message_id=%s target_agent_id=%s", ack_key, delivery["message_id"], delivery["target_agent_id"])
             except DeliveryValidationError as e:
                 logging.warning(f"dropping invalid queued registry message {delivery.get('message_id')}: {e}")
                 ack_status = _ack(client, delivery["message_id"])

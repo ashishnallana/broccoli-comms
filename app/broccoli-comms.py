@@ -9,6 +9,7 @@ compatibility mode is available with BROCCOLI_COMMS_TMUX_MODE=private.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -2777,6 +2778,11 @@ def _clean_routing_metadata(metadata: dict) -> dict:
     return {k: v for k, v in metadata.items() if v is not None}
 
 
+def _delivery_id(message_id: str, target: str, scope: str) -> str:
+    digest = hashlib.sha256(f"{message_id}\0{target}\0{scope}".encode("utf-8")).hexdigest()[:24]
+    return f"del-{digest}"
+
+
 def _route_message(target: str, message: str, metadata: dict | None, sender_name: str, *, mode: str = "auto", delivery_scope: str | None = None) -> dict:
     """Route a message using local/direct/fanout/auto semantics.
 
@@ -2794,23 +2800,27 @@ def _route_message(target: str, message: str, metadata: dict | None, sender_name
 
     if mode == "fanout":
         scope = delivery_scope or "shared_service_broadcast"
-        local_metadata = _clean_routing_metadata(_routing_metadata(metadata, target, "shared_service", scope))
+        message_id = str((metadata or {}).get("message_id") or uuid.uuid4())
+        local_delivery_id = _delivery_id(message_id, f"local/{target}", scope)
+        local_metadata = _clean_routing_metadata({**_routing_metadata(metadata, target, "shared_service", scope), "message_id": message_id, "delivery_id": local_delivery_id})
         local_result = None
         local_error = None
         try:
-            local_result = tracker_rpc("send_message", {"agent_name": target, "message": message, "metadata": local_metadata, "sender_name": sender_name})
+            local_result = tracker_rpc("send_message", {"agent_name": target, "message": message, "metadata": local_metadata, "sender_name": sender_name, "message_id": message_id, "delivery_id": local_delivery_id})
             if not local_result:
                 raise RuntimeError("tracker RPC send_message failed")
         except Exception as e:
             local_error = str(e)
         remote_results = []
         for remote_target in _remote_shared_service_targets(target):
+            remote_delivery_id = _delivery_id(message_id, remote_target, scope)
+            remote_metadata = {**local_metadata, "delivery_id": remote_delivery_id}
             try:
-                result = tracker_rpc("send_message", {"target_address": remote_target, "message": message, "metadata": local_metadata, "sender_name": sender_name})
-                remote_results.append({"target": remote_target, "sent": bool(result), "delivery": "direct", "result": result})
+                result = tracker_rpc("send_message", {"target_address": remote_target, "message": message, "metadata": remote_metadata, "sender_name": sender_name, "message_id": message_id, "delivery_id": remote_delivery_id})
+                remote_results.append({"target": remote_target, "sent": bool(result), "delivery": "direct", "delivery_id": remote_delivery_id, "result": result})
             except Exception as e:
-                remote_results.append({"target": remote_target, "sent": False, "delivery": "direct", "error": str(e)})
-        payload = {"sent": bool(local_result) or any(item.get("sent") for item in remote_results), "mode": "fanout", "delivery_scope": scope, "local": {"target": target, "sent": bool(local_result), "delivery": "local", "result": local_result}, "remote": remote_results}
+                remote_results.append({"target": remote_target, "sent": False, "delivery": "direct", "delivery_id": remote_delivery_id, "error": str(e)})
+        payload = {"sent": bool(local_result) or any(item.get("sent") for item in remote_results), "mode": "fanout", "message_id": message_id, "delivery_scope": scope, "local": {"target": target, "sent": bool(local_result), "delivery": "local", "delivery_id": local_delivery_id, "result": local_result}, "remote": remote_results}
         if local_error:
             payload["local"]["error"] = local_error
         return payload
@@ -2822,6 +2832,10 @@ def _route_message(target: str, message: str, metadata: dict | None, sender_name
         params["target_address"] = target
     else:
         params["agent_name"] = target[6:] if target.startswith("local/") else target
+    if (metadata or {}).get("message_id"):
+        params["message_id"] = (metadata or {}).get("message_id")
+    if (metadata or {}).get("delivery_id"):
+        params["delivery_id"] = (metadata or {}).get("delivery_id")
     result = tracker_rpc("send_message", params)
     return {"sent": bool(result), "mode": mode, "delivery_scope": scope, "target": target, "result": result}
 

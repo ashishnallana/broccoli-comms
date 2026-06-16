@@ -539,6 +539,25 @@ class TestRpcHandler(unittest.TestCase):
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)
 
+    def test_deliver_local_message_dedupes_by_delivery_id_and_preserves_message_id(self):
+        inbox_path = os.path.join(state.INBOX_DIR, "id-1.inbox")
+        try:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+            state.set_agent("agent1", {"agent_id": "id-1", "status": "working", "waiting_approval": False, "pending_notifications": [], "tmux_pane": "%1", "tmux_socket": "sock"})
+            first = {"sender": "tester", "timestamp": rpc_handler._utc_now_isoformat(), "message": "hello", "read": False, "message_id": "logical-1", "delivery_id": "delivery-1"}
+            duplicate = {**first, "message_id": "logical-2"}
+            rpc_handler.deliver_local_message("agent1", first, "tester")
+            rpc_handler.deliver_local_message("agent1", duplicate, "tester")
+            with open(inbox_path, "r") as f:
+                lines = [json.loads(line) for line in f if line.strip()]
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]["message_id"], "logical-1")
+            self.assertEqual(lines[0]["delivery_id"], "delivery-1")
+        finally:
+            if os.path.exists(inbox_path):
+                os.remove(inbox_path)
+
     @mock.patch("tmux_util.send_keys")
     def test_deliver_local_message_publishes_event_for_communicator(self, _send_keys):
         inbox_path = os.path.join(state.INBOX_DIR, "receiver-id.inbox")
@@ -559,6 +578,7 @@ class TestRpcHandler(unittest.TestCase):
                 "message": "hello",
                 "read": False,
                 "message_id": "msg-1",
+                "delivery_id": "del-1",
             })
 
             result = rpc_handler.handle_wait_events({"since": 0, "timeout": 0})
@@ -569,7 +589,9 @@ class TestRpcHandler(unittest.TestCase):
             self.assertEqual(event["target_agent_name"], "receiver")
             self.assertEqual(event["sender"], "sender-agent")
             self.assertEqual(event["message_id"], "msg-1")
+            self.assertEqual(event["delivery_id"], "del-1")
             self.assertEqual(result["events"][1]["type"], "message_notified")
+            self.assertEqual(result["events"][1]["delivery_id"], "del-1")
         finally:
             if os.path.exists(inbox_path):
                 os.remove(inbox_path)

@@ -253,6 +253,11 @@ class TestLearningKernelCli(unittest.TestCase):
         self.assertEqual([self._delivery_target(payload) for _method, payload in delivery_calls], [broccoli.UI_AGENT_NAME, "remote-host/agent-communicator"])
         local_metadata = delivery_calls[0][1]["metadata"]
         remote_metadata = delivery_calls[1][1]["metadata"]
+        self.assertEqual(local_metadata["message_id"], remote_metadata["message_id"])
+        self.assertNotEqual(local_metadata["delivery_id"], remote_metadata["delivery_id"])
+        self.assertEqual(notice["ui_broadcast"]["message_id"], local_metadata["message_id"])
+        self.assertEqual(notice["ui_broadcast"]["local"]["delivery_id"], local_metadata["delivery_id"])
+        self.assertEqual(notice["ui_broadcast"]["remote"][0]["delivery_id"], remote_metadata["delivery_id"])
         for metadata in (local_metadata, remote_metadata):
             self.assertEqual(metadata["content_type"], "application/vnd.broccoli.task-update+json")
             self.assertEqual(metadata["kind"], "task_update")
