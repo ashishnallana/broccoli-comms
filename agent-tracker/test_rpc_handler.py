@@ -2336,6 +2336,9 @@ class TestRpcHandler(unittest.TestCase):
         self.assertEqual([m["message_id"] for m in timeline["messages"]], ["dedupe-registry-1", "registry-only-1"])
         self.assertEqual(timeline["messages"][1]["source"], "registry_message_event")
 
+    def test_assign_swarm_alias_matches_live_assignment_method(self):
+        self.assertIs(rpc_handler.dispatcher["assign_swarm"], rpc_handler.dispatcher["assign_live_swarm"])
+
     def test_watch_swarm_records_observed_messages_to_swarm_timeline(self):
         import tempfile, shutil
         temp_cache = tempfile.mkdtemp()
@@ -2527,7 +2530,7 @@ class TestRpcHandler(unittest.TestCase):
         })
         
         params = {
-            "watch_id": "mac-electron-active-group",
+            "watch_id": "mac-native-active-group",
             "mode": "group",
             "group_id": "host:local:tanmayvijay.c.googlers.com",
             "members": ["local-host/agent-1", "host2/remote-agent-2"],
@@ -2544,7 +2547,7 @@ class TestRpcHandler(unittest.TestCase):
             "remote-tracker-id-123",
             "watch_group_request",
             {
-                "watch_id": "mac-electron-active-group",
+                "watch_id": "mac-native-active-group",
                 "group_id": "host:local:tanmayvijay.c.googlers.com",
                 "members": ["local-host/agent-1", "host2/remote-agent-2"],
                 "include_body": True,

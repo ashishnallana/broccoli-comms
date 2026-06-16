@@ -1336,6 +1336,60 @@ def agent_remove(args: argparse.Namespace) -> None:
     print(json.dumps({"removed": args.name, "window_killed": window_killed, "agent": removed}, indent=2, sort_keys=True))
 
 
+def agent_assign_swarm(args: argparse.Namespace) -> None:
+    try:
+        swarm = _validate_swarm_name_value(args.swarm)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    subagents = list(args.subagent or [])
+    ensure_tracker()
+    result = tracker_rpc("assign_live_swarm", {"swarm": swarm, "main": args.main, "subagents": subagents})
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        members = ", ".join(f"{m.get('agent')}:{m.get('role')}" for m in result.get("members", []))
+        print(f"Assigned swarm {result.get('swarm')}: {members}")
+
+
+def _validate_swarm_name_value(name: str) -> str:
+    validate_swarm_name(name)
+    return name
+
+
+def agent_start_swarm(args: argparse.Namespace) -> None:
+    try:
+        swarm_name = _validate_swarm_name_value(args.swarm)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    cfg = load_config()
+    swarms = cfg.get("swarms") if isinstance(cfg.get("swarms"), dict) else {}
+    swarm = swarms.get(swarm_name)
+    if not isinstance(swarm, dict):
+        legacy_members = [name for name, spec in (cfg.get("agents") or {}).items() if any(m.get("name") == swarm_name for m in normalize_swarms((spec or {}).get("swarms", [])))]
+        if legacy_members:
+            raise SystemExit(f"swarm {swarm_name!r} only exists as legacy per-agent membership; configure top-level swarms.{swarm_name}.members to start it")
+        raise SystemExit(f"configured swarm {swarm_name!r} not found in config swarms")
+    members = swarm.get("members") or []
+    if not members:
+        raise SystemExit(f"configured swarm {swarm_name!r} has no members")
+    agents = cfg.get("agents") or {}
+    names = []
+    for member in members:
+        agent = member.get("agent") if isinstance(member, dict) else None
+        try:
+            validate_agent_name(agent)
+        except ValueError as e:
+            raise SystemExit(str(e))
+        if agent not in agents:
+            raise SystemExit(f"configured swarm {swarm_name!r} references missing agent {agent!r}")
+        names.append(agent)
+    ensure_tracker()
+    ensure_tmux()
+    launched = reconcile_agents(set(names))
+    payload = {"swarm": swarm_name, "members": names, "launched": launched, "already_running": [name for name in names if name not in launched]}
+    print(json.dumps(payload if args.json else payload, indent=2, sort_keys=True))
+
+
 def agent_edit(args: argparse.Namespace) -> None:
     try:
         validate_agent_name(args.name)
@@ -3916,6 +3970,16 @@ def main() -> None:
     agent_remove_parser = agent_sub.add_parser("remove", help="Remove a configured agent and stop its managed window if running")
     agent_remove_parser.add_argument("name", help="Agent/window name")
     agent_remove_parser.set_defaults(func=agent_remove)
+    agent_assign_swarm_parser = agent_sub.add_parser("assign-swarm", help="Assign existing live local agents into a swarm")
+    agent_assign_swarm_parser.add_argument("swarm", help="Swarm name")
+    agent_assign_swarm_parser.add_argument("--main", required=True, help="Live local main agent name")
+    agent_assign_swarm_parser.add_argument("--subagent", action="append", default=[], help="Live local subagent name; repeatable")
+    agent_assign_swarm_parser.add_argument("--json", action="store_true", help="Emit JSON")
+    agent_assign_swarm_parser.set_defaults(func=agent_assign_swarm)
+    agent_start_swarm_parser = agent_sub.add_parser("start-swarm", help="Start all configured local agents in a top-level configured swarm")
+    agent_start_swarm_parser.add_argument("swarm", help="Configured swarm name")
+    agent_start_swarm_parser.add_argument("--json", action="store_true", help="Emit JSON")
+    agent_start_swarm_parser.set_defaults(func=agent_start_swarm)
     agent_restart_parser = agent_sub.add_parser("restart", help="Restart a configured agent window")
     agent_restart_parser.add_argument("name", help="Agent/window name")
     agent_restart_parser.set_defaults(func=agent_restart)

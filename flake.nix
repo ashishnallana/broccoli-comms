@@ -90,30 +90,6 @@
             text = ''exec ${pkgs.python3}/bin/python3 ${./agent-registry/managed_agent.py} "$@"'';
           };
 
-          agentCommunicatorElectron = pkgs.buildNpmPackage {
-            pname = "agent-communicator-electron";
-            version = "0.1.0";
-            src = ./agent-communicator-electron;
-            npmDepsHash = "sha256-oJ5yK6jnb9wBtbsc1RAhckB2QVFXerANFkVMIva25+k=";
-
-            env.ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
-            npmBuildScript = "build";
-
-            installPhase = ''
-              runHook preInstall
-
-              mkdir -p $out/share/agent-communicator-electron $out/bin
-              cp -R out package.json $out/share/agent-communicator-electron/
-
-              makeWrapper ${pkgs.electron}/bin/electron $out/bin/agent-communicator-electron \
-                --add-flags $out/share/agent-communicator-electron
-
-              runHook postInstall
-            '';
-
-            nativeBuildInputs = [ pkgs.makeWrapper ];
-          };
-
           broccoliComms = pkgs.writeShellApplication {
             name = "broccoli-comms";
             runtimeInputs = with pkgs; [ python3 tmux coreutils procps bash agentTracker agentTrackerCtl agentWrapper agentCommunicator agentRegistry ];
@@ -128,12 +104,11 @@
             '';
           };
         in {
-          inherit agentTrackerFiles defaultSkills agentTracker agentTrackerCtl agentWrapper agentCommunicator agentCommunicatorElectron agentRegistry managedAgent broccoliComms;
+          inherit agentTrackerFiles defaultSkills agentTracker agentTrackerCtl agentWrapper agentCommunicator agentRegistry managedAgent broccoliComms;
           agent-tracker = agentTracker;
           agent-tracker-ctl = agentTrackerCtl;
           agent-wrapper = agentWrapper;
           agent-communicator = agentCommunicator;
-          agent-communicator-electron = agentCommunicatorElectron;
           agent-registry = agentRegistry;
           agent-registry-managed-agent = managedAgent;
           default = broccoliComms;
@@ -163,8 +138,13 @@
 
         app-unit = pkgs.runCommand "broccoli-comms-app-unit" { } ''
           cp -R ${./app} app
-          chmod -R u+w app
+          cp -R ${./modules} modules
+          cp -R ${./skills} skills
+          chmod -R u+w app modules skills
           cd app
+          export PATH=${lib.makeBinPath [ pkgs.tmux ]}:$PATH
+          export HOME=$TMPDIR/home
+          mkdir -p "$HOME"
           ${pkgs.python3}/bin/python3 -m unittest test_broccoli_comms.py test_learning_kernel.py
           touch $out
         '';
@@ -216,11 +196,6 @@
             type = "app";
             program = "${self.packages.${system}.broccoliComms}/bin/broccoli-comms";
             meta.description = "Standalone Broccoli Comms agent runtime";
-          };
-          agent-communicator-electron = {
-            type = "app";
-            program = "${self.packages.${system}.agentCommunicatorElectron}/bin/agent-communicator-electron";
-            meta.description = "Broccoli Comms Electron desktop app";
           };
         });
 

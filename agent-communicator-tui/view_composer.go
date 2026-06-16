@@ -121,7 +121,7 @@ func (m model) composerPlaceholder() string {
 		if swarmName := m.selectedSwarmName(); swarmName != "" {
 			return "message main agent in " + swarmName
 		}
-		return "/swarm create name --main agent --subagent agent"
+		return "/swarm create live agents…"
 	}
 	if m.inputMode == inputModeText {
 		return "type pane text…"
@@ -192,7 +192,7 @@ func (m model) composerModeControls(width int) string {
 	leftText := "/msg sends an inbox message"
 	if m.mode == swarmView {
 		if _, ok := m.currentSendTarget(); !ok {
-			leftText = "/swarm create NAME --main AGENT --subagent AGENT"
+			leftText = "/swarm create live agents · configured: agent start-swarm"
 		}
 	}
 	left := fgOnBg(colors.Muted, colors.BaseBg).Render(leftText)

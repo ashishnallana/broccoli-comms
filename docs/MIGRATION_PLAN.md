@@ -8,7 +8,7 @@ The runtime should remain UI-agnostic so it can support:
 
 - the current terminal `agent-communicator-tui`
 - CLI automation
-- a future Electron/native/libghostty frontend
+- a future native/libghostty frontend
 
 ## Desired user flow
 
@@ -297,9 +297,9 @@ Remaining future-only items:
 - [ ] Add deeper `doctor` checks for agent command versions, registry config/secrets, and suggested repairs.
 - [ ] Continue wrapper parity hardening against the Home Manager wrapper over time.
 
-### Chunk 8: future native/Electron/libghostty frontend path
+### Chunk 8: future native/libghostty frontend path
 
-Status: future planning only. Electron mock/prototype artifacts are intentionally not part of the main Chunk 5-7 working tree; keep any future mock app work in a separate reviewed branch or scratch area until a frontend plan is approved.
+Status: future planning only. Native UI prototype artifacts are intentionally not part of the main Chunk 5-7 working tree; keep any future mock app work in a separate reviewed branch or scratch area until a frontend plan is approved.
 
 Planned tasks:
 

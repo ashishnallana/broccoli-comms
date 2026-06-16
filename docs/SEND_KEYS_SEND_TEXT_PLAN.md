@@ -20,7 +20,7 @@ Broccoli implementation status:
 - Local tracker RPC/tmux primitives, CLI `send-text`/`send-key`, stable communicator identity, local TUI direct-input actions, and optional remote-message focus are implemented and reviewer-approved.
 - Registry-routed remote pane input is implemented and reviewer-approved behind explicit sender/registry/receiver gates.
 - TUI remote direct input is implemented and reviewer-approved behind a runtime/env capability gate.
-- Electron/native frontend experiments are future work only and are not part of this tree's direct-input implementation.
+- Native frontend experiments are future work only and are not part of this tree's direct-input implementation.
 
 ## Goals
 
@@ -38,7 +38,7 @@ Direct input intentionally bypasses inbox files and inbox notifications.
 - All local tmux operations must use the target agent's registered tmux socket; in app mode this is the Broccoli private tmux socket.
 - Never fall back to the user's default tmux server for registered targets. If a target has no registered `tmux_socket` or that socket is unreachable, fail clearly instead of guessing.
 - Existing `send-message` behavior and registry `/messages` behavior must remain unchanged.
-- The runtime/API boundary should stay UI-agnostic so terminal TUI, future Electron/native UI, and CLI automation can share the same backend capability.
+- The runtime/API boundary should stay UI-agnostic so terminal TUI, future native UI, and CLI automation can share the same backend capability.
 - Remote direct input is powerful and is disabled by default. It is available only when explicitly enabled on sender, registry, and receiver; request deduplication, redacted audit, payload limits, and TUI capability gating are required guardrails.
 
 ## API shape

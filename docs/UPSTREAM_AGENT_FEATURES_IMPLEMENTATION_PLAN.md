@@ -21,7 +21,7 @@ Out of scope / do not port directly:
 
 ## Implementation status
 
-Chunks 1-6 are implemented and reviewer-approved in the working tree. Chunk 7 docs/runtime cleanup is in progress in this documentation pass. Remote pane input remains default-disabled and guarded; Electron/native frontend work remains future-only and should not be included with these chunks.
+Chunks 1-6 are implemented and reviewer-approved in the working tree. Chunk 7 docs/runtime cleanup is in progress in this documentation pass. Remote pane input remains default-disabled and guarded; native frontend work remains future-only and should not be included with these chunks.
 
 ## Current Broccoli baseline
 

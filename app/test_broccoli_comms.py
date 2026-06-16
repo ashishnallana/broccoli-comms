@@ -1050,6 +1050,47 @@ agent_communicator_tui = "/config/agent-communicator"
             self.assertEqual(again, workspace)
             self.assertEqual((workspace / "AGENTS.md").read_text(), f"hello planner {workspace}")
 
+    def test_agent_assign_swarm_calls_live_assignment_rpc(self):
+        args = argparse.Namespace(swarm="backend-fix", main="planner", subagent=["coder-a"], json=True)
+        with mock.patch.object(broccoli_comms_app, "ensure_tracker") as ensure_tracker, \
+             mock.patch.object(broccoli_comms_app, "tracker_rpc", return_value={"ok": True, "swarm": "backend-fix", "members": []}) as tracker_rpc, \
+             mock.patch("sys.stdout", io.StringIO()):
+            broccoli_comms_app.agent_assign_swarm(args)
+        ensure_tracker.assert_called_once()
+        tracker_rpc.assert_called_once_with("assign_live_swarm", {"swarm": "backend-fix", "main": "planner", "subagents": ["coder-a"]})
+
+    def test_agent_start_swarm_launches_top_level_configured_members(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp, "BROCCOLI_COMMS_DISABLE_CONFIG_REGISTRIES": "1"}, clear=False):
+            broccoli_comms_app.save_config({
+                "agents": {
+                    "planner": {"cwd": tmp, "command": "pi"},
+                    "coder-a": {"cwd": tmp, "command": "pi"},
+                },
+                "swarms": {
+                    "backend-fix": {"members": [{"agent": "planner", "role": "main"}, {"agent": "coder-a", "role": "subagent"}]}
+                },
+            })
+            with mock.patch.object(broccoli_comms_app, "ensure_tracker") as ensure_tracker, \
+                 mock.patch.object(broccoli_comms_app, "ensure_tmux") as ensure_tmux, \
+                 mock.patch.object(broccoli_comms_app, "reconcile_agents", return_value=["coder-a"]) as reconcile, \
+                 mock.patch("sys.stdout", io.StringIO()) as out:
+                broccoli_comms_app.agent_start_swarm(argparse.Namespace(swarm="backend-fix", json=True))
+        ensure_tracker.assert_called_once()
+        ensure_tmux.assert_called_once()
+        reconcile.assert_called_once_with({"planner", "coder-a"})
+        payload = json.loads(out.getvalue())
+        self.assertEqual(payload["swarm"], "backend-fix")
+        self.assertEqual(payload["members"], ["planner", "coder-a"])
+        self.assertEqual(payload["launched"], ["coder-a"])
+        self.assertEqual(payload["already_running"], ["planner"])
+
+    def test_agent_start_swarm_rejects_legacy_per_agent_membership(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp, "XDG_CACHE_HOME": tmp, "XDG_RUNTIME_DIR": tmp, "BROCCOLI_COMMS_DISABLE_CONFIG_REGISTRIES": "1"}, clear=False):
+            broccoli_comms_app.save_config({"agents": {"planner": {"cwd": tmp, "command": "pi", "swarms": [{"name": "backend-fix", "role": "main"}]}}})
+            with self.assertRaises(SystemExit) as cm:
+                broccoli_comms_app.agent_start_swarm(argparse.Namespace(swarm="backend-fix", json=True))
+        self.assertIn("top-level swarms", str(cm.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

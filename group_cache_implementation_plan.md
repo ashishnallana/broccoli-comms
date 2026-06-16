@@ -51,20 +51,20 @@ Establish lease-bound active group watches and registry-delegated watch propagat
 
 ---
 
-## Milestone 3: Electron App Integration & UI Upgrades (Phase 5)
+## Milestone 3: Future UI Integration (Phase 5)
 
 ### Objective
-Connect the new group timeline cache API to the Electron React desktop UI.
+Keep the group timeline cache API available for future UI clients without adding a secondary frontend to this tree.
 
 ### Tasks:
 1. **Contracts Upgrade**:
-   - Register `listGroupMessages(groupId)` contract in `contracts.ts` and `trackerClient.ts` querying `get_group_timeline`.
+   - Keep `get_group_timeline` stable for UI/client consumers.
 2. **App Hooks Refactoring**:
-   - Refactor React hooks in `App.tsx` to establish active group watches and fetch timelines directly via the new API.
+   - Defer native UI hook work until a frontend plan is approved.
 3. **Backward Compatibility**:
    - Ensure graceful degraded fallbacks for older daemons (falling back to client-side React aggregation if the RPC is missing).
 
 ### Verification:
-- Zero `npm run typecheck` compilation errors.
-- All Vitest unit tests pass cleanly.
-- Successful manual validation of persistent history across app restarts.
+- Runtime/API tests pass for group timeline cache behavior.
+- TUI/client guidance points to supported CLI/TUI flows.
+- Successful manual validation of persistent history across runtime restarts.

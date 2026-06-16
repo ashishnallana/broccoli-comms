@@ -15,7 +15,7 @@ Goals:
 
 Non-goals for the initial implementation:
 - No tracker RPC schema changes.
-- No TUI/Electron rendering integration.
+- No TUI or secondary frontend rendering integration.
 - No registry-wide metadata sync.
 - No direct plugin access to raw sockets or SQLite handles by default.
 

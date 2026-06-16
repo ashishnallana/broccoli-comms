@@ -111,13 +111,6 @@ PY
       ${if cfg.registry.auth then "--auth --token-file ${lib.escapeShellArg (toString cfg.registry.tokenFile)}" else "--noauth"}
   '';
 
-  electronEnv = broccoliEnv // optionalEnv "AGENT_TRACKER_SOCKET" trackerSocket
-    // optionalEnv "AGENT_TRACKER_HOSTNAME" cfg.tracker.hostname
-    // cfg.electron.environment;
-  electronStart = pkgs.writeShellScript "broccoli-comms-electron-start" ''
-    exec ${cfg.electron.package}/bin/agent-communicator-electron
-  '';
-
   broccoliCommsCli = pkgs.writeShellApplication {
     name = "broccoli-comms";
     runtimeInputs = [ pcfg.package ];
@@ -138,8 +131,7 @@ PY
       ++ lib.optional pcfg.install.wrapper packages.agentWrapper
       ++ lib.optional pcfg.install.registry packages.agentRegistry
       ++ lib.optional pcfg.install.managedAgent packages.managedAgent
-      ++ lib.optional pcfg.install.tui packages.agentCommunicator
-      ++ lib.optional pcfg.install.electron packages.agentCommunicatorElectron);
+      ++ lib.optional pcfg.install.tui packages.agentCommunicator);
 in {
   options.programs.broccoli-comms = with lib; {
     enable = mkEnableOption "Broccoli Comms command-line tools";
@@ -156,7 +148,6 @@ in {
       registry = mkOption { type = types.bool; default = false; description = "Install agent-registry."; };
       managedAgent = mkOption { type = types.bool; default = false; description = "Install agent-registry-managed-agent."; };
       tui = mkOption { type = types.bool; default = false; description = "Install the low-level agent-communicator TUI. Prefer `broccoli-comms ui` for the app-owned runtime."; };
-      electron = mkOption { type = types.bool; default = false; description = "Install Electron launcher."; };
       defaultSkills = mkOption { type = types.bool; default = true; description = "Install Broccoli Comms default agent skills into Pi, Claude, Gemini, and shared .agents skill directories."; };
     };
   };
@@ -208,12 +199,6 @@ in {
       cacheDir = mkOption { type = types.nullOr types.str; default = null; };
       environment = mkOption { type = types.attrsOf types.str; default = {}; };
     };
-
-    electron = {
-      enable = mkEnableOption "Broccoli Comms Electron desktop app service";
-      package = mkOption { type = types.package; default = packages.agentCommunicatorElectron; defaultText = "self.packages.<system>.agentCommunicatorElectron"; };
-      environment = mkOption { type = types.attrsOf types.str; default = {}; description = "Extra environment for Electron."; };
-    };
   };
 
   config = lib.mkMerge [
@@ -225,7 +210,7 @@ in {
       ];
     }
 
-    (lib.mkIf (cfg.tracker.enable || cfg.registry.enable || cfg.electron.enable) {
+    (lib.mkIf (cfg.tracker.enable || cfg.registry.enable) {
       programs.broccoli-comms.enable = lib.mkDefault true;
       home.sessionVariables = broccoliSessionEnv;
     })
@@ -404,36 +389,6 @@ in {
           ProcessType = "Background";
           StandardOutPath = "${registryCacheDir}/launchd.stdout.log";
           StandardErrorPath = "${registryCacheDir}/launchd.stderr.log";
-        };
-      };
-    })
-
-    (lib.mkIf cfg.electron.enable {
-      programs.broccoli-comms.install.electron = lib.mkDefault true;
-    })
-
-    (lib.mkIf (cfg.electron.enable && pkgs.stdenv.isLinux) {
-      systemd.user.services.broccoli-comms-electron = {
-        Unit.Description = "Broccoli Comms Electron app";
-        Service = {
-          Environment = envList electronEnv;
-          ExecStart = toString electronStart;
-          Restart = "on-failure";
-        };
-        Install.WantedBy = [ "default.target" ];
-      };
-    })
-
-    (lib.mkIf (cfg.electron.enable && pkgs.stdenv.isDarwin) {
-      launchd.agents.broccoli-comms-electron = {
-        enable = true;
-        config = {
-          ProgramArguments = [ (toString electronStart) ];
-          EnvironmentVariables = electronEnv;
-          RunAtLoad = true;
-          ProcessType = "Interactive";
-          StandardOutPath = "${broccoliCacheDir}/electron.stdout.log";
-          StandardErrorPath = "${broccoliCacheDir}/electron.stderr.log";
         };
       };
     })

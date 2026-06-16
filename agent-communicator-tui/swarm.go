@@ -299,10 +299,8 @@ func (m model) swarmEmptyLines(width int) []string {
 	text := []string{
 		"No swarms found.",
 		"Create from live agents: /swarm create backend-fix --main planner --subagent coder-a",
-		"Or start agents with swarm metadata, for example:",
-		"broccoli-comms run planner --swarm backend-fix --role main -- pi",
-		"broccoli-comms run coder-a --swarm backend-fix --role subagent -- pi",
-		"persist via: broccoli-comms run ... -- <command> then broccoli-comms agent edit ... --swarm backend-fix --role main --command <command>",
+		"Start a configured swarm: broccoli-comms agent start-swarm backend-fix",
+		"Configure members in config.json under swarms.backend-fix.members.",
 	}
 	for _, line := range text {
 		lines = append(lines, wrapBackgroundStyledText(line, width, colors.Muted, colors.BaseBg)...)
@@ -347,7 +345,7 @@ func (m model) swarmListPanel(width, height int) string {
 	header := fgOnBg(colors.Accent, colors.RightColumnBg).Bold(true).Render("Swarms")
 	var lines []string
 	if len(m.swarms) == 0 {
-		lines = append(lines, mutedStyle.Render("no swarms"), mutedStyle.Render("use --swarm and --role"))
+		lines = append(lines, mutedStyle.Render("no swarms"), mutedStyle.Render("/swarm create or agent start-swarm"))
 	} else {
 		for i, swarm := range m.swarms {
 			bg := colors.RightColumnBg

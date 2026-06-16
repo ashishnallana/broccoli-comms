@@ -15,7 +15,7 @@ Fallback:
 
 - Keep early phases isolated under `lua/**` and demo-only paths unless a later phase explicitly expands scope.
 - Do not modify `agent-tracker` for Phase 1 tracker-client core; current RPCs are sufficient.
-- Do not modify the TUI or Electron app until an explicit UI integration phase is approved.
+- Do not modify the TUI or add a secondary app until an explicit UI integration phase is approved.
 - Do not change tracker RPC schemas for metadata in initial phases.
 - Prefer host adapters for socket, JSON, and SQLite operations.
 - Keep demo Python/Go scripts demo-only and non-integrated.
@@ -65,7 +65,7 @@ Scope:
 - Create `lua/IMPLEMENTATION_PLAN.md`.
 - No runtime code.
 - No tests required beyond whitespace validation.
-- No changes to `agent-tracker`, TUI, Electron, or app runtime.
+- No changes to `agent-tracker`, TUI, or app runtime.
 
 Validation:
 - `git diff --check` for tracked changes.
@@ -142,7 +142,7 @@ Scope:
   - `lua/examples/python_embed.py`.
   - `lua/examples/go_embed/`.
 - Demonstrate `list`, `send_message`, and `read_inbox` through explicit socket path.
-- Do not integrate demos into `agent-tracker`, TUI, Electron, or app startup.
+- Do not integrate demos into `agent-tracker`, TUI, or app startup.
 
 Tests:
 - Fake socket/fake transport demo tests if practical.
@@ -326,7 +326,7 @@ Validation:
 
 Potential future work, each requiring separate approval:
 - TUI command palette integration.
-- TUI/Electron display of selected public metadata badges/status text.
+- TUI/future UI display of selected public metadata badges/status text.
 - Metadata-driven sort/filter/grouping.
 - Real Python/Go host production integration.
 - Registry-backed metadata sync.

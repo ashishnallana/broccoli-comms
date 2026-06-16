@@ -65,7 +65,6 @@ in {
       registry = mkOption { type = types.bool; default = false; };
       managedAgent = mkOption { type = types.bool; default = false; };
       tui = mkOption { type = types.bool; default = true; };
-      electron = mkOption { type = types.bool; default = false; };
     };
   };
 
@@ -102,8 +101,7 @@ in {
         ++ lib.optional pcfg.install.wrapper packages.agentWrapper
         ++ lib.optional pcfg.install.registry packages.agentRegistry
         ++ lib.optional pcfg.install.managedAgent packages.managedAgent
-        ++ lib.optional pcfg.install.tui packages.agentCommunicator
-        ++ lib.optional pcfg.install.electron packages.agentCommunicatorElectron;
+        ++ lib.optional pcfg.install.tui packages.agentCommunicator;
     })
 
     (lib.mkIf cfg.enable {

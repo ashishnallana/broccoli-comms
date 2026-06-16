@@ -10,9 +10,9 @@ The app owns:
 - private agent-tracker daemon/socket
 - managed agent windows/panes
 - terminal TUI today
-- possible Electron/desktop UI later
+- possible native/desktop UI later
 
-Design implication: keep the runtime/API layer UI-agnostic. The TUI and future Electron UI should talk to the same local runtime/control API.
+Design implication: keep the runtime/API layer UI-agnostic. The TUI and any future native UI should talk to the same local runtime/control API.
 
 ## Phase chunks
 
@@ -54,13 +54,13 @@ Tasks:
 
 ### Chunk 4: UI/runtime boundary
 
-Goal: prepare for both terminal TUI and future Electron UI.
+Goal: prepare for both terminal TUI and a possible future native UI.
 
 Tasks:
 
 - Define a stable local runtime API contract.
 - Keep UI-specific behavior outside tracker core.
-- Add health/status JSON suitable for TUI and desktop UI.
+- Add health/status JSON suitable for TUI and future desktop UI.
 
 ## Current assignment
 

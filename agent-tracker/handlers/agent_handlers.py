@@ -257,7 +257,7 @@ def handle_list(params: dict, caller_pid: int = None, identify_agent=None) -> di
 def handle_ensure_mailbox(params: dict) -> dict:
     """Ensures a local UI/mailbox identity exists without tmux pane control.
 
-    Native frontends such as the Electron communicator need a stable inbox
+    Native frontends need a stable inbox
     identity but should not masquerade as a controllable coding-agent pane.
     Mailbox identities are no-notify records that can be registry-visible for
     normal cross-host messages but cannot receive direct pane input.

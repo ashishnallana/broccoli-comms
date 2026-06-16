@@ -1,12 +1,11 @@
 # Broccoli Comms Repository Architecture Summary
 
-Broccoli Comms is a standalone agent workspace runtime. Its default frontend is the terminal `agent-communicator` TUI, with optional Electron/desktop code kept as a future/secondary frontend. Runtime state flows through a local tracker socket, local inbox files, tmux pane metadata, and optional HTTP registries for multi-device routing.
+Broccoli Comms is a standalone agent workspace runtime. Its default frontend is the terminal `agent-communicator` TUI. Runtime state flows through a local tracker socket, local inbox files, tmux pane metadata, and optional HTTP registries for multi-device routing.
 
 ```mermaid
 graph TD
     subgraph UI [Frontends]
         TUI[agent-communicator TUI]
-        Electron[optional Electron UI]
     end
 
     subgraph Runtime [Local Broccoli Runtime]
@@ -23,7 +22,6 @@ graph TD
     Launcher -->|starts/stops| Tracker
     Launcher -->|manages windows| Tmux
     TUI -->|Unix socket RPC / wait_events| Tracker
-    Electron -->|Unix socket RPC / wait_events| Tracker
     Tracker -->|reads/writes| Inbox
     Tracker -->|captures/inputs via registered panes| Tmux
     Tracker -->|heartbeats, queued messages, watch leases| RegistryServer
@@ -70,13 +68,7 @@ graph TD
 - Can be run through `broccoli-comms registry ...`, a NixOS/Home Manager module, or directly for development.
 - Managed registry agents are supported for registry-host workflows, but local Broccoli managed agents usually live under `broccoli-comms agent ...`.
 
-## 5. Optional Electron frontend: `agent-communicator-electron/`
-
-- **Tech stack**: TypeScript, React, Vite, Electron.
-- **Status**: Secondary/future frontend path. It talks to the same tracker socket and should preserve the runtime contracts documented in `docs/RUNTIME_API.md`.
-- Keep runtime behavior in the tracker/launcher and UI-specific behavior in frontend clients.
-
-## 6. Wrapper and skills
+## 5. Wrapper and skills
 
 - `wrapper/agent-wrapper.sh` runs agent commands with the correct tracker identity/environment and registers pane metadata.
 - `skills/` contains agent-facing Broccoli Comms usage guidance for messaging and CLI interactions.

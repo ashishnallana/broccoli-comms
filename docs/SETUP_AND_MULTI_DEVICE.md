@@ -454,5 +454,5 @@ These are intentionally not required for the basic setup above:
 - expose Broccoli Comms top-level NixOS/Home Manager modules for registry setup, instead of using the nested standalone registry flake directly
 - add remote pane capture UI/approval flows beyond the current snapshot request helper
 - add per-agent or interactive approve/deny policy for remote pane control across Pi/Claude/Codex/Gemini
-- keep future Electron/native/libghostty frontend work out of the main tree until a reviewed frontend plan is selected
+- keep future native/libghostty frontend work out of the main tree until a reviewed frontend plan is selected
 - add deeper `doctor` checks for registry config/secrets and agent command versions

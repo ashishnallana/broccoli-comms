@@ -1143,6 +1143,7 @@ dispatcher = {
     "get_unread_counts": handle_get_unread_counts,
     "list_swarms": handle_list_swarms,
     "assign_live_swarm": handle_assign_live_swarm,
+    "assign_swarm": handle_assign_live_swarm,
     "get_group_timeline": handle_get_group_timeline,
     "get_swarm_timeline": handle_get_swarm_timeline,
     "watch_swarm": handle_watch_swarm,

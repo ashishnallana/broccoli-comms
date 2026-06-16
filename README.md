@@ -382,7 +382,9 @@ Use the higher-level Broccoli commands for most workflows:
 | Use case | Command | Notes |
 | --- | --- | --- |
 | Start a fresh named agent launch | `broccoli-comms run NAME -- COMMAND [ARGS...]` | Creates a fresh workspace under `/tmp/broccoli-agents/<name>/`, writes bootstrap context such as `AGENTS.md`, and starts the command through the Broccoli tracker wrapper. |
-| Edit and restart an already-running managed agent | `broccoli-comms agent edit NAME [--rename NEW_NAME] [--cwd DIR] [--swarm SWARM --role {main,subagent}] [--] [COMMAND [ARGS...]]` | Edit works only on a live managed agent and applies immediately by restart. |
+| Edit and restart an already-running managed agent | `broccoli-comms agent edit NAME [--rename NEW_NAME] [--cwd DIR] [--] [COMMAND [ARGS...]]` | Edit works only on a live managed agent and applies immediately by restart. |
+| Assign live agents to a swarm | `broccoli-comms agent assign-swarm SWARM --main MAIN --subagent AGENT` | Assigns already-running local agents; does not create or restart agents. |
+| Start configured swarm members | `broccoli-comms agent start-swarm SWARM` | Starts agents listed under top-level `swarms.<name>.members` in `config.json`. |
 
 The public launch surface is limited to `run` and `agent edit`.
 
@@ -402,7 +404,15 @@ If `run` is used for tracker-level experiments, use `run` with the desired profi
 - Any changes are persisted to config and trigger an immediate managed-window restart.
 - Example:
   - `broccoli-comms agent edit planner --rename planner-main --scope repo:my-app --cwd ~/projects/my-app -- pi --role planner`
-  - `broccoli-comms agent edit planner --scope repo:my-app --swarm backend-fix --role subagent --cwd ~/projects/my-app`
+
+### Swarm Mode setup
+
+Use one of the supported swarm setup flows:
+
+- Live agents: `broccoli-comms agent assign-swarm backend-fix --main planner --subagent coder-a`
+- Configured agents: add top-level `swarms.backend-fix.members` in `config.json`, then run `broccoli-comms agent start-swarm backend-fix`
+
+Do not use per-agent `--swarm/--role` launch flags as the configured-swarm startup model.
 
 ### Agent-tracker saved agent templates
 
